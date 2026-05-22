@@ -1,0 +1,90 @@
+/* app/static/css/sprint_viewer.css */
+
+.sv-group {
+  margin-bottom: 18px;
+}
+
+.sv-group-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.sv-group-meta {
+  font-weight: 400;
+  color: #6c757d;
+}
+
+.sv-issue-list {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+
+.sv-issue {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+.sv-issue:last-child {
+  border-bottom: 0;
+}
+
+.sv-issue-key {
+  font-weight: 700;
+  text-decoration: none;
+  margin-right: 4px;
+}
+
+.sv-scope-star {
+  margin-right: 6px;
+  color: #d9534f;
+}
+
+.sv-issue-summary {
+  margin-right: 8px;
+}
+
+.sv-pill {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.06);
+  margin-left: 6px;
+}
+
+.sv-metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+}
+
+.sv-metric-row {
+  display: contents;
+}
+
+.sv-metric-k {
+  color: #6c757d;
+}
+
+.sv-metric-v {
+  font-weight: 700;
+  text-align: right;
+}
+
+.sv-legend {
+  margin-top: 10px;
+  color: #6c757d;
+  font-size: 13px;
+}
+
+.sv-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin-top: 8px;
+}
+
+.sv-stat {
+  color: #444;
+}

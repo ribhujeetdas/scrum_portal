@@ -1,0 +1,212 @@
+/* =====================================================
+   BASE / LAYOUT
+   ===================================================== */
+
+.sidebar {
+  width: 280px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-pills .nav-link.active {
+  background-color: #0d6efd !important;
+}
+
+/* Generic app-wide loading overlay (non-TCI pages) */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  pointer-events: all;
+}
+
+/* =====================================================
+   SPRINT VIEWER UI
+   ===================================================== */
+
+/* Refresh button turns green when enabled */
+#refreshSprintsBtn:enabled {
+  background-color: #198754;
+  border-color: #198754;
+  color: #fff;
+}
+
+#refreshSprintsBtn:enabled:hover {
+  background-color: #157347;
+  border-color: #146c43;
+}
+
+#refreshSprintsBtn:enabled:focus {
+  box-shadow: 0 0 0 0.25rem rgba(25, 135, 84, 0.25);
+}
+
+/* Fetch Issues button */
+#fetchIssuesBtn:disabled {
+  background-color: #adb5bd;
+  border-color: #adb5bd;
+  color: #fff;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+#fetchIssuesBtn:enabled {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: #fff;
+}
+
+#fetchIssuesBtn:enabled:hover {
+  background-color: #0b5ed7;
+  border-color: #0a58ca;
+}
+
+#fetchIssuesBtn:enabled:focus {
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* =====================================================
+   TABLE / TEXT UTILITIES
+   ===================================================== */
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.nowrap a {
+  white-space: nowrap;
+  display: inline-block;
+}
+
+td.col-key,
+th.col-key {
+  white-space: nowrap;
+  width: 110px;
+}
+
+td.col-feature,
+th.col-feature {
+  white-space: nowrap;
+  width: 120px;
+}
+
+/* =====================================================
+   TCI / TABLEAU CUSTOM VIEW – LOADER
+   ===================================================== */
+
+/* Loader used ONLY for Tableau preview */
+.preview-loader {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* =====================================================
+   BLINK ANIMATION (SINGLE SOURCE OF TRUTH)
+   ===================================================== */
+
+@keyframes blink-opacity {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* =====================================================
+   TABLE ROW HIGHLIGHTING (BOOTSTRAP-SAFE)
+   ===================================================== */
+
+/* --- NOT CAUGHT (Critical) --- */
+tr.row-red-blink {
+  animation: blink-opacity 1s infinite;
+}
+
+tr.row-red-blink > td,
+tr.row-red-blink > th {
+  background-color: #f8d7da !important;
+}
+
+/* --- DUE SOON (<= 31 days) --- */
+tr.row-yellow-blink {
+  animation: blink-opacity 1s infinite;
+}
+
+tr.row-yellow-blink > td,
+tr.row-yellow-blink > th {
+  background-color: #fff3cd !important;
+}
+
+/* --- OVERDUE (Past date, status != Done) --- */
+tr.row-overdue-blink {
+  animation: blink-opacity 1s infinite;
+}
+
+tr.row-overdue-blink > td,
+tr.row-overdue-blink > th {
+  background-color: #f8d7da !important;
+}
+
+/* Prevent Bootstrap striped overlays from hiding colors */
+table.table-striped tbody tr.row-red-blink > td,
+table.table-striped tbody tr.row-yellow-blink > td,
+table.table-striped tbody tr.row-overdue-blink > td {
+  background-image: none !important;
+}
+
+/* =====================================================
+   LINKS & INTERACTIVE ELEMENTS
+   ===================================================== */
+
+.jira-link {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.planning-status-link {
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* =====================================================
+   LEGEND INDICATORS
+   ===================================================== */
+
+.legend-red,
+.legend-yellow,
+.legend-overdue {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.legend-red {
+  background-color: #f8d7da;
+}
+
+.legend-yellow {
+  background-color: #ffe066;
+}
+
+.legend-overdue {
+  background-color: #f8d7da;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}

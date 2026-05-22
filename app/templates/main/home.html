@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+
+<div class="row g-3">
+  <!-- Card 1 -->
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title">Jira Automation Rule Copier</h5>
+        <p class="card-text text-muted">
+          Fetch an Automation rule from a source project/board and prepare it to be copied to another board.
+        </p>
+        <a class="btn btn-primary" href="{{ url_for('automation.rule_copier_page') }}">
+          Open
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 2 -->
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title">Closed Sprint Viewer</h5>
+        <p class="card-text text-muted">
+          Fetch sprint details from a board.
+        </p>
+        <a class="btn btn-primary" href="{{ url_for('automation.sprint_viewer_page') }}">
+          Open
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 3 (right of Card 2) -->
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title">TCI Reports</h5>
+        <p class="card-text text-muted">
+          Description for the third card.
+        </p>
+        <a class="btn btn-primary" href="{{ url_for('tableau_custom_views.custom_views_page') }}">
+          Open
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 4 (will wrap to next line, below Card 1) -->
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title">Planning</h5>
+        <p class="card-text text-muted">
+          Description for the fourth card.
+        </p>
+        <a class="btn btn-primary" href="#">
+          Open
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+
+<h3 class="mb-3">Settings</h3>
+{% include "config/_tabs.html" %}
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+
+    <h5 class="mb-3">Enterprise Agile Jira Configuration</h5>
+
+    <div class="mb-2">
+      <span class="fw-semibold">Saved Token (masked):</span>
+      <code>{{ masked_token }}</code>
+    </div>
+
+    <form method="POST" novalidate class="mt-3" id="patForm">
+      {{ pat_form.hidden_tag() }}
+      <div class="mb-3">
+        {{ pat_form.jira_pat.label(class="form-label") }}
+        {{ pat_form.jira_pat(class="form-control", placeholder="Enter PAT to validate and save") }}
+        <!-- <div class="form-text">Token is stored encrypted.</div> -->
+        {% for e in pat_form.jira_pat.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      <div class="d-flex gap-2">
+        {{ pat_form.validate_and_save(class="btn btn-success") }}
+      </div>
+    </form>
+
+    <hr>
+
+    <h5 class="mb-3">Tableau Configuration</h5>
+
+    <div class="mb-2">
+      <span class="fw-semibold">Saved PAT Name:</span>
+      <code>{{ tableau_pat_name_saved or "Not set" }}</code>
+    </div>
+    <div class="mb-2">
+      <span class="fw-semibold">Saved PAT Secret (masked):</span>
+      <code>{{ masked_tableau_token }}</code>
+    </div>
+
+    <form method="POST" novalidate class="mt-3" id="tableauPatForm">
+      {{ tableau_form.hidden_tag() }}
+
+      <div class="mb-3">
+        {{ tableau_form.tableau_pat_name.label(class="form-label") }}
+        {{ tableau_form.tableau_pat_name(class="form-control", placeholder="Enter Tableau PAT Name") }}
+        {% for e in tableau_form.tableau_pat_name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+
+      <div class="mb-3">
+        {{ tableau_form.tableau_pat_secret.label(class="form-label") }}
+        {{ tableau_form.tableau_pat_secret(class="form-control", placeholder="Enter Tableau PAT Secret") }}
+        <!-- <div class="form-text">Saved only if Tableau email + EID match your registered identity.</div> -->
+        {% for e in tableau_form.tableau_pat_secret.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+
+      <div class="d-flex gap-2">
+        {{ tableau_form.tableau_validate_and_save(class="btn btn-success") }}
+      </div>
+    </form>
+
+  </div>
+</div>
+
+{% endblock %}

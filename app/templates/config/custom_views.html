@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+
+<h3 class="mb-3">Settings</h3>
+{% include "config/_tabs.html" %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <h5 class="mb-3">Tableau Custom Views</h5>
+    <!-- <p class="text-muted mb-3">
+      Add your Tableau Custom View ID(s). These will be available on the Tableau Custom View Explorer page.
+    </p> -->
+
+    <form method="POST" novalidate id="tableauCustomViewAddForm" class="mb-4">
+      {{ tableau_custom_view_form.hidden_tag() }}
+
+      <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+          {{ tableau_custom_view_form.epic_key.label(class="form-label") }}
+          {{ tableau_custom_view_form.epic_key(class="form-select") }}
+          {% for e in tableau_custom_view_form.epic_key.errors %}
+            <div class="text-danger small">{{ e }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="col-md-5">
+          {{ tableau_custom_view_form.tableau_custom_view_id.label(class="form-label") }}
+          {{ tableau_custom_view_form.tableau_custom_view_id(
+            class="form-control",
+            placeholder="e.g. ea23z4ja-8x1d-4te8-a01q-4dy23195241b"
+          ) }}
+          {% for e in tableau_custom_view_form.tableau_custom_view_id.errors %}
+            <div class="text-danger small">{{ e }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="col-md-3">
+          {{ tableau_custom_view_form.save_tableau_custom_view(class="btn btn-success") }}
+        </div>
+      </div>
+
+      <!-- <div class="form-text mt-1">
+        We validate the ID against Tableau and store it in DB.
+      </div> -->
+    </form>
+
+    <h6 class="mb-2">Saved Custom Views</h6>
+
+    {% if saved_custom_views and saved_custom_views|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Custom View ID</th>
+              <th>Epic Key</th>
+              <th style="width: 120px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cv in saved_custom_views %}
+              <tr>
+                <td>{{ cv.custom_view_name or "(Unnamed)" }}</td>
+                <td><code>{{ cv.custom_view_id }}</code></td>
+                <td>{{ cv.epic_key }}</td>
+                <td>{{ cv.project_key}}</td>
+                <td>
+                  <form method="POST" novalidate class="d-inline js-cv-delete-form"
+                        data-view-name="{{ cv.custom_view_name or '(Unnamed)' }}"
+                        data-view-id="{{ cv.custom_view_id }}">
+                    {{ tableau_custom_view_delete_form.csrf_token }}
+                    <input type="hidden" name="delete_custom_view_id" value="{{ cv.custom_view_id }}">
+                    <button type="submit" name="delete_tableau_custom_view" value="1" class="btn btn-sm btn-danger">
+                      Delete
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-info">No custom views saved yet.</div>
+    {% endif %}
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    document.querySelectorAll(".js-cv-delete-form").forEach(function (form) {
+      form.addEventListener("submit", function (e) {
+        const viewName = form.getAttribute("data-view-name") || "(Unnamed)";
+        const viewId = form.getAttribute("data-view-id") || "";
+        const ok = confirm(`Are you sure you want to delete custom view "${viewName}" (${viewId})?`);
+        if (!ok) e.preventDefault();
+      });
+    });
+  })();
+</script>
+
+{% endblock %}

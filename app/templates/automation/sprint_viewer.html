@@ -1,0 +1,578 @@
+{% extends "base.html" %}
+{% block title %}Sprint Viewer{% endblock %}
+{% block content %}
+<style>
+  .nowrap { white-space: nowrap; }
+  .nowrap a { white-space: nowrap; display: inline-block; }
+
+  /* NEW: bold * next to issue key */
+  .scope-star { margin-left: 6px; color: #d9534f; font-weight: 700; }
+
+  /* NEW: small stats grid */
+  .sv-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-top: 8px;
+  }
+  .sv-stat {
+    font-size: 13px;
+    color: #555;
+  }
+  .sv-legend {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #6c757d;
+  }
+</style>
+
+<div id="loadingOverlay" class="loading-overlay" aria-hidden="true">
+  <div class="text-center">
+    <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div class="mt-3 text-light fw-semibold">Please wait...</div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h3 class="mb-1">Sprint Viewer</h3>
+      </div>
+      <div class="text-end">
+        <button id="refreshSprintsBtn" class="btn btn-outline-secondary" disabled>
+          Refresh Sprints
+        </button>
+      </div>
+    </div>
+
+    <input type="hidden" id="csrfToken" value="{{ csrf_token() }}">
+
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Project Key</label>
+        <select id="projectKey" class="form-select">
+          <option value="">-- Select Project --</option>
+          {% for pk in projects %}
+          <option value="{{ pk }}">{{ pk }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Board</label>
+        <select id="boardId" class="form-select" disabled>
+          <option value="">-- Select Board --</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Sprint</label>
+        <select id="sprintId" class="form-select" disabled>
+          <option value="">-- Select Sprint --</option>
+        </select>
+      </div>
+
+      <div class="col-md-2">
+        <button id="fetchIssuesBtn" class="btn btn-primary w-100" disabled>
+          Fetch Issues
+        </button>
+      </div>
+    </div>
+
+    <div class="mt-3" id="msgBox"></div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4 d-none" id="resultsCard">
+  <div class="card-body">
+    <h5 class="mb-3">Results</h5>
+
+    <div class="row g-2 align-items-center mb-2">
+      <div class="col-auto text-muted">
+        Total issues: <span id="totalIssues">0</span>
+      </div>
+      <div class="col-auto text-muted">
+        Total SP: <span id="totalSp">0</span>
+      </div>
+    </div>
+
+    <!-- NEW: Issue hygiene stats -->
+    <div id="statsBox" class="sv-stats d-none">
+      <div class="sv-stat">Unestimated: <b><span id="unestimatedCount">0</span></b> (<span id="unestimatedPct">0</span>%)</div>
+      <div class="sv-stat">Bugs: <b><span id="bugCount">0</span></b> (<span id="bugPct">0</span>%)</div>
+      <div class="sv-stat">Bug SP: <b><span id="bugSp">0</span></b></div>
+      <div class="sv-stat">Unassigned: <b><span id="unassignedCount">0</span></b> (<span id="unassignedPct">0</span>%)</div>
+      <div class="sv-stat">0 Comments: <b><span id="zeroCommentCount">0</span></b> (<span id="zeroCommentPct">0</span>%)</div>
+    </div>
+
+    <!-- UPDATED: metrics show count + SP and added more single-sprint metrics -->
+    <div id="metricsBox" class="border rounded p-2 mb-3 d-none">
+      <div class="row g-2">
+        <div class="col-md-3"><strong>Committed:</strong> <span id="committedFmt">0</span></div>
+        <div class="col-md-3"><strong>Delivered:</strong> <span id="deliveredFmt">0</span></div>
+        <div class="col-md-3">
+          <strong>Spillover:</strong> <span id="spilloverFmt">0</span>
+          (<span id="spillPct">0</span>%)
+        </div>
+        <div class="col-md-3">
+          <strong>Scope Added:</strong> <span id="scopeAddedFmt">0</span>
+          (<span id="scopePct">0</span>%)
+        </div>
+
+        <div class="col-md-3"><strong>Descope:</strong> <span id="descopeFmt">0</span></div>
+        <div class="col-md-3"><strong>Pred%:</strong> <span id="predictabilityPct">0</span></div>
+
+        <!-- NEW single-sprint metrics -->
+        <div class="col-md-3"><strong>Completion (SP)%:</strong> <span id="completionSpPct">0</span></div>
+        <div class="col-md-3"><strong>Completion (Count)%:</strong> <span id="completionCountPct">0</span></div>
+        <div class="col-md-3"><strong>Unplanned (SP)%:</strong> <span id="unplannedSpPct">0</span></div>
+        <div class="col-md-3"><strong>Unplanned (Count)%:</strong> <span id="unplannedCountPct">0</span></div>
+        <div class="col-md-3"><strong>Scope Churn (SP)%:</strong> <span id="scopeChurnSpPct">0</span></div>
+        <div class="col-md-3"><strong>Scope Churn (Count)%:</strong> <span id="scopeChurnCountPct">0</span></div>
+      </div>
+
+      <div class="sv-legend"><b>*</b> indicates issue <b>added after sprint start</b>.</div>
+    </div>
+
+    <div class="accordion" id="assigneeAccordion"></div>
+  </div>
+</div>
+
+<script>
+(function () {  const boardsByProject = {{ boards_by_project|tojson }};
+  const jiraBaseUrl = "{{ jira_base_url }}";
+  const csrfToken = document.getElementById("csrfToken").value;
+
+  const overlay = document.getElementById("loadingOverlay");
+
+  const projectKey = document.getElementById("projectKey");
+  const boardId = document.getElementById("boardId");
+  const sprintId = document.getElementById("sprintId");
+
+  const refreshSprintsBtn = document.getElementById("refreshSprintsBtn");
+  const fetchIssuesBtn = document.getElementById("fetchIssuesBtn");
+
+  const msgBox = document.getElementById("msgBox");
+  const resultsCard = document.getElementById("resultsCard");
+
+  const totalIssuesEl = document.getElementById("totalIssues");
+  const totalSpEl = document.getElementById("totalSp");
+
+  // stats box
+  const statsBox = document.getElementById("statsBox");
+  const unestimatedCountEl = document.getElementById("unestimatedCount");
+  const unestimatedPctEl = document.getElementById("unestimatedPct");
+  const bugCountEl = document.getElementById("bugCount");
+  const bugPctEl = document.getElementById("bugPct");
+  const bugSpEl = document.getElementById("bugSp");
+  const unassignedCountEl = document.getElementById("unassignedCount");
+  const unassignedPctEl = document.getElementById("unassignedPct");
+  const zeroCommentCountEl = document.getElementById("zeroCommentCount");
+  const zeroCommentPctEl = document.getElementById("zeroCommentPct");
+
+  // metrics box + fields
+  const metricsBox = document.getElementById("metricsBox");
+  const committedFmtEl = document.getElementById("committedFmt");
+  const deliveredFmtEl = document.getElementById("deliveredFmt");
+  const spilloverFmtEl = document.getElementById("spilloverFmt");
+  const scopeAddedFmtEl = document.getElementById("scopeAddedFmt");
+  const descopeFmtEl = document.getElementById("descopeFmt");
+
+  const spillPctEl = document.getElementById("spillPct");
+  const scopePctEl = document.getElementById("scopePct");
+  const predictabilityPctEl = document.getElementById("predictabilityPct");
+
+  const completionSpPctEl = document.getElementById("completionSpPct");
+  const completionCountPctEl = document.getElementById("completionCountPct");
+  const unplannedSpPctEl = document.getElementById("unplannedSpPct");
+  const unplannedCountPctEl = document.getElementById("unplannedCountPct");
+  const scopeChurnSpPctEl = document.getElementById("scopeChurnSpPct");
+  const scopeChurnCountPctEl = document.getElementById("scopeChurnCountPct");
+
+  const assigneeAccordion = document.getElementById("assigneeAccordion");
+
+  function lockUi() {
+    overlay.style.display = "flex";
+    document.querySelectorAll("button, input, select, textarea, a").forEach(el => {
+      el.setAttribute("disabled", "disabled");
+      el.style.pointerEvents = "none";
+    });
+  }
+
+  function unlockUi() {
+    overlay.style.display = "none";
+    document.querySelectorAll("button, input, select, textarea, a").forEach(el => {
+      el.removeAttribute("disabled");
+      el.style.pointerEvents = "";
+    });
+    // restore intended disables
+    if (!projectKey.value) boardId.setAttribute("disabled", "disabled");
+    if (!boardId.value) sprintId.setAttribute("disabled", "disabled");
+    if (!boardId.value) refreshSprintsBtn.setAttribute("disabled", "disabled");
+    if (!sprintId.value) fetchIssuesBtn.setAttribute("disabled", "disabled");
+  }
+
+  function showAlert(kind, text) {
+    msgBox.innerHTML = `<div class="alert alert-${kind} mb-0">${text}</div>`;
+  }
+
+  function populateBoards(pk) {
+    boardId.innerHTML = '<option value="">-- Select Board --</option>';
+    const boards = boardsByProject[pk] || [];
+    boards.forEach(b => {
+      const opt = document.createElement("option");
+      opt.value = b.board_id;
+      opt.textContent = `${b.board_name} (ID: ${b.board_id})`;
+      boardId.appendChild(opt);
+    });
+  }
+
+  function populateSprints(sprints) {
+    sprintId.innerHTML = '<option value="">-- Select Sprint --</option>';
+    sprints.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.name} (ID: ${s.id})`;
+      sprintId.appendChild(opt);
+    });
+  }
+
+  function fmtCountSp(count, sp) {
+    const c = (count === null || count === undefined) ? 0 : count;
+    const s = (sp === null || sp === undefined) ? 0 : sp;
+    const spTxt = (typeof s === "number") ? s.toFixed(2) : s;
+    return `${c} (${spTxt} SP)`;
+  }
+
+  async function loadSprints(refresh = false) {
+    const pk = projectKey.value.trim().toUpperCase();
+    const bid = Number(boardId.value);
+    lockUi();
+    try {
+      const res = await fetch("{{ url_for('automation.sprint_viewer_get_sprints') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken
+        },
+        body: JSON.stringify({ project_key: pk, board_id: bid, refresh: refresh })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showAlert("danger", data.error || "Failed to load sprints.");
+        return;
+      }
+      populateSprints(data.sprints || []);
+      sprintId.removeAttribute("disabled");
+      showAlert("success", `Sprints loaded (${data.source}). Select a sprint to fetch issues.`);
+    } catch (e) {
+      showAlert("danger", "Network/Unexpected error while loading sprints.");
+    } finally {
+      unlockUi();
+    }
+  }
+
+  function renderGroupedAccordion(groups) {
+    assigneeAccordion.innerHTML = "";
+    groups.forEach((g, idx) => {
+      const headerId = `heading_${idx}`;
+      const collapseId = `collapse_${idx}`;
+
+      // UPDATED: include sp_sum and add scope-star placeholder next to issue key
+      const issuesHtml = (g.issues || []).map(it => {
+        const issueKey = it.issue_key || "";
+        const featureKey = it.feature_key || "";
+        const issueUrl = issueKey ? `${jiraBaseUrl}/browse/${issueKey}` : "";
+        const featureUrl = featureKey ? `${jiraBaseUrl}/browse/${featureKey}` : "";
+        const safeSummary = (it.summary || "");
+        const sp = (it.story_points === null || it.story_points === undefined) ? "" : it.story_points;
+
+        return `
+          <tr>
+            <td class="col-key nowrap">
+              ${issueKey ? `
+                <a href="${issueUrl}" target="_blank" rel="noopener noreferrer">${issueKey}</a>
+                <span class="scope-star" data-issue-key="${issueKey}"></span>
+              ` : ""}
+            </td>
+            <td>${safeSummary}</td>
+            <td>${it.issue_type || ""}</td>
+            <td>${it.status || ""}</td>
+            <td>${sp}</td>
+            <td class="col-feature nowrap">
+              ${featureKey ? `<a href="${featureUrl}" target="_blank" rel="noopener noreferrer">${featureKey}</a>` : ""}
+            </td>
+            <td>${it.comment_total ?? 0}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const item = document.createElement("div");
+      item.className = "accordion-item";
+
+      const spSum = (g.sp_sum === null || g.sp_sum === undefined) ? 0 : g.sp_sum;
+      const spTxt = (typeof spSum === "number") ? spSum.toFixed(2) : spSum;
+
+      item.innerHTML = `
+        <h2 class="accordion-header" id="${headerId}">
+          <button class="accordion-button collapsed" type="button"
+            data-bs-toggle="collapse" data-bs-target="#${collapseId}"
+            aria-expanded="false" aria-controls="${collapseId}">
+            ${g.assignee_name}
+            <span class="ms-2 text-muted">${g.issue_count} issues, ${spTxt} SP</span>
+          </button>
+        </h2>
+        <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="${headerId}"
+          data-bs-parent="#assigneeAccordion">
+          <div class="accordion-body">
+            <div class="mb-2 text-muted small">EID: ${g.assignee_eid}</div>
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle">
+                <thead>
+                  <tr>
+                    <th class="col-key nowrap">Key</th>
+                    <th>Summary</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>SP</th>
+                    <th class="col-feature nowrap">Feature Key</th>
+                    <th>Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${issuesHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+      assigneeAccordion.appendChild(item);
+    });
+  }
+
+  function setTotals(totalIssues, totalSp) {
+    totalIssuesEl.textContent = (totalIssues ?? 0);
+    totalSpEl.textContent = (typeof totalSp === "number") ? totalSp.toFixed(2) : (totalSp ?? 0);
+  }
+
+  function renderStats(stats) {
+    if (!stats) {
+      statsBox.classList.add("d-none");
+      return;
+    }
+    statsBox.classList.remove("d-none");
+
+    unestimatedCountEl.textContent = stats.unestimated_count ?? 0;
+    unestimatedPctEl.textContent = stats.unestimated_pct ?? 0;
+
+    bugCountEl.textContent = stats.bug_count ?? 0;
+    bugPctEl.textContent = stats.bug_pct ?? 0;
+    bugSpEl.textContent = (stats.bug_sp ?? 0);
+
+    unassignedCountEl.textContent = stats.unassigned_count ?? 0;
+    unassignedPctEl.textContent = stats.unassigned_pct ?? 0;
+
+    zeroCommentCountEl.textContent = stats.zero_comment_count ?? 0;
+    zeroCommentPctEl.textContent = stats.zero_comment_pct ?? 0;
+  }
+
+  function showMetricsLoading() {
+    metricsBox.classList.remove("d-none");
+
+    committedFmtEl.textContent = "...";
+    deliveredFmtEl.textContent = "...";
+    spilloverFmtEl.textContent = "...";
+    scopeAddedFmtEl.textContent = "...";
+    descopeFmtEl.textContent = "...";
+
+    spillPctEl.textContent = "...";
+    scopePctEl.textContent = "...";
+    predictabilityPctEl.textContent = "...";
+
+    completionSpPctEl.textContent = "...";
+    completionCountPctEl.textContent = "...";
+    unplannedSpPctEl.textContent = "...";
+    unplannedCountPctEl.textContent = "...";
+    scopeChurnSpPctEl.textContent = "...";
+    scopeChurnCountPctEl.textContent = "...";
+
+    spillPctEl.style.color = "";
+    scopePctEl.style.color = "";
+  }
+
+  function renderMetrics(m) {
+    if (!m) {
+      metricsBox.classList.add("d-none");
+      return;
+    }
+
+    metricsBox.classList.remove("d-none");
+
+    committedFmtEl.textContent = fmtCountSp(m.committed_count, m.committed_sp);
+    deliveredFmtEl.textContent = fmtCountSp(m.delivered_count, m.delivered_sp);
+    spilloverFmtEl.textContent = fmtCountSp(m.spillover_count, m.spillover_sp);
+    scopeAddedFmtEl.textContent = fmtCountSp(m.scope_added_count, m.scope_added_sp);
+    descopeFmtEl.textContent = fmtCountSp(m.descope_count, m.descope_sp);
+
+    spillPctEl.textContent = m.spill_pct ?? 0;
+    scopePctEl.textContent = m.scope_pct ?? 0;
+    predictabilityPctEl.textContent = m.predictability_pct ?? 0;
+
+    completionSpPctEl.textContent = m.completion_sp_pct ?? 0;
+    completionCountPctEl.textContent = m.completion_count_pct ?? 0;
+    unplannedSpPctEl.textContent = m.unplanned_sp_pct ?? 0;
+    unplannedCountPctEl.textContent = m.unplanned_count_pct ?? 0;
+    scopeChurnSpPctEl.textContent = m.scope_churn_sp_pct ?? 0;
+    scopeChurnCountPctEl.textContent = m.scope_churn_count_pct ?? 0;
+
+    spillPctEl.style.color = m.spill_red ? "red" : "";
+    scopePctEl.style.color = m.scope_red ? "red" : "";
+  }
+
+  function applyScopeStars(scopeKeys) {
+    const set = new Set(scopeKeys || []);
+    document.querySelectorAll(".scope-star").forEach(el => {
+      const k = el.getAttribute("data-issue-key");
+      if (k && set.has(k)) {
+        el.innerHTML = "<b>*</b>";
+        el.title = "Added after sprint start";
+      } else {
+        el.innerHTML = "";
+        el.removeAttribute("title");
+      }
+    });
+  }
+
+  async function fetchMetricsAsync(bid, sid, totalSp, totalCount) {
+    try {
+      const res = await fetch("{{ url_for('automation.sprint_viewer_fetch_metrics') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken
+        },
+        // UPDATED: send total_count too
+        body: JSON.stringify({ board_id: bid, sprint_id: sid, total_sp: totalSp, total_count: totalCount })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showAlert("warning", "Issues loaded. Metrics failed: " + (data.error || "Unknown error"));
+        metricsBox.classList.add("d-none");
+        return;
+      }
+      renderMetrics(data.metrics);
+
+      // NEW: star scope-added issues after metrics arrives
+      applyScopeStars((data.metrics && data.metrics.scope_added_keys) ? data.metrics.scope_added_keys : []);
+    } catch (e) {
+      showAlert("warning", "Issues loaded. Metrics failed due to network/unexpected error.");
+      metricsBox.classList.add("d-none");
+    }
+  }
+
+  // Project change -> load boards
+  projectKey.addEventListener("change", () => {
+    const pk = (projectKey.value || "").trim().toUpperCase();
+    projectKey.value = pk;
+
+    resultsCard.classList.add("d-none");
+    metricsBox.classList.add("d-none");
+    statsBox.classList.add("d-none");
+    msgBox.innerHTML = "";
+
+    boardId.removeAttribute("disabled");
+    populateBoards(pk);
+
+    sprintId.innerHTML = '<option value="">-- Select Sprint --</option>';
+    sprintId.setAttribute("disabled", "disabled");
+    refreshSprintsBtn.setAttribute("disabled", "disabled");
+    fetchIssuesBtn.setAttribute("disabled", "disabled");
+  });
+
+  // Board change -> load sprints
+  boardId.addEventListener("change", () => {
+    resultsCard.classList.add("d-none");
+    metricsBox.classList.add("d-none");
+    statsBox.classList.add("d-none");
+    msgBox.innerHTML = "";
+
+    if (!boardId.value) {
+      sprintId.setAttribute("disabled", "disabled");
+      refreshSprintsBtn.setAttribute("disabled", "disabled");
+      fetchIssuesBtn.setAttribute("disabled", "disabled");
+      return;
+    }
+
+    refreshSprintsBtn.removeAttribute("disabled");
+    loadSprints(false);
+  });
+
+  refreshSprintsBtn.addEventListener("click", () => {
+    resultsCard.classList.add("d-none");
+    metricsBox.classList.add("d-none");
+    statsBox.classList.add("d-none");
+    msgBox.innerHTML = "";
+    loadSprints(true);
+  });
+
+  sprintId.addEventListener("change", () => {
+    resultsCard.classList.add("d-none");
+    metricsBox.classList.add("d-none");
+    statsBox.classList.add("d-none");
+
+    if (sprintId.value) fetchIssuesBtn.removeAttribute("disabled");
+    else fetchIssuesBtn.setAttribute("disabled", "disabled");
+  });
+
+  // Fetch Issues -> sends board_id + sprint_id
+  fetchIssuesBtn.addEventListener("click", async () => {
+    const bid = Number(boardId.value);
+    const sid = Number(sprintId.value);
+
+    resultsCard.classList.add("d-none");
+    metricsBox.classList.add("d-none");
+    statsBox.classList.add("d-none");
+    msgBox.innerHTML = "";
+
+    lockUi();
+    try {
+      const res = await fetch("{{ url_for('automation.sprint_viewer_fetch_issues') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken
+        },
+        body: JSON.stringify({ board_id: bid, sprint_id: sid })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showAlert("danger", data.error || "Failed to fetch sprint issues.");
+        return;
+      }
+
+      // Render issues immediately
+      setTotals(data.total, data.total_sp);
+      renderStats(data.stats);
+      renderGroupedAccordion(data.groups || []);
+
+      resultsCard.classList.remove("d-none");
+      showAlert("success", "Issues fetched successfully. Metrics are calculating...");
+
+      // Now fetch metrics asynchronously
+      showMetricsLoading();
+      fetchMetricsAsync(bid, sid, data.total_sp, data.total);
+
+    } catch (e) {
+      showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
+    } finally {
+      unlockUi();
+    }
+  });
+
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,12 @@
+Flask
+Flask-WTF
+Flask-Login
+Flask-SQLAlchemy
+email-validator
+requests
+cryptography
+python-dotenv
+concurrent-log-handler
+Flask-Migrate
+alembic
+pip-audit

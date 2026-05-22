@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+{% block title %}Jira Automation Rule Copier{% endblock %}
+
+{% block content %}
+
+<div id="loadingOverlay" class="loading-overlay" aria-hidden="true">
+  <div class="text-center">
+    <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div class="mt-3 text-light fw-semibold">Please wait...</div>
+    <!-- <div class="text-light-50 small">UI is locked until the operation completes.</div> -->
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h3 class="mb-2">Jira Automation Rule Copier</h3>
+
+    <input type="hidden" id="csrfToken" value="{{ csrf_token() }}">
+
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Project Key (Source)</label>
+        <select id="srcProject" class="form-select">
+          <option value="">-- Select Project --</option>
+          {% for pk in projects %}
+            <option value="{{ pk }}">{{ pk }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Board (Source)</label>
+        <select id="srcBoard" class="form-select" disabled>
+          <option value="">-- Select Board --</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Rule ID (Numeric)</label>
+        <!-- <input id="ruleId" type="number" class="form-control" min="1" step="1" placeholder="e.g. 1234"> -->
+        <input
+  id="ruleId"
+  type="text"
+  class="form-control"
+  placeholder="e.g. 1234"
+  inputmode="numeric"
+  pattern="[0-9]*"
+  autocomplete="off"
+>
+      </div>
+
+          <div class="col-md-2">
+      <button id="fetchRuleBtn" class="btn btn-success" disabled>Fetch Rule</button>
+    </div>
+
+    </div>
+
+    <div class="mt-3">
+      <div id="fetchMsg"></div>
+    </div>
+
+    <div id="ruleDetailsCard" class="card mt-3 d-none">
+      <div class="card-body">
+        <h5 class="mb-3">Fetched Rule Details</h5>
+        <div><span class="fw-semibold">Rule ID:</span> <span id="outRuleId"></span></div>
+        <div><span class="fw-semibold">Rule Name:</span> <span id="outRuleName"></span></div>
+        <div><span class="fw-semibold">State:</span> <span id="outRuleState"></span></div>
+      </div>
+    </div>
+
+    <div id="confirmSection" class="mt-3 d-none">
+      <button id="confirmBtn" class="btn btn-primary" disabled>Confirm Details</button>
+    </div>
+
+    <div id="step2" class="mt-4 d-none">
+      <hr>
+      <h5 class="mb-3">Step 2: Destination</h5>
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Project Key (Destination)</label>
+          <select id="dstProject" class="form-select">
+            <option value="">-- Select Project --</option>
+            {% for pk in projects %}
+              <option value="{{ pk }}">{{ pk }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-5">
+          <label class="form-label">Board (Destination)</label>
+          <select id="dstBoard" class="form-select" disabled>
+            <option value="">-- Select Board --</option>
+          </select>
+        </div>
+
+        <div class="col-md-3 d-flex align-items-end">
+          <button id="copyRuleBtn" class="btn btn-warning w-100" disabled>Copy Rule</button>
+        </div>
+      </div>
+
+      <div class="mt-3" id="copyMsg"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  const boardsByProject = {{ boards_by_project | tojson }};
+  const csrfToken = document.getElementById("csrfToken").value;
+
+  const overlay = document.getElementById("loadingOverlay");
+
+  const srcProject = document.getElementById("srcProject");
+  const srcBoard = document.getElementById("srcBoard");
+  const ruleId = document.getElementById("ruleId");
+
+  const fetchRuleBtn = document.getElementById("fetchRuleBtn");
+  const confirmBtn = document.getElementById("confirmBtn");
+  const confirmSection = document.getElementById("confirmSection");
+
+  const fetchMsg = document.getElementById("fetchMsg");
+  const ruleDetailsCard = document.getElementById("ruleDetailsCard");
+  const outRuleId = document.getElementById("outRuleId");
+  const outRuleName = document.getElementById("outRuleName");
+  const outRuleState = document.getElementById("outRuleState");
+
+  const step2 = document.getElementById("step2");
+  const dstProject = document.getElementById("dstProject");
+  const dstBoard = document.getElementById("dstBoard");
+  const copyRuleBtn = document.getElementById("copyRuleBtn");
+  const copyMsg = document.getElementById("copyMsg");
+
+  let fetchedRuleId = null;
+  let fetchedRuleJson = null;
+
+  // flow flags
+  let fetchCompleted = false;
+  let confirmCompleted = false;
+
+  function lockUi() {
+    overlay.style.display = "flex";
+
+    // Disable everything temporarily, but remember prior state
+    document.querySelectorAll("button, input, select, textarea, a").forEach(el => {
+      el.dataset.prevDisabled = el.hasAttribute("disabled") ? "1" : "0";
+      el.dataset.prevPointer = el.style.pointerEvents || "";
+
+      // NOTE: disabling <a> doesn't do anything in HTML, but pointerEvents blocks it
+      el.setAttribute("disabled", "disabled");
+      el.style.pointerEvents = "none";
+    });
+  }
+
+  function unlockUi() {
+    overlay.style.display = "none";
+
+    // Restore only what was NOT disabled before lockUi()
+    document.querySelectorAll("button, input, select, textarea, a").forEach(el => {
+      const wasDisabled = el.dataset.prevDisabled === "1";
+      const prevPointer = el.dataset.prevPointer || "";
+
+      if (!wasDisabled) {
+        el.removeAttribute("disabled");
+      } else {
+        el.setAttribute("disabled", "disabled");
+      }
+      el.style.pointerEvents = prevPointer;
+
+      delete el.dataset.prevDisabled;
+      delete el.dataset.prevPointer;
+    });
+
+    // Re-apply intended UI state based on current flow
+    applyUiState();
+  }
+
+  function applyUiState() {
+    // Source board dropdown enabled only after source project selected
+    if (!srcProject.value) {
+      srcBoard.setAttribute("disabled", "disabled");
+    }
+
+    // Destination board dropdown enabled only after destination project selected
+    if (!dstProject.value) {
+      dstBoard.setAttribute("disabled", "disabled");
+    }
+
+    // Fetch button enabled only before fetchCompleted and when inputs valid
+    setFetchEnabled();
+
+    // Confirm section visible only after fetch success
+    if (confirmSection) {
+      if (fetchCompleted) confirmSection.classList.remove("d-none");
+      else confirmSection.classList.add("d-none");
+    }
+
+    // Confirm enabled only after fetch success AND before confirm click
+    if (fetchCompleted && !confirmCompleted) {
+      confirmBtn.removeAttribute("disabled");
+    } else {
+      confirmBtn.setAttribute("disabled", "disabled");
+    }
+
+    // Fetch is permanently disabled after successful fetch
+    if (fetchCompleted) {
+      fetchRuleBtn.setAttribute("disabled", "disabled");
+    }
+
+    // Confirm is permanently disabled after click
+    if (confirmCompleted) {
+      confirmBtn.setAttribute("disabled", "disabled");
+    }
+
+    // Copy enabled only when destination selected and rule fetched
+    setCopyEnabled();
+  }
+
+  function setFetchEnabled() {
+    if (fetchCompleted) {
+      fetchRuleBtn.setAttribute("disabled", "disabled");
+      return;
+    }
+
+    const projOk = !!srcProject.value;
+    const boardOk = !!srcBoard.value;
+    const rid = (ruleId.value || "").trim();
+    const ruleOk = /^[0-9]+$/.test(rid);
+
+    const ok = projOk && boardOk && ruleOk;
+    if (ok) fetchRuleBtn.removeAttribute("disabled");
+    else fetchRuleBtn.setAttribute("disabled", "disabled");
+  }
+
+  function setCopyEnabled() {
+    const ok = fetchedRuleId && dstProject.value && dstBoard.value;
+    if (ok) copyRuleBtn.removeAttribute("disabled");
+    else copyRuleBtn.setAttribute("disabled", "disabled");
+  }
+
+  function populateBoards(selectEl, projectKey) {
+    selectEl.innerHTML = '<option value="">-- Select Board --</option>';
+    const boards = boardsByProject[projectKey] || [];
+    boards.forEach(b => {
+      const opt = document.createElement("option");
+      opt.value = b.board_id;
+      opt.textContent = `${b.board_name} (ID: ${b.board_id})`;
+      selectEl.appendChild(opt);
+    });
+  }
+
+  function showAlert(container, kind, text) {
+    container.innerHTML = `<div class="alert alert-${kind} mb-0">${text}</div>`;
+  }
+
+  // Numeric-only input enforcement (works even if input is type="text")
+  ruleId.addEventListener("input", () => {
+    ruleId.value = (ruleId.value || "").replace(/[^0-9]/g, "");
+    setFetchEnabled();
+  });
+
+  srcProject.addEventListener("change", () => {
+    const pk = (srcProject.value || "").trim().toUpperCase();
+    srcProject.value = pk;
+
+    srcBoard.removeAttribute("disabled");
+    populateBoards(srcBoard, pk);
+
+    setFetchEnabled();
+  });
+
+  srcBoard.addEventListener("change", setFetchEnabled);
+
+  fetchRuleBtn.addEventListener("click", async () => {
+    fetchMsg.innerHTML = "";
+    copyMsg.innerHTML = "";
+
+    // Reset UI states for fetch
+    ruleDetailsCard.classList.add("d-none");
+    if (confirmSection) confirmSection.classList.add("d-none");
+    step2.classList.add("d-none");
+
+    fetchedRuleId = null;
+    fetchedRuleJson = null;
+
+    // Reset flow
+    fetchCompleted = false;
+    confirmCompleted = false;
+
+    // Disable copy until we fetch & confirm
+    copyRuleBtn.setAttribute("disabled", "disabled");
+
+    // IMPORTANT: Do NOT disable confirm here; applyUiState will control it.
+    // confirmBtn.setAttribute("disabled","disabled");  <-- removed intentionally
+
+    const payload = {
+      project_key: srcProject.value.trim().toUpperCase(),
+      board_id: Number(srcBoard.value),
+      rule_id: Number((ruleId.value || "").trim())
+    };
+
+    lockUi();
+    try {
+      const res = await fetch("{{ url_for('automation.fetch_rule') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!data.ok) {
+        showAlert(fetchMsg, "danger", data.error || "Failed to fetch rule.");
+        return;
+      }
+
+      // Display fetched details
+      outRuleId.textContent = data.rule.id;
+      outRuleName.textContent = data.rule.name;
+      outRuleState.textContent = data.rule.state;
+
+      fetchedRuleId = data.rule.id;
+      fetchedRuleJson = data.rule_json;
+
+      ruleDetailsCard.classList.remove("d-none");
+      showAlert(fetchMsg, "success", "Rule fetched successfully. Click Confirm Details to continue.");
+
+      // Mark fetch completed so UI state enables confirm and disables fetch
+      fetchCompleted = true;
+      confirmCompleted = false;
+
+    } catch (e) {
+      showAlert(fetchMsg, "danger", "Network/Unexpected error while fetching rule.");
+    } finally {
+      unlockUi(); // unlockUi calls applyUiState()
+    }
+  });
+
+  confirmBtn.addEventListener("click", () => {
+    // Show step2
+    step2.classList.remove("d-none");
+    showAlert(copyMsg, "info", "Select destination project and board, then click Copy Rule.");
+
+    // Disable confirm permanently
+    confirmCompleted = true;
+    confirmBtn.setAttribute("disabled", "disabled");
+
+    applyUiState();
+  });
+
+  dstProject.addEventListener("change", () => {
+    const pk = (dstProject.value || "").trim().toUpperCase();
+    dstProject.value = pk;
+
+    dstBoard.removeAttribute("disabled");
+    populateBoards(dstBoard, pk);
+
+    setCopyEnabled();
+  });
+
+  dstBoard.addEventListener("change", setCopyEnabled);
+
+  copyRuleBtn.addEventListener("click", async () => {
+    copyMsg.innerHTML = "";
+
+    const payload = {
+      target_project_key: dstProject.value.trim().toUpperCase(),
+      target_board_id: Number(dstBoard.value),
+      rule_json: fetchedRuleJson
+    };
+
+    lockUi();
+    try {
+      const res = await fetch("{{ url_for('automation.copy_rule') }}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!data.ok) {
+        showAlert(copyMsg, "danger", data.error || "Copy failed.");
+        return;
+      }
+
+      showAlert(copyMsg, "success", data.message || "Rule copied.");
+    } catch (e) {
+      showAlert(copyMsg, "danger", "Network/Unexpected error while copying rule.");
+    } finally {
+      unlockUi();
+    }
+  });
+
+  // Initial UI state
+  applyUiState();
+
+})();
+</script>
+
+{% endblock %}
