@@ -25,6 +25,39 @@
   pointer-events: all;
 }
 
+.toast-container {
+  z-index: 1080;
+}
+
+.portal-toast {
+  border: 0;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.portal-toast-success {
+  border-left: 4px solid #198754;
+}
+
+.portal-toast-danger {
+  border-left: 4px solid #dc3545;
+}
+
+.portal-toast-warning {
+  border-left: 4px solid #ffc107;
+}
+
+.portal-toast-info {
+  border-left: 4px solid #0dcaf0;
+}
+
+.session-expiry-modal {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28);
+}
+
 /* =====================================================
    SPRINT VIEWER UI
    ===================================================== */

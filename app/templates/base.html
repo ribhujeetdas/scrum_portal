@@ -10,7 +10,33 @@
     <link href="{{ url_for('static', filename='css/app.css') }}" rel="stylesheet">
   </head>
 
-  <body class="bg-light">
+  <body class="bg-light" data-authenticated="{{ 'true' if current_user.is_authenticated else 'false' }}">
+    {% include "_toasts.html" %}
+
+    {% if current_user.is_authenticated %}
+      <form id="sessionLogoutForm" method="POST" action="{{ url_for('auth.logout') }}" class="d-none">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      </form>
+
+      <div class="modal fade" id="sessionExpiryModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content session-expiry-modal">
+            <div class="modal-header">
+              <h5 class="modal-title">Session expiring soon</h5>
+            </div>
+            <div class="modal-body">
+              <p class="mb-2">Your session will expire in <strong id="sessionCountdown">--:--</strong>.</p>
+              <p class="text-muted mb-0">Extend your session to continue working.</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" id="sessionLogoutBtn">Log out</button>
+              <button type="button" class="btn btn-primary" id="sessionExtendBtn">Extend session</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
     <div class="d-flex">
 
       <!-- Sidebar -->
@@ -62,17 +88,6 @@
 
       <!-- Main -->
       <main class="flex-grow-1 p-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
         {% block content %}{% endblock %}
       </main>
 

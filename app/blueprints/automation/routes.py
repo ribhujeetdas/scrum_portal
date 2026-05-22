@@ -1,7 +1,7 @@
 # app/blueprints/automation/routes.py
 from __future__ import annotations
 
-from flask import current_app, render_template, jsonify, request
+from flask import current_app, flash, redirect, render_template, jsonify, request, url_for
 from flask_login import login_required, current_user
 
 from ...extensions import db
@@ -123,6 +123,13 @@ def rule_copier_page():
         .order_by(UserProject.project_key.asc())
         .all()
     )
+    if not projects:
+        flash(
+            "No project key found. Redirecting you to Settings to add Projects & Boards.",
+            "warning",
+        )
+        return redirect(url_for("config.projects"))
+
     boards_by_project: dict[str, list[dict]] = {}
     for p in projects:
         boards = (
@@ -289,6 +296,13 @@ def sprint_viewer_page():
         .order_by(UserProject.project_key.asc())
         .all()
     )
+    if not projects:
+        flash(
+            "No project key found. Redirecting you to Settings to add Projects & Boards.",
+            "warning",
+        )
+        return redirect(url_for("config.projects"))
+
     boards_by_project: dict[str, list[dict]] = {}
     for p in projects:
         boards = (

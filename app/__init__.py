@@ -13,8 +13,9 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_object)
 
-    # 30-minute session expiry
-    app.permanent_session_lifetime = timedelta(minutes=30)
+    app.permanent_session_lifetime = timedelta(
+        minutes=int(app.config.get("SESSION_TIMEOUT_MINUTES", 15))
+    )
 
     # Init extensions
     db.init_app(app)

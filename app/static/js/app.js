@@ -74,6 +74,40 @@
     }).catch(() => {});
   }
 
+  function normalizeToastKind(kind) {
+    if (["success", "danger", "warning", "info"].includes(kind)) return kind;
+    return "info";
+  }
+
+  function showToast(message, kind, delay) {
+    const container = document.getElementById("portalToastContainer");
+    if (!container || !window.bootstrap) {
+      return;
+    }
+
+    const safeKind = normalizeToastKind(kind || "info");
+    const toastEl = document.createElement("div");
+    toastEl.className = `toast portal-toast portal-toast-${safeKind}`;
+    toastEl.setAttribute("role", "alert");
+    toastEl.setAttribute("aria-live", "assertive");
+    toastEl.setAttribute("aria-atomic", "true");
+    toastEl.setAttribute("data-bs-delay", String(delay || 4500));
+    toastEl.innerHTML = `
+      <div class="d-flex align-items-center">
+        <div class="toast-body">${escapeHtml(message)}</div>
+        <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    `;
+    container.appendChild(toastEl);
+
+    const toast = bootstrap.Toast.getOrCreateInstance(toastEl, {
+      autohide: true,
+      delay: delay || 4500
+    });
+    toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
+    toast.show();
+  }
+
   async function apiFetch(url, options) {
     const requestId = newRequestId("ui");
     const opts = Object.assign({}, options || {});
@@ -115,6 +149,137 @@
   window.portalLogClientEvent = logClientEvent;
   window.portalNewRequestId = newRequestId;
   window.portalEscapeHtml = escapeHtml;
+  window.portalShowToast = showToast;
+
+  function formatCountdown(seconds) {
+    const safeSeconds = Math.max(0, Number(seconds) || 0);
+    const mins = Math.floor(safeSeconds / 60);
+    const secs = safeSeconds % 60;
+    return `${mins}:${String(secs).padStart(2, "0")}`;
+  }
+
+  function startSessionMonitor() {
+    if (document.body.getAttribute("data-authenticated") !== "true" || !window.bootstrap) {
+      return;
+    }
+
+    const modalEl = document.getElementById("sessionExpiryModal");
+    const countdownEl = document.getElementById("sessionCountdown");
+    const extendBtn = document.getElementById("sessionExtendBtn");
+    const logoutBtn = document.getElementById("sessionLogoutBtn");
+    const logoutForm = document.getElementById("sessionLogoutForm");
+    if (!modalEl || !countdownEl || !extendBtn || !logoutBtn || !logoutForm) {
+      return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl, {
+      backdrop: "static",
+      keyboard: false
+    });
+    let expiresAt = 0;
+    let countdownTimer = null;
+    let pollTimer = null;
+    let modalVisible = false;
+
+    function clearCountdown() {
+      if (countdownTimer) {
+        window.clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+    }
+
+    function updateCountdown() {
+      const remaining = Math.max(0, Math.floor(expiresAt - Date.now() / 1000));
+      countdownEl.textContent = formatCountdown(remaining);
+      if (remaining <= 0) {
+        window.location.href = "/login";
+      }
+    }
+
+    function showWarning() {
+      if (!modalVisible) {
+        modal.show();
+        modalVisible = true;
+      }
+      clearCountdown();
+      updateCountdown();
+      countdownTimer = window.setInterval(updateCountdown, 1000);
+    }
+
+    function hideWarning() {
+      clearCountdown();
+      if (modalVisible) {
+        modal.hide();
+        modalVisible = false;
+      }
+    }
+
+    async function pollStatus() {
+      try {
+        const response = await apiFetch("/session/status", { method: "GET" });
+        if (response.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        const data = await response.json();
+        if (!data.authenticated || data.expired) {
+          window.location.href = data.redirect_url || "/login";
+          return;
+        }
+        expiresAt = Number(data.expires_at || 0);
+        if (data.show_warning) {
+          showWarning();
+        } else {
+          hideWarning();
+        }
+      } catch (error) {
+        logClientEvent("session.status_error", error);
+      }
+    }
+
+    extendBtn.addEventListener("click", async () => {
+      extendBtn.setAttribute("disabled", "disabled");
+      try {
+        const response = await apiFetch("/session/extend", { method: "POST" });
+        if (response.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+        const data = await response.json();
+        expiresAt = Number(data.expires_at || 0);
+        hideWarning();
+        showToast("Session extended.", "success");
+      } catch (error) {
+        showToast("Unable to extend session. Please try again.", "danger");
+        logClientEvent("session.extend_error", error);
+      } finally {
+        extendBtn.removeAttribute("disabled");
+      }
+    });
+
+    logoutBtn.addEventListener("click", () => {
+      logoutForm.submit();
+    });
+
+    pollStatus();
+    pollTimer = window.setInterval(pollStatus, 15000);
+    window.addEventListener("beforeunload", () => {
+      if (pollTimer) window.clearInterval(pollTimer);
+      clearCountdown();
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".portal-toast").forEach((toastEl) => {
+      const toast = bootstrap.Toast.getOrCreateInstance(toastEl, {
+        autohide: true,
+        delay: Number(toastEl.getAttribute("data-bs-delay") || 4500)
+      });
+      toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
+      toast.show();
+    });
+    startSessionMonitor();
+  });
 
   window.addEventListener("error", (event) => {
     logClientEvent("window.error", {

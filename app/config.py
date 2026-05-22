@@ -26,6 +26,12 @@ class Config:
     # CSRF
     WTF_CSRF_TIME_LIMIT = None  # let session lifetime govern it
 
+    # Session timeout. Warning appears after this ratio is consumed.
+    SESSION_TIMEOUT_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "15"))
+    SESSION_WARNING_THRESHOLD_RATIO = float(
+        os.getenv("SESSION_WARNING_THRESHOLD_RATIO", "0.8")
+    )
+
     # PAT encryption
     FERNET_KEY = os.getenv("FERNET_KEY", "")
 

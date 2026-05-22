@@ -1,0 +1,14 @@
+<div id="portalToastContainer" class="toast-container position-fixed top-0 end-0 p-3">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="toast portal-toast portal-toast-{{ category }}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="4500">
+          <div class="d-flex align-items-center">
+            <div class="toast-body">{{ message }}</div>
+            <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+</div>

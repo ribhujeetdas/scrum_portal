@@ -273,6 +273,11 @@
   }
 
   function showAlert(container, kind, text) {
+    if (window.portalShowToast) {
+      window.portalShowToast(text, kind);
+      container.innerHTML = "";
+      return;
+    }
     const safeKind = ["success", "danger", "warning", "info"].includes(kind) ? kind : "info";
     container.innerHTML = `<div class="alert alert-${safeKind} mb-0">${escapeHtml(text)}</div>`;
   }
