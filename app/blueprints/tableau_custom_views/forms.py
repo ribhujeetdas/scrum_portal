@@ -10,8 +10,6 @@ class TableauCustomViewSelectForm(FlaskForm):
         validators=[DataRequired()],
         choices=[],
     )
-    view_details = SelectField(
-        "View Details",)
-    preview_data = SelectField(
-        "Preview Data",)
+    view_details = SubmitField("View Details")
+    preview_data = SubmitField("Preview Data")
     download_csv = SubmitField("Download CSV")

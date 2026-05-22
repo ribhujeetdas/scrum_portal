@@ -6,7 +6,7 @@
 
 <div id="previewLoader" class="preview-loader d-none">
   <div class="spinner-border text-light" role="status"></div>
-  <div class="mt-2">Loading TCI Item data…</div>
+  <div class="mt-2">Loading TCI Item data...</div>
 </div>
 
 <input type="hidden" id="csrfToken" value="{{ csrf_token() }}">
@@ -43,12 +43,12 @@
         <strong>Legend:</strong>
         <ul class="mb-0">
           <li><span class="legend-red"></span> Planning Status = <b>Not Caught</b> (row blinks)</li>
-          <li><span class="legend-yellow"></span> Due ≤ <b>31 days</b> (future, Status ≠ Done)</li>
-          <li><span class="legend-overdue"></span> Due date in <b>past</b> (Status ≠ Done)</li>
+          <li><span class="legend-yellow"></span> Due <= <b>31 days</b> (future, Status != Done)</li>
+          <li><span class="legend-overdue"></span> Due date in <b>past</b> (Status != Done)</li>
         </ul>
         {% if preview.skipped_all and preview.skipped_all > 0 %}
           <div class="mt-2 text-muted">
-            Skipped <b>{{ preview.skipped_all }}</b> row(s) because one of key fields was “All”.
+            Skipped <b>{{ preview.skipped_all }}</b> row(s) because one of key fields was "All".
           </div>
         {% endif %}
       </div>
@@ -102,7 +102,6 @@
   </div>
 </div>
 
-<!-- ✅ Modal -->
 <div class="modal fade" id="planningModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
@@ -112,7 +111,7 @@
       </div>
       <div class="modal-body">
         <div id="planningModalBody">
-          <div class="text-muted">Loading…</div>
+          <div class="text-muted">Loading...</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -135,19 +134,39 @@ function getCsrfToken() {
   return el ? el.value : "";
 }
 
+function apiFetch(url, options) {
+  if (window.portalApiFetch) {
+    return window.portalApiFetch(url, options);
+  }
+  return window.fetch(url, options);
+}
+
+function escapeHtml(value) {
+  if (window.portalEscapeHtml) {
+    return window.portalEscapeHtml(value);
+  }
+  return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  }[ch]));
+}
+
 function openPlanningDetails(btn) {
   const featureKey = btn.getAttribute("data-feature-key") || "";
   const applicationId = btn.getAttribute("data-application-id") || "";
   const customViewId = (document.getElementById("selectedCustomViewId") || {}).value || "";
 
   const body = document.getElementById("planningModalBody");
-  body.innerHTML = `<div class="text-muted">Fetching Jira link details for <b>${featureKey}</b>…</div>`;
+  body.innerHTML = `<div class="text-muted">Fetching Jira link details for <b>${escapeHtml(featureKey)}</b>...</div>`;
 
   const modalEl = document.getElementById("planningModal");
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
 
-  fetch("/tableau/custom-views/link-details", {
+  apiFetch("/tableau/custom-views/link-details", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -162,17 +181,17 @@ function openPlanningDetails(btn) {
   .then(r => r.json())
   .then(data => {
     if (!data.ok) {
-      body.innerHTML = `<div class="alert alert-danger mb-0">${data.error || "Failed to fetch details."}</div>`;
+      body.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.error || "Failed to fetch details.")}</div>`;
       return;
     }
 
     const matches = data.matches || [];
     let html = `
       <div class="mb-2">
-        <div><b>Feature Issue Key:</b> ${data.feature_key}</div>
-        <div><b>Mapped Key:</b> ${data.mapped_key}</div>
-        <div><b>Application ID:</b> ${data.application_id}</div>
-        <div class="text-muted mt-1">${data.message || ""}</div>
+        <div><b>Feature Issue Key:</b> ${escapeHtml(data.feature_key)}</div>
+        <div><b>Mapped Key:</b> ${escapeHtml(data.mapped_key)}</div>
+        <div><b>Application ID:</b> ${escapeHtml(data.application_id)}</div>
+        <div class="text-muted mt-1">${escapeHtml(data.message || "")}</div>
       </div>
       <hr>
     `;
@@ -193,13 +212,13 @@ function openPlanningDetails(btn) {
         <div class="list-group-item">
           <div class="d-flex justify-content-between align-items-start">
             <div>
-              <div><b>Related Ticket:</b> ${m.inward_issue_key}</div>
-              <div class="small text-muted">${m.inward_status || ""} — ${m.inward_summary || ""}</div>
-              <div class="small"><b>Link Type:</b> ${m.link_type?.name || ""} (${m.link_type?.inward || ""} / ${m.link_type?.outward || ""})</div>
-              <div class="small"><b>Labels:</b> ${labels || "-"}</div>
+              <div><b>Related Ticket:</b> ${escapeHtml(m.inward_issue_key)}</div>
+              <div class="small text-muted">${escapeHtml(m.inward_status || "")} - ${escapeHtml(m.inward_summary || "")}</div>
+              <div class="small"><b>Link Type:</b> ${escapeHtml(m.link_type?.name || "")} (${escapeHtml(m.link_type?.inward || "")} / ${escapeHtml(m.link_type?.outward || "")})</div>
+              <div class="small"><b>Labels:</b> ${escapeHtml(labels || "-")}</div>
             </div>
             <div class="ms-3 text-end">
-              <span class="badge bg-${badge}">Label Match: ${ok}</span>
+              <span class="badge bg-${badge}">Label Match: ${escapeHtml(ok)}</span>
             </div>
           </div>
         </div>

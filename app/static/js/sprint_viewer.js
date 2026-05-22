@@ -7,7 +7,8 @@
   }
 
   async function postJson(url, payload) {
-    const resp = await fetch(url, {
+    const fetchImpl = window.portalApiFetch || window.fetch.bind(window);
+    const resp = await fetchImpl(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

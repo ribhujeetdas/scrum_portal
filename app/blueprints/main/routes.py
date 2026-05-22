@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import render_template, session, flash, redirect, url_for
+from flask import current_app, g, jsonify, render_template, session, flash, redirect, request, url_for
 from flask_login import login_required, current_user
 from datetime import datetime
 
@@ -31,3 +31,28 @@ def enforce_session_timeout():
 @login_required
 def home():
     return render_template("main/home.html")
+
+
+@main_bp.route("/client-log", methods=["POST"])
+def client_log():
+    if request.content_length and request.content_length > 8192:
+        return jsonify({"ok": False, "error": "Payload too large."}), 413
+
+    payload = request.get_json(silent=True) or {}
+
+    def clean(value, max_len):
+        if value is None:
+            return ""
+        return str(value).replace("\x00", "")[:max_len]
+
+    current_app.logger.info(
+        "client event",
+        extra={
+            "event": "client.event",
+            "client_event": clean(payload.get("event"), 80),
+            "client_message": clean(payload.get("message"), 500),
+            "client_url": clean(payload.get("url"), 500),
+            "client_user_agent": clean(payload.get("userAgent"), 300),
+        },
+    )
+    return jsonify({"ok": True, "request_id": getattr(g, "request_id", "-")})

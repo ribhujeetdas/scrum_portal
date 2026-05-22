@@ -244,7 +244,7 @@ def copy_rule():
         return jsonify({"ok": False, "error": "Your jira_key is missing in DB. Please contact admin."}), 400
 
     author_account_id = str(current_user.jira_key).strip()
-    actor_account_id = "JIRAUSER182483"
+    actor_account_id = current_app.config["JIRA_AUTOMATION_ACTOR_ACCOUNT_ID"]
 
     try:
         create_payload = _rule_service().transform_rule_for_create(

@@ -356,7 +356,9 @@ class SprintViewerService:
         zero_comment_count = 0
 
         for it in extracted_issues:
-            sp = it.get("customfield_10106")
+            sp = it.get("story_points")
+            if sp is None and "customfield_10106" in it:
+                sp = it.get("customfield_10106")
             if sp is None or str(sp).strip() == "":
                 unestimated_count += 1
 

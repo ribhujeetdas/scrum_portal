@@ -36,19 +36,31 @@ class Config:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG").upper()
     # relative to project root (we resolve in logging_conf)
     LOG_DIR = os.getenv("LOG_DIR", "logs")
-    LOG_FILE_NAME = os.getenv("LOG_FILE_NAME", "app.log")
-    LOG_BACKUP_DAYS = int(os.getenv("LOG_BACKUP_DAYS", "14"))
+    LOG_FILE = os.getenv("LOG_FILE", os.getenv("LOG_FILE_NAME", "app.log"))
+    LOG_FILE_NAME = LOG_FILE
+    LOG_BACKUPS = int(os.getenv("LOG_BACKUPS", os.getenv("LOG_BACKUP_DAYS", "14")))
+    LOG_BACKUP_DAYS = LOG_BACKUPS
 
     # When true, also log to console (helpful in dev)
     LOG_TO_CONSOLE = os.getenv("LOG_TO_CONSOLE", "false").lower() == "true"
+    LOG_CONSOLE = LOG_TO_CONSOLE
 
     # Use IST for timestamps + midnight rotation
     LOG_TIMEZONE = os.getenv("LOG_TIMEZONE", "Asia/Kolkata")
+    LOG_TZ = LOG_TIMEZONE
+    LOG_FORMAT = os.getenv("LOG_FORMAT", "json").lower()
 
     # Optional: make it easy to dial noisy libs down
     LOG_WERKZEUG_LEVEL = os.getenv("LOG_WERKZEUG_LEVEL", "INFO").upper()
     LOG_URLLIB3_LEVEL = os.getenv("LOG_URLLIB3_LEVEL", "WARNING").upper()
     LOG_SQLALCHEMY_LEVEL = os.getenv("LOG_SQLALCHEMY_LEVEL", "INFO").upper()
+    REQUESTS_LOG_LEVEL = LOG_URLLIB3_LEVEL
+    URLLIB3_LOG_LEVEL = LOG_URLLIB3_LEVEL
+    WERKZEUG_LOG_LEVEL = LOG_WERKZEUG_LEVEL
+
+    JIRA_AUTOMATION_ACTOR_ACCOUNT_ID = os.getenv(
+        "JIRA_AUTOMATION_ACTOR_ACCOUNT_ID", "JIRAUSER182483"
+    )
 
     TRACE_SPRINT_VIEWER = os.getenv(
         "TRACE_SPRINT_VIEWER", "false").lower() == "true"

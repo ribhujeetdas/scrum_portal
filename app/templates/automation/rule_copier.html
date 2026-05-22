@@ -141,6 +141,26 @@
   let fetchCompleted = false;
   let confirmCompleted = false;
 
+  function apiFetch(url, options) {
+    if (window.portalApiFetch) {
+      return window.portalApiFetch(url, options);
+    }
+    return window.fetch(url, options);
+  }
+
+  function escapeHtml(value) {
+    if (window.portalEscapeHtml) {
+      return window.portalEscapeHtml(value);
+    }
+    return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    }[ch]));
+  }
+
   function lockUi() {
     overlay.style.display = "flex";
 
@@ -253,7 +273,8 @@
   }
 
   function showAlert(container, kind, text) {
-    container.innerHTML = `<div class="alert alert-${kind} mb-0">${text}</div>`;
+    const safeKind = ["success", "danger", "warning", "info"].includes(kind) ? kind : "info";
+    container.innerHTML = `<div class="alert alert-${safeKind} mb-0">${escapeHtml(text)}</div>`;
   }
 
   // Numeric-only input enforcement (works even if input is type="text")
@@ -304,7 +325,7 @@
 
     lockUi();
     try {
-      const res = await fetch("{{ url_for('automation.fetch_rule') }}", {
+      const res = await apiFetch("{{ url_for('automation.fetch_rule') }}", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -376,7 +397,7 @@
 
     lockUi();
     try {
-      const res = await fetch("{{ url_for('automation.copy_rule') }}", {
+      const res = await apiFetch("{{ url_for('automation.copy_rule') }}", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

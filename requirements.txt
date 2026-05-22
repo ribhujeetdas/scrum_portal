@@ -10,3 +10,4 @@ concurrent-log-handler
 Flask-Migrate
 alembic
 pip-audit
+pytest

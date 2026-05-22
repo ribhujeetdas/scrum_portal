@@ -193,7 +193,7 @@ class RuleCopierService:
     # ---------------------------
     # Transform + Create rule
     # ---------------------------
-    def transform_rule_for_create(self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str = "JIRAUSER182483") -> dict:
+    def transform_rule_for_create(self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str) -> dict:
         """
         Takes fetched rule JSON and transforms into a payload suitable for create.
 

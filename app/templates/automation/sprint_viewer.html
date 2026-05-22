@@ -143,7 +143,7 @@
 
 <script>
 (function () {  const boardsByProject = {{ boards_by_project|tojson }};
-  const jiraBaseUrl = "{{ jira_base_url }}";
+  const jiraBaseUrl = {{ jira_base_url|tojson }};
   const csrfToken = document.getElementById("csrfToken").value;
 
   const overlay = document.getElementById("loadingOverlay");
@@ -194,6 +194,30 @@
 
   const assigneeAccordion = document.getElementById("assigneeAccordion");
 
+  function apiFetch(url, options) {
+    if (window.portalApiFetch) {
+      return window.portalApiFetch(url, options);
+    }
+    return window.fetch(url, options);
+  }
+
+  function escapeHtml(value) {
+    if (window.portalEscapeHtml) {
+      return window.portalEscapeHtml(value);
+    }
+    return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    }[ch]));
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/"/g, "&quot;");
+  }
+
   function lockUi() {
     overlay.style.display = "flex";
     document.querySelectorAll("button, input, select, textarea, a").forEach(el => {
@@ -216,7 +240,8 @@
   }
 
   function showAlert(kind, text) {
-    msgBox.innerHTML = `<div class="alert alert-${kind} mb-0">${text}</div>`;
+    const safeKind = ["success", "danger", "warning", "info"].includes(kind) ? kind : "info";
+    msgBox.innerHTML = `<div class="alert alert-${safeKind} mb-0">${escapeHtml(text)}</div>`;
   }
 
   function populateBoards(pk) {
@@ -252,7 +277,7 @@
     const bid = Number(boardId.value);
     lockUi();
     try {
-      const res = await fetch("{{ url_for('automation.sprint_viewer_get_sprints') }}", {
+      const res = await apiFetch("{{ url_for('automation.sprint_viewer_get_sprints') }}", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -287,25 +312,33 @@
         const featureKey = it.feature_key || "";
         const issueUrl = issueKey ? `${jiraBaseUrl}/browse/${issueKey}` : "";
         const featureUrl = featureKey ? `${jiraBaseUrl}/browse/${featureKey}` : "";
-        const safeSummary = (it.summary || "");
+        const safeSummary = escapeHtml(it.summary || "");
         const sp = (it.story_points === null || it.story_points === undefined) ? "" : it.story_points;
+        const safeIssueKey = escapeHtml(issueKey);
+        const safeFeatureKey = escapeHtml(featureKey);
+        const safeIssueUrl = escapeAttr(issueUrl);
+        const safeFeatureUrl = escapeAttr(featureUrl);
+        const safeType = escapeHtml(it.issue_type || "");
+        const safeStatus = escapeHtml(it.status || "");
+        const safeSp = escapeHtml(sp);
+        const safeComments = escapeHtml(it.comment_total ?? 0);
 
         return `
           <tr>
             <td class="col-key nowrap">
               ${issueKey ? `
-                <a href="${issueUrl}" target="_blank" rel="noopener noreferrer">${issueKey}</a>
-                <span class="scope-star" data-issue-key="${issueKey}"></span>
+                <a href="${safeIssueUrl}" target="_blank" rel="noopener noreferrer">${safeIssueKey}</a>
+                <span class="scope-star" data-issue-key="${escapeAttr(issueKey)}"></span>
               ` : ""}
             </td>
             <td>${safeSummary}</td>
-            <td>${it.issue_type || ""}</td>
-            <td>${it.status || ""}</td>
-            <td>${sp}</td>
+            <td>${safeType}</td>
+            <td>${safeStatus}</td>
+            <td>${safeSp}</td>
             <td class="col-feature nowrap">
-              ${featureKey ? `<a href="${featureUrl}" target="_blank" rel="noopener noreferrer">${featureKey}</a>` : ""}
+              ${featureKey ? `<a href="${safeFeatureUrl}" target="_blank" rel="noopener noreferrer">${safeFeatureKey}</a>` : ""}
             </td>
-            <td>${it.comment_total ?? 0}</td>
+            <td>${safeComments}</td>
           </tr>
         `;
       }).join("");
@@ -321,14 +354,14 @@
           <button class="accordion-button collapsed" type="button"
             data-bs-toggle="collapse" data-bs-target="#${collapseId}"
             aria-expanded="false" aria-controls="${collapseId}">
-            ${g.assignee_name}
-            <span class="ms-2 text-muted">${g.issue_count} issues, ${spTxt} SP</span>
+            ${escapeHtml(g.assignee_name)}
+            <span class="ms-2 text-muted">${escapeHtml(g.issue_count)} issues, ${escapeHtml(spTxt)} SP</span>
           </button>
         </h2>
         <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="${headerId}"
           data-bs-parent="#assigneeAccordion">
           <div class="accordion-body">
-            <div class="mb-2 text-muted small">EID: ${g.assignee_eid}</div>
+            <div class="mb-2 text-muted small">EID: ${escapeHtml(g.assignee_eid)}</div>
             <div class="table-responsive">
               <table class="table table-sm table-striped align-middle">
                 <thead>
@@ -449,7 +482,7 @@
 
   async function fetchMetricsAsync(bid, sid, totalSp, totalCount) {
     try {
-      const res = await fetch("{{ url_for('automation.sprint_viewer_fetch_metrics') }}", {
+      const res = await apiFetch("{{ url_for('automation.sprint_viewer_fetch_metrics') }}", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -540,7 +573,7 @@
 
     lockUi();
     try {
-      const res = await fetch("{{ url_for('automation.sprint_viewer_fetch_issues') }}", {
+      const res = await apiFetch("{{ url_for('automation.sprint_viewer_fetch_issues') }}", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
