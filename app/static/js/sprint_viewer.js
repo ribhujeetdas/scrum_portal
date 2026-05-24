@@ -13,8 +13,10 @@
   const fetchIssuesBtn = document.getElementById("fetchIssuesBtn");
   const msgBox = document.getElementById("msgBox");
   const resultsCard = document.getElementById("resultsCard");
+  const sprintMetaBox = document.getElementById("sprintMetaBox");
   const statsBox = document.getElementById("statsBox");
   const metricsBox = document.getElementById("metricsBox");
+  const workTypeMixBox = document.getElementById("workTypeMixBox");
   const assigneeAccordion = document.getElementById("assigneeAccordion");
 
   function $(id) {
@@ -28,6 +30,12 @@
 
   function clear(el) {
     if (el) el.replaceChildren();
+  }
+
+  function errorMessage(data, fallback) {
+    if (!data || !data.error) return fallback;
+    if (typeof data.error === "string") return data.error;
+    return data.error.message || fallback;
   }
 
   function makeOption(value, text) {
@@ -87,6 +95,8 @@
     resultsCard.classList.add("d-none");
     metricsBox.classList.add("d-none");
     statsBox.classList.add("d-none");
+    sprintMetaBox.classList.add("d-none");
+    workTypeMixBox.classList.add("d-none");
     clear(msgBox);
   }
 
@@ -108,7 +118,7 @@
     const safeCount = count ?? 0;
     const safeSp = sp ?? 0;
     const spText = typeof safeSp === "number" ? safeSp.toFixed(2) : safeSp;
-    return `${safeCount} (${spText} SP)`;
+    return `${safeCount} # (${spText} pts)`;
   }
 
   async function loadSprints(refresh) {
@@ -120,7 +130,7 @@
         refresh: Boolean(refresh)
       });
       if (!data.ok) {
-        showAlert("danger", data.error || "Failed to load sprints.");
+        showAlert("danger", errorMessage(data, "Failed to load sprints."));
         return;
       }
       populateSprints(data.sprints || []);
@@ -133,9 +143,35 @@
     }
   }
 
-  function setTotals(totalIssues, totalSp) {
+  function setTotals(totalIssues, totalSp, standardTotal) {
     $("totalIssues").textContent = totalIssues ?? 0;
     $("totalSp").textContent = typeof totalSp === "number" ? totalSp.toFixed(2) : (totalSp ?? 0);
+    $("standardTotal").textContent = standardTotal ?? 0;
+  }
+
+  function shortDate(value) {
+    if (!value) return "-";
+    return String(value).replace("T", " ").slice(0, 19);
+  }
+
+  function renderSprintMeta(sprint, fallbackCount) {
+    if (!sprint) {
+      sprintMetaBox.classList.add("d-none");
+      return;
+    }
+    sprintMetaBox.classList.remove("d-none");
+    $("sprintName").textContent = sprint.name || sprint.id || "-";
+    $("sprintStartDate").textContent = shortDate(sprint.start_date);
+    $("sprintEndDate").textContent = shortDate(sprint.end_date);
+    $("sprintCompleteDate").textContent = shortDate(sprint.complete_date);
+    $("sprintGoal").textContent = sprint.goal || "-";
+    const note = $("historicalFallbackNote");
+    if ((fallbackCount || 0) > 0) {
+      note.classList.remove("d-none");
+      note.textContent = `${fallbackCount} row(s) use current Jira values because sprint-end changelog data was unavailable.`;
+    } else {
+      note.classList.add("d-none");
+    }
   }
 
   function renderStats(stats) {
@@ -151,8 +187,11 @@
     $("bugSp").textContent = stats.bug_sp ?? 0;
     $("unassignedCount").textContent = stats.unassigned_count ?? 0;
     $("unassignedPct").textContent = stats.unassigned_pct ?? 0;
-    $("zeroCommentCount").textContent = stats.zero_comment_count ?? 0;
-    $("zeroCommentPct").textContent = stats.zero_comment_pct ?? 0;
+    $("zeroRelevantCommentCount").textContent = stats.zero_relevant_comment_count ?? 0;
+    $("zeroRelevantCommentPct").textContent = stats.zero_relevant_comment_pct ?? 0;
+    $("relevantCommentCount").textContent = stats.relevant_comment_count ?? 0;
+    $("carryoverCount").textContent = stats.carryover_count ?? 0;
+    $("carryoverPts").textContent = stats.carryover_sp ?? 0;
   }
 
   function addText(parent, text, className) {
@@ -200,7 +239,7 @@
       button.setAttribute("aria-controls", collapseId);
       addText(button, group.assignee_name || "Unassigned");
       const spSum = group.sp_sum ?? 0;
-      addText(button, `${group.issue_count ?? 0} issues, ${typeof spSum === "number" ? spSum.toFixed(2) : spSum} SP`, "ms-2 text-muted");
+      addText(button, `${group.issue_count ?? 0} issues, ${typeof spSum === "number" ? spSum.toFixed(2) : spSum} pts, ${group.relevant_comment_count ?? 0} relevant comments`, "ms-2 text-muted");
       header.appendChild(button);
 
       const collapse = document.createElement("div");
@@ -221,7 +260,7 @@
       table.className = "table table-sm table-striped align-middle";
       const thead = document.createElement("thead");
       const headRow = document.createElement("tr");
-      ["Key", "Summary", "Type", "Status", "SP", "Feature Key", "Comments"].forEach((label) => {
+      ["Key", "Summary", "Type", "Status", "Pts", "Feature Key", "Relevant Comments", "Data"].forEach((label) => {
         const th = document.createElement("th");
         th.textContent = label;
         if (label === "Key" || label === "Feature Key") th.className = label === "Key" ? "col-key nowrap" : "col-feature nowrap";
@@ -251,7 +290,8 @@
         featureCell.className = "col-feature nowrap";
         if (issue.feature_key) featureCell.appendChild(makeIssueLink(issue.feature_key));
         row.appendChild(featureCell);
-        addCell(row, issue.comment_total ?? 0);
+        addCell(row, issue.relevant_comment_count ?? 0);
+        addCell(row, issue.historical_fallback ? "Current fallback" : "Sprint-end");
         tbody.appendChild(row);
       });
       table.appendChild(tbody);
@@ -268,12 +308,11 @@
     metricsBox.classList.remove("d-none");
     [
       "committedFmt", "deliveredFmt", "spilloverFmt", "scopeAddedFmt", "descopeFmt",
-      "spillPct", "scopePct", "predictabilityPct", "completionSpPct", "completionCountPct",
-      "unplannedSpPct", "unplannedCountPct", "scopeChurnSpPct", "scopeChurnCountPct"
+      "completedOriginalFmt", "scopeNetFmt", "scopePct", "predictabilityPct",
+      "totalDeliveryPct", "scopeChangePct"
     ].forEach((id) => {
       $(id).textContent = "...";
     });
-    $("spillPct").style.color = "";
     $("scopePct").style.color = "";
   }
 
@@ -284,21 +323,48 @@
     }
     metricsBox.classList.remove("d-none");
     $("committedFmt").textContent = fmtCountSp(metrics.committed_count, metrics.committed_sp);
+    $("completedOriginalFmt").textContent = fmtCountSp(metrics.completed_original_count, metrics.completed_original_sp);
     $("deliveredFmt").textContent = fmtCountSp(metrics.delivered_count, metrics.delivered_sp);
     $("spilloverFmt").textContent = fmtCountSp(metrics.spillover_count, metrics.spillover_sp);
     $("scopeAddedFmt").textContent = fmtCountSp(metrics.scope_added_count, metrics.scope_added_sp);
     $("descopeFmt").textContent = fmtCountSp(metrics.descope_count, metrics.descope_sp);
-    $("spillPct").textContent = metrics.spill_pct ?? 0;
+    $("scopeNetFmt").textContent = fmtCountSp(metrics.scope_net_count, metrics.scope_net_sp);
     $("scopePct").textContent = metrics.scope_pct ?? 0;
     $("predictabilityPct").textContent = metrics.predictability_pct ?? 0;
-    $("completionSpPct").textContent = metrics.completion_sp_pct ?? 0;
-    $("completionCountPct").textContent = metrics.completion_count_pct ?? 0;
-    $("unplannedSpPct").textContent = metrics.unplanned_sp_pct ?? 0;
-    $("unplannedCountPct").textContent = metrics.unplanned_count_pct ?? 0;
-    $("scopeChurnSpPct").textContent = metrics.scope_churn_sp_pct ?? 0;
-    $("scopeChurnCountPct").textContent = metrics.scope_churn_count_pct ?? 0;
-    $("spillPct").style.color = metrics.spill_red ? "red" : "";
+    $("totalDeliveryPct").textContent = metrics.total_delivery_vs_commitment_pct ?? 0;
+    $("scopeChangePct").textContent = metrics.scope_change_pct ?? 0;
     $("scopePct").style.color = metrics.scope_red ? "red" : "";
+  }
+
+  function renderWorkTypeMix(workTypeMix) {
+    if (!workTypeMix) {
+      workTypeMixBox.classList.add("d-none");
+      return;
+    }
+    workTypeMixBox.classList.remove("d-none");
+    const overall = $("workTypeOverall");
+    overall.replaceChildren();
+    Object.entries(workTypeMix.overall || {}).forEach(([type, bucket]) => {
+      const item = document.createElement("div");
+      item.className = "sv-stat";
+      const label = document.createElement("strong");
+      label.textContent = `${type}: `;
+      item.appendChild(label);
+      addText(item, `${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`);
+      overall.appendChild(item);
+    });
+
+    const tbody = $("workTypeByDeveloper");
+    tbody.replaceChildren();
+    (workTypeMix.by_assignee || []).forEach((row) => {
+      const tr = document.createElement("tr");
+      addCell(tr, row.assignee_name || row.assignee_eid || "Unassigned");
+      const mix = Object.entries(row.types || {})
+        .map(([type, bucket]) => `${type}: ${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`)
+        .join("; ");
+      addCell(tr, mix);
+      tbody.appendChild(tr);
+    });
   }
 
   function applyScopeStars(scopeKeys) {
@@ -320,7 +386,7 @@
         total_count: totalCount
       });
       if (!data.ok) {
-        showAlert("warning", `Issues loaded. Metrics failed: ${data.error || "Unknown error"}`);
+        showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
         metricsBox.classList.add("d-none");
         return;
       }
@@ -365,6 +431,8 @@
     resultsCard.classList.add("d-none");
     metricsBox.classList.add("d-none");
     statsBox.classList.add("d-none");
+    sprintMetaBox.classList.add("d-none");
+    workTypeMixBox.classList.add("d-none");
     setDisabled(fetchIssuesBtn, !sprintId.value);
   });
 
@@ -379,16 +447,18 @@
         sprint_id: sid
       });
       if (!data.ok) {
-        showAlert("danger", data.error || "Failed to fetch sprint issues.");
+        showAlert("danger", errorMessage(data, "Failed to fetch sprint issues."));
         return;
       }
-      setTotals(data.total, data.total_sp);
+      setTotals(data.total, data.total_sp, data.standard_total);
+      renderSprintMeta(data.sprint, data.historical_fallback_count);
       renderStats(data.stats);
+      renderWorkTypeMix(data.work_type_mix);
       renderGroupedAccordion(data.groups || []);
       resultsCard.classList.remove("d-none");
       showAlert("success", "Issues fetched successfully. Metrics are calculating...");
       showMetricsLoading();
-      fetchMetricsAsync(bid, sid, data.total_sp, data.total);
+      fetchMetricsAsync(bid, sid, data.total_sp, data.standard_total || data.total);
     } catch (error) {
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
     } finally {

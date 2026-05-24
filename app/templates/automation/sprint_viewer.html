@@ -24,6 +24,23 @@
     font-size: 12px;
     color: #6c757d;
   }
+  .metric-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: 4px;
+    border: 1px solid #adb5bd;
+    border-radius: 50%;
+    color: #6c757d;
+    font-size: 11px;
+    cursor: help;
+  }
+  .sv-metadata {
+    font-size: 13px;
+    color: #495057;
+  }
 </style>
 
 <div id="sprintViewerPage"
@@ -94,12 +111,28 @@
   <div class="card-body">
     <h5 class="mb-3">Results</h5>
 
+    <div id="sprintMetaBox" class="sv-metadata border rounded p-2 mb-3 d-none">
+      <div class="row g-2">
+        <div class="col-md-3"><strong>Sprint:</strong> <span id="sprintName">-</span></div>
+        <div class="col-md-3"><strong>Start:</strong> <span id="sprintStartDate">-</span></div>
+        <div class="col-md-3"><strong>End:</strong> <span id="sprintEndDate">-</span></div>
+        <div class="col-md-3"><strong>Completed:</strong> <span id="sprintCompleteDate">-</span></div>
+        <div class="col-12"><strong>Goal:</strong> <span id="sprintGoal">-</span></div>
+        <div class="col-12 text-muted d-none" id="historicalFallbackNote">
+          Some rows use current Jira values because sprint-end changelog data was unavailable.
+        </div>
+      </div>
+    </div>
+
     <div class="row g-2 align-items-center mb-2">
       <div class="col-auto text-muted">
         Total issues: <span id="totalIssues">0</span>
       </div>
       <div class="col-auto text-muted">
-        Total SP: <span id="totalSp">0</span>
+        Total pts: <span id="totalSp">0</span>
+      </div>
+      <div class="col-auto text-muted">
+        Standard issues: <span id="standardTotal">0</span>
       </div>
     </div>
 
@@ -107,38 +140,48 @@
     <div id="statsBox" class="sv-stats d-none">
       <div class="sv-stat">Unestimated: <b><span id="unestimatedCount">0</span></b> (<span id="unestimatedPct">0</span>%)</div>
       <div class="sv-stat">Bugs: <b><span id="bugCount">0</span></b> (<span id="bugPct">0</span>%)</div>
-      <div class="sv-stat">Bug SP: <b><span id="bugSp">0</span></b></div>
+      <div class="sv-stat">Bug pts: <b><span id="bugSp">0</span></b></div>
       <div class="sv-stat">Unassigned: <b><span id="unassignedCount">0</span></b> (<span id="unassignedPct">0</span>%)</div>
-      <div class="sv-stat">0 Comments: <b><span id="zeroCommentCount">0</span></b> (<span id="zeroCommentPct">0</span>%)</div>
+      <div class="sv-stat">No relevant comments: <b><span id="zeroRelevantCommentCount">0</span></b> (<span id="zeroRelevantCommentPct">0</span>%)</div>
+      <div class="sv-stat">Relevant comments #: <b><span id="relevantCommentCount">0</span></b></div>
+      <div class="sv-stat">Carryover #: <b><span id="carryoverCount">0</span></b> (<span id="carryoverPts">0</span> pts)</div>
     </div>
 
-    <!-- UPDATED: metrics show count + SP and added more single-sprint metrics -->
+    <!-- UPDATED: metrics show count + pts and added more single-sprint metrics -->
     <div id="metricsBox" class="border rounded p-2 mb-3 d-none">
       <div class="row g-2">
-        <div class="col-md-3"><strong>Committed:</strong> <span id="committedFmt">0</span></div>
-        <div class="col-md-3"><strong>Delivered:</strong> <span id="deliveredFmt">0</span></div>
+        <div class="col-md-3"><strong>Original Commitment</strong><span class="metric-help" title="Original committed work = completed original + incomplete original + removed after sprint start, excluding added-after-start items.">?</span>: <span id="committedFmt">0</span></div>
+        <div class="col-md-3"><strong>Completed from Commitment</strong><span class="metric-help" title="Completed original committed pts / original committed pts. This excludes mid-sprint added scope.">?</span>: <span id="completedOriginalFmt">0</span></div>
+        <div class="col-md-3"><strong>Total Completed</strong><span class="metric-help" title="All completed standard issues in the sprint, including added scope.">?</span>: <span id="deliveredFmt">0</span></div>
         <div class="col-md-3">
-          <strong>Spillover:</strong> <span id="spilloverFmt">0</span>
-          (<span id="spillPct">0</span>%)
+          <strong>Carryover</strong><span class="metric-help" title="Original committed work not completed and not removed. Formula: original commitment - completed original - removed scope.">?</span>: <span id="spilloverFmt">0</span>
         </div>
         <div class="col-md-3">
-          <strong>Scope Added:</strong> <span id="scopeAddedFmt">0</span>
+          <strong>Added Scope</strong><span class="metric-help" title="Standard issues added after sprint start. Percentage is added pts / original commitment pts.">?</span>: <span id="scopeAddedFmt">0</span>
           (<span id="scopePct">0</span>%)
         </div>
 
-        <div class="col-md-3"><strong>Descope:</strong> <span id="descopeFmt">0</span></div>
-        <div class="col-md-3"><strong>Pred%:</strong> <span id="predictabilityPct">0</span></div>
+        <div class="col-md-3"><strong>Removed Scope</strong><span class="metric-help" title="Standard issues removed after sprint start.">?</span>: <span id="descopeFmt">0</span></div>
+        <div class="col-md-3"><strong>Net Scope Change</strong><span class="metric-help" title="Added scope pts - removed scope pts.">?</span>: <span id="scopeNetFmt">0</span></div>
+        <div class="col-md-3"><strong>Commitment Predictability %</strong><span class="metric-help" title="Completed from original commitment pts / original commitment pts x 100.">?</span>: <span id="predictabilityPct">0</span></div>
 
         <!-- NEW single-sprint metrics -->
-        <div class="col-md-3"><strong>Completion (SP)%:</strong> <span id="completionSpPct">0</span></div>
-        <div class="col-md-3"><strong>Completion (Count)%:</strong> <span id="completionCountPct">0</span></div>
-        <div class="col-md-3"><strong>Unplanned (SP)%:</strong> <span id="unplannedSpPct">0</span></div>
-        <div class="col-md-3"><strong>Unplanned (Count)%:</strong> <span id="unplannedCountPct">0</span></div>
-        <div class="col-md-3"><strong>Scope Churn (SP)%:</strong> <span id="scopeChurnSpPct">0</span></div>
-        <div class="col-md-3"><strong>Scope Churn (Count)%:</strong> <span id="scopeChurnCountPct">0</span></div>
+        <div class="col-md-3"><strong>Total Delivery vs Commitment %</strong><span class="metric-help" title="Total completed pts / original commitment pts x 100. This includes added scope.">?</span>: <span id="totalDeliveryPct">0</span></div>
+        <div class="col-md-3"><strong>Scope Change %</strong><span class="metric-help" title="(Added scope pts + removed scope pts) / original commitment pts x 100.">?</span>: <span id="scopeChangePct">0</span></div>
       </div>
 
       <div class="sv-legend"><b>*</b> indicates issue <b>added after sprint start</b>.</div>
+    </div>
+
+    <div id="workTypeMixBox" class="border rounded p-2 mb-3 d-none">
+      <div class="fw-semibold mb-2">Work Type Mix <span class="metric-help" title="Count and pts by Jira issue type for standard issue types only.">?</span></div>
+      <div id="workTypeOverall" class="sv-stats"></div>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm table-striped align-middle mb-0">
+          <thead><tr><th>Developer</th><th>Type Mix</th></tr></thead>
+          <tbody id="workTypeByDeveloper"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="accordion" id="assigneeAccordion"></div>

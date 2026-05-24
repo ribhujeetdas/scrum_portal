@@ -293,30 +293,61 @@ def sprint_viewer_fetch_issues():
 
     try:
         raw = _sprint_service().fetch_all_issues_for_sprint(sprint_id_int, pat)
-        total = raw["total"]
         issues_raw = raw["issues"]
+        sprint_row = UserBoardSprint.query.filter_by(
+            user_id=current_user.id,
+            board_id=board_id_int,
+            sprint_id=sprint_id_int,
+        ).first()
+        sprint_meta = {
+            "id": sprint_id_int,
+            "name": sprint_row.sprint_name if sprint_row else "",
+            "state": sprint_row.sprint_state if sprint_row else "",
+            "start_date": sprint_row.start_date if sprint_row else None,
+            "end_date": sprint_row.end_date if sprint_row else None,
+            "complete_date": sprint_row.complete_date if sprint_row else None,
+            "goal": sprint_row.goal if sprint_row else None,
+        }
+        sprint_complete_date = sprint_meta["complete_date"]
 
-        extracted = [_sprint_service().extract_issue_fields(issue) for issue in issues_raw]
+        extracted = [
+            _sprint_service().extract_issue_fields(
+                issue, sprint_complete_date=sprint_complete_date
+            )
+            for issue in issues_raw
+        ]
+        _sprint_service().apply_relevant_comment_counts(
+            extracted, sprint_complete_date=sprint_complete_date
+        )
         grouped = _sprint_service().group_issues_by_assignee(extracted)
-        total_sp = _sprint_service().sum_story_points(extracted)
-        stats = _sprint_service().compute_issue_quality_stats(extracted)
+        standard_issues = [issue for issue in extracted if not issue.get("is_subtask")]
+        total_sp = _sprint_service().sum_story_points(standard_issues)
+        stats = _sprint_service().compute_issue_quality_stats(standard_issues)
+        work_type_mix = _sprint_service().compute_work_type_mix(standard_issues)
+        historical_fallback_count = sum(
+            1 for issue in extracted if issue.get("historical_fallback")
+        )
 
         _trace_api(
             "SprintViewer/issues done user=%s board=%s sprint=%s total=%s total_sp=%.2f unestimated=%s bugs=%s",
             current_user.eid,
             board_id_int,
             sprint_id_int,
-            total,
+            len(extracted),
             total_sp,
             stats.get("unestimated_count"),
             stats.get("bug_count"),
         )
 
         return json_ok(
-            total=int(total),
+            total=len(extracted),
+            standard_total=len(standard_issues),
             total_sp=round(float(total_sp), 2),
             groups=grouped,
             stats=stats,
+            sprint=sprint_meta,
+            work_type_mix=work_type_mix,
+            historical_fallback_count=historical_fallback_count,
         )
     except SprintViewerServiceError as exc:
         log_handled_exception(
