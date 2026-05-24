@@ -5,6 +5,7 @@ from flask import current_app, flash, redirect, render_template, request, url_fo
 from flask_login import current_user, login_required
 
 from ...core.dependencies import crypto_service, jira_service, tableau_service
+from ...core.error_logging import log_handled_exception
 from ...extensions import db
 from ...features.settings.projects_boards.routes import projects_page
 from ...features.settings.tableau_custom_views.routes import custom_views_page
@@ -74,11 +75,13 @@ def _save_jira_pat(pat_form: JiraConfigForm):
     try:
         profile_json = jira_service().fetch_myself(pat_input)
     except JiraServiceError as exc:
-        current_app.logger.warning(
-            "Jira PAT validate failed eid=%s email=%s reason=%s",
-            current_user.eid,
-            current_user.email,
-            str(exc),
+        log_handled_exception(
+            "Jira PAT validation failed",
+            exc,
+            event="settings.integrations.jira_pat_validate_failed",
+            feature="integrations",
+            operation="validate_jira_pat",
+            context={"eid": current_user.eid, "email": current_user.email},
         )
         flash(str(exc), "danger")
         return redirect(url_for("config.integrations"))
@@ -108,11 +111,13 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
     try:
         identity = tableau_service().validate_pat_and_get_identity(pat_name, pat_secret)
     except (TableauServiceError, ValueError) as exc:
-        current_app.logger.warning(
-            "Tableau PAT validate failed eid=%s email=%s reason=%s",
-            current_user.eid,
-            current_user.email,
-            str(exc),
+        log_handled_exception(
+            "Tableau PAT validation failed",
+            exc,
+            event="settings.integrations.tableau_pat_validate_failed",
+            feature="integrations",
+            operation="validate_tableau_pat",
+            context={"eid": current_user.eid, "email": current_user.email},
         )
         flash(str(exc), "danger")
         return redirect(url_for("config.integrations"))

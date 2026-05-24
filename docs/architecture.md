@@ -29,7 +29,12 @@ Existing blueprints still own URL registration, login decorators, and endpoint n
 
 Handled service failures should use `log_handled_exception(...)` instead of ad hoc `logger.warning(...)` calls when the exception traceback helps diagnose an external API, database, or integration failure. Keep the response body user-safe and put operational details in structured log context.
 
-Jira/Tableau-facing services should use `ExternalHttpClient` for retries, timeouts, HTTP error snippets, and JSON parsing. Feature API routes should prefer `json_ok(...)` and `json_error(...)` so response shape and request IDs stay consistent.
+Jira/Tableau-facing services should use `ExternalHttpClient` for retries, timeouts, HTTP error snippets, JSON parsing, and normalized external API failure events. Feature API routes should prefer `json_ok(...)` and `json_error(...)` so response shape and request IDs stay consistent.
+
+Event names should be stable and feature-scoped:
+- External HTTP failures: `<service>.request.failed`
+- External JSON parse failures: `<service>.response.invalid_json`
+- Handled feature failures: `<area>.<feature>.<operation>_failed`
 
 ## Migration Rule
 

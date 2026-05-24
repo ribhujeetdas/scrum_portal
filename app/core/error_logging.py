@@ -5,6 +5,17 @@ from typing import Any
 
 from flask import current_app, has_app_context
 
+from .http_client import ExternalServiceError
+
+
+def _external_error(exc: BaseException) -> ExternalServiceError | None:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, ExternalServiceError):
+            return current
+        current = current.__cause__
+    return None
+
 
 def log_handled_exception(
     message: str,
@@ -29,6 +40,17 @@ def log_handled_exception(
     }
     if context:
         extra["context"] = context
+    external_exc = _external_error(exc)
+    if external_exc:
+        extra.update(
+            {
+                "external_service": external_exc.service,
+                "external_operation": external_exc.operation,
+                "external_endpoint": external_exc.endpoint,
+                "external_status_code": external_exc.status_code,
+                "external_response_snippet": external_exc.response_snippet,
+            }
+        )
 
     target_logger.log(
         level,

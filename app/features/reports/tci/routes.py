@@ -9,6 +9,7 @@ from flask_login import current_user
 
 from ....core.api import json_error, json_ok
 from ....core.dependencies import crypto_service, jira_issue_links_service, tableau_service
+from ....core.error_logging import log_handled_exception
 from ....models import UserTableauCustomView
 from ....services.jira_issue_links_service import JiraIssueLinksServiceError
 from ....services.tableau_service import TableauServiceError
@@ -209,6 +210,14 @@ def custom_views_page():
                 finally:
                     tableau_service().sign_out(token)
             except TableauServiceError as exc:
+                log_handled_exception(
+                    "TCI custom view CSV export failed",
+                    exc,
+                    event="reports.tci.csv_failed",
+                    feature="tci_reports",
+                    operation="query_custom_view_csv",
+                    context={"custom_view_id": selected_id},
+                )
                 flash(str(exc), "danger")
                 return redirect(url_for("tableau_custom_views.custom_views_page"))
 
@@ -277,6 +286,19 @@ def custom_view_link_details():
             matches=result.matches,
         )
     except JiraIssueLinksServiceError as exc:
+        log_handled_exception(
+            "TCI link details lookup failed",
+            exc,
+            event="reports.tci.link_details_failed",
+            feature="tci_reports",
+            operation="link_details",
+            context={
+                "custom_view_id": custom_view_id,
+                "feature_key": feature_key,
+                "mapped_key": mapped_key,
+                "application_id": application_id,
+            },
+        )
         return json_error(str(exc), status_code=400)
     except Exception:
         current_app.logger.exception("Unexpected error in custom_view_link_details")

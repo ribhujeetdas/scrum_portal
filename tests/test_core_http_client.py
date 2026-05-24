@@ -8,6 +8,15 @@ import requests
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
+class ListHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
 class FakeResponse:
     def __init__(self, status_code=200, payload=None, text=""):
         self.status_code = status_code
@@ -94,7 +103,7 @@ def test_http_client_network_error_preserves_original_exception():
     assert raised.value.status_code is None
 
 
-def test_http_client_logs_external_api_failure_metadata(caplog):
+def test_http_client_logs_external_api_failure_metadata():
     session = FakeSession(
         response=FakeResponse(
             status_code=503,
@@ -102,13 +111,21 @@ def test_http_client_logs_external_api_failure_metadata(caplog):
         )
     )
     client = ExternalHttpClient("tableau", "https://tableau.example", session=session)
+    logger = logging.getLogger("app.external")
+    handler = ListHandler()
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
 
-    with caplog.at_level(logging.WARNING, logger="app.external"):
+    try:
         with pytest.raises(ExternalServiceError):
             client.get_json("/sites/site-1/customviews")
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
 
     record = next(
-        record for record in caplog.records if record.event == "tableau.request.failed"
+        record for record in handler.records if record.event == "tableau.request.failed"
     )
     assert record.external_service == "tableau"
     assert record.external_operation == "GET /sites/site-1/customviews"

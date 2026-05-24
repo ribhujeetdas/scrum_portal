@@ -5,6 +5,7 @@ from flask_login import current_user
 
 from .forms import AddProjectForm, DeleteBoardForm, DeleteProjectForm
 from ....core.dependencies import crypto_service
+from ....core.error_logging import log_handled_exception
 from ....extensions import db
 from ....models import UserBoard, UserProject
 from ....services.jira_projects_service import JiraProjectsService, JiraProjectsServiceError
@@ -86,9 +87,13 @@ def _handle_add_project(project_form):
     try:
         has_admin = jps.has_administer_projects(project_key, pat)
     except JiraProjectsServiceError as exc:
-        current_app.logger.warning(
-            "Project permission check failed eid=%s project=%s reason=%s",
-            current_user.eid, project_key, str(exc)
+        log_handled_exception(
+            "Project permission check failed",
+            exc,
+            event="settings.projects.permission_check_failed",
+            feature="projects_boards",
+            operation="check_project_permissions",
+            context={"project_key": project_key},
         )
         flash(str(exc), "danger")
         return redirect(url_for("config.projects"))
@@ -102,9 +107,13 @@ def _handle_add_project(project_form):
     try:
         boards = jps.list_boards_for_project(project_key, pat)
     except JiraProjectsServiceError as exc:
-        current_app.logger.warning(
-            "Board list failed eid=%s project=%s reason=%s",
-            current_user.eid, project_key, str(exc)
+        log_handled_exception(
+            "Board list failed",
+            exc,
+            event="settings.projects.board_list_failed",
+            feature="projects_boards",
+            operation="list_project_boards",
+            context={"project_key": project_key},
         )
         flash(str(exc), "danger")
         return redirect(url_for("config.projects"))
@@ -123,9 +132,13 @@ def _detect_product_area_key(jps, boards, project_key: str, pat: str):
                 product_area_key = maybe_key
                 break
     except JiraProjectsServiceError as exc:
-        current_app.logger.warning(
-            "Product Area key detection failed eid=%s project=%s reason=%s",
-            current_user.eid, project_key, str(exc)
+        log_handled_exception(
+            "Product Area key detection failed",
+            exc,
+            event="settings.projects.product_area_detection_failed",
+            feature="projects_boards",
+            operation="detect_product_area_key",
+            context={"project_key": project_key},
         )
     except Exception as exc:
         current_app.logger.exception(

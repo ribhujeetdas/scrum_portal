@@ -4,6 +4,7 @@ from flask import flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from ....core.dependencies import crypto_service, tableau_service
+from ....core.error_logging import log_handled_exception
 from ....extensions import db
 from ....models import UserProject, UserTableauCustomView
 from ....services.tableau_service import TableauServiceError
@@ -96,6 +97,14 @@ def _handle_save_custom_view(
             custom_view_id=custom_view_id,
         )
     except TableauServiceError as exc:
+        log_handled_exception(
+            "Tableau custom view validation failed",
+            exc,
+            event="settings.tableau_custom_views.validate_failed",
+            feature="tableau_custom_view_settings",
+            operation="validate_custom_view",
+            context={"custom_view_id": custom_view_id, "epic_key": epic_key},
+        )
         flash(str(exc), "danger")
         return redirect(url_for("config.custom_views"))
 
