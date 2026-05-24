@@ -19,7 +19,6 @@
         <div class="col-md-4">
           {{ project_form.project_key.label(class="form-label") }}
           {{ project_form.project_key(class="form-control", placeholder="e.g. BHTB") }}
-          {% for e in project_form.project_key.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
         <div class="col-md-4">
           {{ project_form.validate_and_add(class="btn btn-primary") }}
@@ -56,7 +55,8 @@
                   <!-- Delete Project (Placement 2) -->
                   <div class="d-flex justify-content-end mb-3">
                     <form method="POST" novalidate class="d-inline js-project-delete-form"
-                          data-project-key="{{ p.project_key }}">
+                          data-project-key="{{ p.project_key }}"
+                          data-board-count="{{ p.boards|length }}">
                       {{ delete_project_form.csrf_token }}
                       <input type="hidden" name="delete_project_key" value="{{ p.project_key }}">
                       <button type="submit" name="delete_project" value="1" class="btn btn-sm btn-danger">
@@ -94,7 +94,8 @@
                                 <form method="POST" novalidate class="d-inline js-board-delete-form"
                                       data-project-key="{{ p.project_key }}"
                                       data-board-id="{{ b.board_id }}"
-                                      data-board-name="{{ b.board_name }}">
+                                      data-board-name="{{ b.board_name }}"
+                                      data-board-count="{{ p.boards|length }}">
                                   {{ delete_board_form.csrf_token }}
                                   <input type="hidden" name="delete_project_key" value="{{ p.project_key }}">
                                   <input type="hidden" name="delete_board_id" value="{{ b.board_id }}">
@@ -125,23 +126,110 @@
   </div>
 </div>
 
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content delete-confirm-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteConfirmTitle">Confirm delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2" id="deleteConfirmMessage"></p>
+        <p class="text-muted mb-0" id="deleteConfirmDetail"></p>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button type="button" class="btn btn-outline-secondary" id="deleteConfirmCancel" data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button" class="btn btn-danger" id="deleteConfirmDelete">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   (function () {
+    const modalEl = document.getElementById("deleteConfirmModal");
+    const titleEl = document.getElementById("deleteConfirmTitle");
+    const messageEl = document.getElementById("deleteConfirmMessage");
+    const detailEl = document.getElementById("deleteConfirmDetail");
+    const deleteBtn = document.getElementById("deleteConfirmDelete");
+    const cancelBtn = document.getElementById("deleteConfirmCancel");
+    let pendingForm = null;
+    let pendingSubmitter = null;
+
+    function showDeleteModal(options) {
+      pendingForm = options.form;
+      pendingSubmitter = options.submitter || null;
+      titleEl.textContent = options.title;
+      messageEl.textContent = options.message;
+      detailEl.textContent = options.detail;
+      const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+      modal.show();
+      setTimeout(function () {
+        cancelBtn.focus();
+      }, 150);
+    }
+
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", function () {
+        if (!pendingForm) return;
+        const form = pendingForm;
+        const submitter = pendingSubmitter;
+        pendingForm = null;
+        pendingSubmitter = null;
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        form.dataset.deleteConfirmed = "true";
+        if (form.requestSubmit && submitter) {
+          form.requestSubmit(submitter);
+        } else {
+          form.submit();
+        }
+      });
+    }
+
     document.querySelectorAll(".js-project-delete-form").forEach(function (form) {
       form.addEventListener("submit", function (e) {
+        if (form.dataset.deleteConfirmed === "true") {
+          delete form.dataset.deleteConfirmed;
+          return;
+        }
+        e.preventDefault();
         const projectKey = form.getAttribute("data-project-key") || "";
-        const ok = confirm(`Are you sure you want to delete project "${projectKey}"?\n\nThis will delete all boards under it as well.`);
-        if (!ok) e.preventDefault();
+        const boardCount = Number(form.getAttribute("data-board-count") || "0");
+        showDeleteModal({
+          form: form,
+          submitter: e.submitter,
+          title: "Delete project",
+          message: `Delete project ${projectKey}?`,
+          detail: `This will remove the project and ${boardCount} saved board${boardCount === 1 ? "" : "s"} from your settings.`
+        });
       });
     });
 
     document.querySelectorAll(".js-board-delete-form").forEach(function (form) {
       form.addEventListener("submit", function (e) {
+        if (form.dataset.deleteConfirmed === "true") {
+          delete form.dataset.deleteConfirmed;
+          return;
+        }
+        e.preventDefault();
         const projectKey = form.getAttribute("data-project-key") || "";
         const boardId = form.getAttribute("data-board-id") || "";
         const boardName = form.getAttribute("data-board-name") || "";
-        const ok = confirm(`Are you sure you want to delete board "${boardName}" (ID: ${boardId}) from project "${projectKey}"?`);
-        if (!ok) e.preventDefault();
+        const boardCount = Number(form.getAttribute("data-board-count") || "0");
+        const removesProject = boardCount <= 1;
+        showDeleteModal({
+          form: form,
+          submitter: e.submitter,
+          title: "Delete board",
+          message: `Delete board ${boardName} (${boardId})?`,
+          detail: removesProject
+            ? `This is the last saved board for project ${projectKey}, so the project will also be removed.`
+            : `This will remove only this board from project ${projectKey}.`
+        });
       });
     });
 

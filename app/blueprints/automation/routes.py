@@ -111,6 +111,31 @@ def _board_belongs_to_user(user_id: int, board_id: int) -> bool:
     return q is not None
 
 
+def _create_rule_with_identifier_fallback(
+    service: RuleCopierService,
+    target_project_id: int,
+    target_project_key: str,
+    create_payload: dict,
+    pat: str,
+) -> dict:
+    first_exc: RuleCopierServiceError | None = None
+    for project_identifier in (target_project_id, target_project_key):
+        try:
+            return service.create_rule(project_identifier, create_payload, pat)
+        except RuleCopierServiceError as exc:
+            first_exc = exc
+            current_app.logger.warning(
+                "Create rule attempt failed project_identifier=%s actor=%s reason=%s",
+                project_identifier,
+                create_payload.get("actorAccountId"),
+                exc,
+                exc_info=True,
+            )
+    if first_exc:
+        raise first_exc
+    raise RuleCopierServiceError("Create rule failed before making an API attempt.")
+
+
 # ---------------------------
 # Rule Copier (unchanged)
 # ---------------------------
@@ -251,20 +276,55 @@ def copy_rule():
         return jsonify({"ok": False, "error": "Your jira_key is missing in DB. Please contact admin."}), 400
 
     author_account_id = str(current_user.jira_key).strip()
-    actor_account_id = current_app.config["JIRA_AUTOMATION_ACTOR_ACCOUNT_ID"]
+    configured_actor_account_id = str(
+        current_app.config["JIRA_AUTOMATION_ACTOR_ACCOUNT_ID"]
+    ).strip()
 
     try:
-        create_payload = _rule_service().transform_rule_for_create(
+        service = _rule_service()
+        create_payload = service.transform_rule_for_create(
             rule_json=rule_json,
             target_project_id=target_jira_project_id,
             author_account_id=author_account_id,
-            actor_account_id=actor_account_id,
+            actor_account_id=configured_actor_account_id,
         )
         try:
-            created = _rule_service().create_rule(
-                target_jira_project_id, create_payload, pat)
-        except RuleCopierServiceError:
-            created = _rule_service().create_rule(target_project_key, create_payload, pat)
+            created = _create_rule_with_identifier_fallback(
+                service,
+                target_jira_project_id,
+                target_project_key,
+                create_payload,
+                pat,
+            )
+            actor_used = configured_actor_account_id
+        except RuleCopierServiceError as configured_actor_exc:
+            if configured_actor_account_id == author_account_id:
+                raise
+
+            current_app.logger.warning(
+                "Configured automation actor failed; retrying copy with requesting user's Jira actor "
+                "eid=%s target_project=%s configured_actor=%s user_actor=%s reason=%s",
+                current_user.eid,
+                target_project_key,
+                configured_actor_account_id,
+                author_account_id,
+                configured_actor_exc,
+                exc_info=True,
+            )
+            user_actor_payload = service.transform_rule_for_create(
+                rule_json=rule_json,
+                target_project_id=target_jira_project_id,
+                author_account_id=author_account_id,
+                actor_account_id=author_account_id,
+            )
+            created = _create_rule_with_identifier_fallback(
+                service,
+                target_jira_project_id,
+                target_project_key,
+                user_actor_payload,
+                pat,
+            )
+            actor_used = author_account_id
 
         return jsonify(
             {
@@ -273,11 +333,12 @@ def copy_rule():
                 "target_project_key": target_project_key,
                 "target_project_id": target_jira_project_id,
                 "target_board_id": target_board_id_int,
+                "actor_used": actor_used,
                 "created": created,
             }
         )
     except RuleCopierServiceError as exc:
-        current_app.logger.warning("Copy rule failed: %s", exc)
+        current_app.logger.warning("Copy rule failed: %s", exc, exc_info=True)
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         current_app.logger.exception("Unexpected error in copy_rule: %s", exc)

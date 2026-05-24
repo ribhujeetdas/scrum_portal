@@ -84,10 +84,13 @@ class ProfileService:
             raise ProfileServiceError(
                 "Failed to delete project due to a database error.") from exc
 
-    def delete_board(self, req: DeleteBoardRequest) -> None:
+    def delete_board(self, req: DeleteBoardRequest) -> bool:
         """
         Deletes a board under a project.
         Also clears cached sprint rows for that board.
+        If it was the last board, deletes the parent project too.
+
+        Returns True when the parent project was also deleted.
         """
         project_key = self._norm_project_key(req.project_key)
         if not project_key:
@@ -112,17 +115,27 @@ class ProfileService:
             raise ProfileServiceError("Board not found for this project.")
 
         try:
+            remaining_boards = [
+                b for b in (proj.boards or []) if int(b.board_id) != int(req.board_id)
+            ]
+
             UserBoardSprint.query.filter_by(
                 user_id=req.user_id, board_id=req.board_id
             ).delete(synchronize_session=False)
 
-            db.session.delete(board)
+            if remaining_boards:
+                db.session.delete(board)
+                project_deleted = False
+            else:
+                db.session.delete(proj)
+                project_deleted = True
             db.session.commit()
 
             log.info(
-                "Board deleted user_id=%s project=%s board_id=%s",
-                req.user_id, project_key, req.board_id
+                "Board deleted user_id=%s project=%s board_id=%s project_deleted=%s",
+                req.user_id, project_key, req.board_id, project_deleted
             )
+            return project_deleted
 
         except SQLAlchemyError as exc:
             db.session.rollback()

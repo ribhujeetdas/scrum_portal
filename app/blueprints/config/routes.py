@@ -184,6 +184,13 @@ def projects():
         # ------------------------------------------------------------------
         # Add Project
         # ------------------------------------------------------------------
+        if "validate_and_add" in request.form and not project_form.validate_on_submit():
+            messages = []
+            for errors in project_form.errors.values():
+                messages.extend(errors)
+            flash(" ".join(messages) or "Please provide a valid Jira project key.", "danger")
+            return redirect(url_for("config.projects"))
+
         if "validate_and_add" in request.form and project_form.validate_on_submit():
             if not current_user.jira_pat_enc:
                 flash(
@@ -356,12 +363,18 @@ def projects():
                 flash("Invalid Board ID.", "danger")
                 return redirect(url_for("config.projects"))
             try:
-                svc.delete_board(DeleteBoardRequest(
+                project_deleted = svc.delete_board(DeleteBoardRequest(
                     user_id=current_user.id,
                     project_key=project_key,
                     board_id=board_id
                 ))
-                flash(f"Board {board_id} deleted successfully.", "success")
+                if project_deleted:
+                    flash(
+                        f"Board {board_id} deleted successfully. Project {project_key} was also removed because it had no remaining boards.",
+                        "success",
+                    )
+                else:
+                    flash(f"Board {board_id} deleted successfully.", "success")
             except ProfileServiceError as exc:
                 current_app.logger.warning(
                     "Delete board rejected eid=%s project=%s board_id=%s reason=%s",
