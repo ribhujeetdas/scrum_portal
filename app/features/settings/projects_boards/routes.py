@@ -4,6 +4,7 @@ from flask import current_app, flash, redirect, render_template, request, url_fo
 from flask_login import current_user
 
 from .forms import AddProjectForm, DeleteBoardForm, DeleteProjectForm
+from ....core.api import safe_error_message
 from ....core.dependencies import crypto_service
 from ....core.error_logging import log_handled_exception
 from ....extensions import db
@@ -95,7 +96,7 @@ def _handle_add_project(project_form):
             operation="check_project_permissions",
             context={"project_key": project_key},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("validate Jira project permissions"), "danger")
         return redirect(url_for("aliases.settings_projects_boards"))
     if not has_admin:
         flash(
@@ -115,7 +116,7 @@ def _handle_add_project(project_form):
             operation="list_project_boards",
             context={"project_key": project_key},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("load Jira boards for the project"), "danger")
         return redirect(url_for("aliases.settings_projects_boards"))
 
     product_area_key = _detect_product_area_key(jps, boards, project_key, pat)
@@ -223,11 +224,15 @@ def _handle_delete_project(delete_project_form, svc: ProfileService):
             "success",
         )
     except ProfileServiceError as exc:
-        current_app.logger.warning(
-            "Delete project rejected eid=%s project=%s reason=%s",
-            current_user.eid, project_key, str(exc)
+        log_handled_exception(
+            "Delete project rejected",
+            exc,
+            event="settings.projects.delete_project_rejected",
+            feature="projects_boards",
+            operation="delete_project",
+            context={"project_key": project_key},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("delete the project"), "danger")
     except Exception as exc:
         current_app.logger.exception(
             "Unexpected delete project error eid=%s project=%s err=%s",
@@ -271,11 +276,15 @@ def _handle_delete_board(delete_board_form, svc: ProfileService):
         else:
             flash(f"Board {board_id} deleted successfully.", "success")
     except ProfileServiceError as exc:
-        current_app.logger.warning(
-            "Delete board rejected eid=%s project=%s board_id=%s reason=%s",
-            current_user.eid, project_key, board_id, str(exc)
+        log_handled_exception(
+            "Delete board rejected",
+            exc,
+            event="settings.projects.delete_board_rejected",
+            feature="projects_boards",
+            operation="delete_board",
+            context={"project_key": project_key, "board_id": board_id},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("delete the board"), "danger")
     except Exception as exc:
         current_app.logger.exception(
             "Unexpected delete board error eid=%s project=%s board_id=%s err=%s",

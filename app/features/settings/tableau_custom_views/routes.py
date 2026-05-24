@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from ....core.api import safe_error_message
 from ....core.dependencies import crypto_service, tableau_service
 from ....core.error_logging import log_handled_exception
 from ....extensions import db
@@ -105,7 +106,7 @@ def _handle_save_custom_view(
             operation="validate_custom_view",
             context={"custom_view_id": custom_view_id, "epic_key": epic_key},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("validate the Tableau custom view"), "danger")
         return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     row = UserTableauCustomView.query.filter_by(

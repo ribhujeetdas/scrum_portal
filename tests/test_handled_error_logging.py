@@ -143,6 +143,10 @@ def test_sprint_viewer_service_error_is_logged_with_stacktrace(tmp_path, monkeyp
     )
 
     assert response.status_code == 400
+    data = response.get_json()
+    assert "super-secret" not in data["error"]["message"]
+    assert "pat_token" not in data["error"]["message"]
+    assert "request ID" in data["error"]["message"]
 
     records = _read_json_lines(tmp_path / "test-app.log")
     record = next(

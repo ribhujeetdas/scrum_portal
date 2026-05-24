@@ -95,3 +95,15 @@ def test_legacy_routes_remain_available_temporarily(tmp_path):
     assert "/login" in rules
     assert "/config/projects" in rules
     assert "/tableau/custom-views" in rules
+
+
+def test_legacy_routes_emit_deprecation_headers(tmp_path):
+    app = create_phase6_app(tmp_path)
+    client = app.test_client()
+    login(client)
+
+    response = client.get("/home", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.headers["Deprecation"] == "true"
+    assert "/dashboard" in response.headers["Link"]

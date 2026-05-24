@@ -7,6 +7,8 @@ from sqlalchemy import or_
 
 from . import auth_bp
 from .forms import LoginForm, SignupForm, ConfirmProfileForm, SetPasswordForm
+from ...core.api import safe_error_message
+from ...core.error_logging import log_handled_exception
 from ...core.dependencies import crypto_service, jira_service
 from ...extensions import db
 from ...models import User
@@ -88,9 +90,15 @@ def signup():
         try:
             profile = jira_service().fetch_myself(pat)
         except JiraServiceError as exc:
-            current_app.logger.warning(
-                "Signup PAT validation failed for email=%s: %s", email, exc)
-            flash(str(exc), "danger")
+            log_handled_exception(
+                "Signup PAT validation failed",
+                exc,
+                event="auth.signup.pat_validation_failed",
+                feature="auth",
+                operation="signup",
+                context={"email": email},
+            )
+            flash(safe_error_message("validate Jira profile"), "danger")
             return render_template("auth/signup.html", form=form)
 
         api_email = (profile.get("emailAddress") or "").strip()

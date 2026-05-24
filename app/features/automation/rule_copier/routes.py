@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from ....core.api import json_error, json_ok
+from ....core.api import json_error, json_ok, safe_error_message
 from ....core.dependencies import crypto_service, jira_service, rule_copier_service
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
@@ -139,14 +139,31 @@ def fetch_rule():
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
     except JiraServiceError as exc:
-        return json_error(f"PAT validation failed: {exc}", status_code=403)
+        log_handled_exception(
+            "Rule Copier PAT validation failed",
+            exc,
+            event="automation.rule_copier.pat_validation_failed",
+            feature="rule_copier",
+            operation="fetch_rule",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
 
     try:
         jira_project_id = _ensure_project_id_for_user_project(
             project_key, board_id_int, pat)
-    except Exception as exc:
+    except RuleCopierServiceError as exc:
+        log_handled_exception(
+            "Rule Copier project resolution failed",
+            exc,
+            event="automation.rule_copier.project_resolution_failed",
+            feature="rule_copier",
+            operation="fetch_rule",
+            context={"project_key": project_key, "board_id": board_id_int},
+        )
+        return json_error(safe_error_message("validate selected project and board"), status_code=400)
+    except ValueError as exc:
         return json_error(str(exc), status_code=400)
 
     try:
@@ -165,7 +182,7 @@ def fetch_rule():
                 "rule_id": rule_id_int,
             },
         )
-        return json_error(str(exc), status_code=404)
+        return json_error(safe_error_message("fetch the automation rule"), status_code=404)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in fetch_rule: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)
@@ -206,14 +223,31 @@ def copy_rule():
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
     except JiraServiceError as exc:
-        return json_error(f"PAT validation failed: {exc}", status_code=403)
+        log_handled_exception(
+            "Rule Copier PAT validation failed",
+            exc,
+            event="automation.rule_copier.pat_validation_failed",
+            feature="rule_copier",
+            operation="copy_rule",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
 
     try:
         target_jira_project_id = _ensure_project_id_for_user_project(
             target_project_key, target_board_id_int, pat)
-    except Exception as exc:
+    except RuleCopierServiceError as exc:
+        log_handled_exception(
+            "Rule Copier project resolution failed",
+            exc,
+            event="automation.rule_copier.project_resolution_failed",
+            feature="rule_copier",
+            operation="copy_rule",
+            context={"target_project_key": target_project_key, "target_board_id": target_board_id_int},
+        )
+        return json_error(safe_error_message("validate selected project and board"), status_code=400)
+    except ValueError as exc:
         return json_error(str(exc), status_code=400)
 
     if not current_user.jira_key:
@@ -293,7 +327,7 @@ def copy_rule():
                 "target_board_id": target_board_id_int,
             },
         )
-        return json_error(str(exc), status_code=400)
+        return json_error(safe_error_message("copy the automation rule"), status_code=400)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in copy_rule: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)

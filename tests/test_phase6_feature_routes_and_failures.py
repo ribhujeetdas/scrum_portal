@@ -208,7 +208,8 @@ def test_projects_route_handles_mocked_jira_project_failure(tmp_path, monkeypatc
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "Jira permission API failed" in html
+    assert "Unable to validate Jira project permissions." in html
+    assert "Jira permission API failed" not in html
     assert "portal-toast" in html
 
 
@@ -242,7 +243,8 @@ def test_tableau_custom_view_route_handles_mocked_tableau_failure(
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "Tableau custom view lookup failed" in html
+    assert "Unable to validate the Tableau custom view." in html
+    assert "Tableau custom view lookup failed" not in html
     assert "portal-toast" in html
 
 
@@ -277,7 +279,8 @@ def test_tci_preview_route_handles_mocked_tableau_csv_failure(tmp_path, monkeypa
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "Tableau CSV export failed" in html
+    assert "Unable to load TCI report data." in html
+    assert "Tableau CSV export failed" not in html
     assert "portal-toast" in html
 
 
@@ -309,4 +312,7 @@ def test_canonical_sprint_sprints_api_handles_mocked_jira_failure(
 
     assert response.status_code == 400
     assert data["ok"] is False
-    assert data["error"]["message"] == "Jira sprint API failed"
+    assert data["error"]["message"] == (
+        "Unable to load sprints. Please try again. "
+        "If it continues, contact support with the request ID."
+    )

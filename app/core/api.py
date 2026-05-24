@@ -57,6 +57,13 @@ def json_error(
     return jsonify(payload), status_code
 
 
+def safe_error_message(action: str = "complete the request") -> str:
+    return (
+        f"Unable to {action}. Please try again. "
+        "If it continues, contact support with the request ID."
+    )
+
+
 def json_ok(**payload: Any):
     response: dict[str, Any] = {"ok": True, **payload}
     rid = _request_id()

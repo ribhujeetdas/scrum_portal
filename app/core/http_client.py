@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from flask import current_app, has_app_context
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -60,21 +61,59 @@ class ExternalHttpClient:
         *,
         session: requests.Session | None = None,
         timeout_seconds: int = 10,
+        retry_total: int | None = None,
+        retry_backoff_factor: float | None = None,
+        retry_status_forcelist: tuple[int, ...] | None = None,
+        retry_allowed_methods: tuple[str, ...] = ("GET", "POST", "PUT"),
     ):
         self.service = service
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout_seconds = timeout_seconds
+        self.retry_total = self._config_int("EXTERNAL_HTTP_RETRY_TOTAL", 3, retry_total)
+        self.retry_backoff_factor = self._config_float(
+            "EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", 0.5, retry_backoff_factor
+        )
+        self.retry_status_forcelist = (
+            retry_status_forcelist
+            if retry_status_forcelist is not None
+            else self._config_status_codes(
+                "EXTERNAL_HTTP_RETRY_STATUS_CODES", (429, 500, 502, 503, 504)
+            )
+        )
+        self.retry_allowed_methods = retry_allowed_methods
         self._session = session or self._build_session()
         self._logger = logging.getLogger("app.external")
 
     @staticmethod
-    def _build_session() -> requests.Session:
+    def _config_int(name: str, default: int, explicit: int | None = None) -> int:
+        if explicit is not None:
+            return int(explicit)
+        if has_app_context():
+            return int(current_app.config.get(name, default))
+        return default
+
+    @staticmethod
+    def _config_float(name: str, default: float, explicit: float | None = None) -> float:
+        if explicit is not None:
+            return float(explicit)
+        if has_app_context():
+            return float(current_app.config.get(name, default))
+        return default
+
+    @staticmethod
+    def _config_status_codes(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+        value = current_app.config.get(name, default) if has_app_context() else default
+        if isinstance(value, str):
+            return tuple(int(part.strip()) for part in value.split(",") if part.strip())
+        return tuple(int(part) for part in value)
+
+    def _build_session(self) -> requests.Session:
         session = requests.Session()
         retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "POST", "PUT"),
+            total=self.retry_total,
+            backoff_factor=self.retry_backoff_factor,
+            status_forcelist=self.retry_status_forcelist,
+            allowed_methods=self.retry_allowed_methods,
         )
         session.mount("https://", HTTPAdapter(max_retries=retries))
         session.mount("http://", HTTPAdapter(max_retries=retries))

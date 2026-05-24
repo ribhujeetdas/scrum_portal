@@ -71,6 +71,22 @@ class Config:
         os.getenv("JIRA_PAT_VALIDATION_CACHE_SECONDS", "300")
     )
 
+    EXTERNAL_HTTP_TIMEOUT_SECONDS = int(os.getenv("EXTERNAL_HTTP_TIMEOUT_SECONDS", "20"))
+    EXTERNAL_HTTP_RETRY_TOTAL = int(os.getenv("EXTERNAL_HTTP_RETRY_TOTAL", "3"))
+    EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS = float(
+        os.getenv("EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", "0.5")
+    )
+    EXTERNAL_HTTP_RETRY_STATUS_CODES = os.getenv(
+        "EXTERNAL_HTTP_RETRY_STATUS_CODES", "429,500,502,503,504"
+    )
+
+    LEGACY_ROUTE_DEPRECATION_HEADERS = (
+        os.getenv("LEGACY_ROUTE_DEPRECATION_HEADERS", "true").lower() == "true"
+    )
+    LEGACY_ROUTE_SUNSET = os.getenv("LEGACY_ROUTE_SUNSET", "")
+
+    SPRINT_METRICS_MAX_WORKERS = int(os.getenv("SPRINT_METRICS_MAX_WORKERS", "5"))
+
     TRACE_SPRINT_VIEWER = os.getenv(
         "TRACE_SPRINT_VIEWER", "false").lower() == "true"
     TRACE_JIRA_JQL = os.getenv("TRACE_JIRA_JQL", "false").lower() == "true"

@@ -133,3 +133,19 @@ def test_http_client_logs_external_api_failure_metadata():
     assert record.external_status_code == 503
     assert "super-secret" not in record.external_response_snippet
     assert "<redacted>" in record.external_response_snippet
+
+
+def test_http_client_retry_policy_is_configurable():
+    client = ExternalHttpClient(
+        "jira",
+        "https://jira.example",
+        retry_total=5,
+        retry_backoff_factor=0.25,
+        retry_status_forcelist=(500, 503),
+    )
+
+    retry = client._session.get_adapter("https://").max_retries
+
+    assert retry.total == 5
+    assert retry.backoff_factor == 0.25
+    assert retry.status_forcelist == (500, 503)

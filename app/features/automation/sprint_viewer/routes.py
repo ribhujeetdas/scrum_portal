@@ -5,7 +5,7 @@ import logging
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from ....core.api import json_error, json_ok
+from ....core.api import json_error, json_ok, safe_error_message
 from ....core.dependencies import crypto_service, jira_service, sprint_viewer_service
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
@@ -125,7 +125,14 @@ def sprint_viewer_get_sprints():
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
     except JiraServiceError as exc:
-        return json_error(f"PAT validation failed: {exc}", status_code=403)
+        log_handled_exception(
+            "Sprint Viewer PAT validation failed",
+            exc,
+            event="automation.sprint_viewer.pat_validation_failed",
+            feature="sprint_viewer",
+            operation="get_sprints",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
 
@@ -183,7 +190,7 @@ def sprint_viewer_get_sprints():
             operation="get_sprints",
             context={"board_id": board_id_int, "project_key": project_key},
         )
-        return json_error(str(exc), status_code=400)
+        return json_error(safe_error_message("load sprints"), status_code=400)
 
     try:
         for sprint in sprints:
@@ -266,7 +273,14 @@ def sprint_viewer_fetch_issues():
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
     except JiraServiceError as exc:
-        return json_error(f"PAT validation failed: {exc}", status_code=403)
+        log_handled_exception(
+            "Sprint Viewer PAT validation failed",
+            exc,
+            event="automation.sprint_viewer.pat_validation_failed",
+            feature="sprint_viewer",
+            operation="fetch_issues",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
 
@@ -313,7 +327,7 @@ def sprint_viewer_fetch_issues():
             operation="fetch_issues",
             context={"board_id": board_id_int, "sprint_id": sprint_id_int},
         )
-        return json_error(str(exc), status_code=400)
+        return json_error(safe_error_message("load sprint issues"), status_code=400)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in sprint_viewer_fetch_issues: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)
@@ -347,7 +361,14 @@ def sprint_viewer_fetch_metrics():
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
     except JiraServiceError as exc:
-        return json_error(f"PAT validation failed: {exc}", status_code=403)
+        log_handled_exception(
+            "Sprint Viewer PAT validation failed",
+            exc,
+            event="automation.sprint_viewer.pat_validation_failed",
+            feature="sprint_viewer",
+            operation="fetch_metrics",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
 
@@ -387,7 +408,7 @@ def sprint_viewer_fetch_metrics():
             operation="fetch_metrics",
             context={"board_id": board_id_int, "sprint_id": sprint_id_int},
         )
-        return json_error(str(exc), status_code=400)
+        return json_error(safe_error_message("calculate sprint metrics"), status_code=400)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in sprint_viewer_fetch_metrics: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)

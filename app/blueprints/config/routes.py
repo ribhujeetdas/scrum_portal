@@ -4,6 +4,7 @@ from __future__ import annotations
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
+from ...core.api import safe_error_message
 from ...core.dependencies import crypto_service, jira_service, tableau_service
 from ...core.error_logging import log_handled_exception
 from ...extensions import db
@@ -83,7 +84,7 @@ def _save_jira_pat(pat_form: JiraConfigForm):
             operation="validate_jira_pat",
             context={"eid": current_user.eid, "email": current_user.email},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("validate Jira PAT"), "danger")
         return redirect(url_for("aliases.settings_integrations"))
 
     api_email = (profile_json.get("emailAddress") or "").strip()
@@ -119,7 +120,7 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
             operation="validate_tableau_pat",
             context={"eid": current_user.eid, "email": current_user.email},
         )
-        flash(str(exc), "danger")
+        flash(safe_error_message("validate Tableau PAT"), "danger")
         return redirect(url_for("aliases.settings_integrations"))
     except Exception as exc:
         current_app.logger.exception("Unexpected Tableau validation error: %s", exc)

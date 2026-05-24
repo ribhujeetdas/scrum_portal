@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 
 from .config import Config
 from .extensions import db, login_manager, csrf, migrate
@@ -48,6 +48,40 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(automation_bp)
     app.register_blueprint(tableau_custom_views_bp)
     app.register_blueprint(aliases_bp)
+
+    legacy_successors = {
+        "/home": "/dashboard",
+        "/login": "/auth/login",
+        "/signup": "/auth/signup",
+        "/forgot-password": "/auth/forgot-password",
+        "/config/integrations": "/settings/integrations",
+        "/config/projects": "/settings/projects-boards",
+        "/config/custom-views": "/settings/tableau-custom-views",
+        "/tableau/custom-views": "/reports/tci",
+        "/session/status": "/api/session/status",
+        "/session/extend": "/api/session/extend",
+        "/client-log": "/api/client-log",
+        "/automation/rule-copier/fetch-rule": "/api/automation/rule-copier/fetch",
+        "/automation/rule-copier/copy-rule": "/api/automation/rule-copier/copy",
+        "/automation/sprint-viewer/sprints": "/api/automation/sprint-viewer/sprints",
+        "/automation/sprint-viewer/issues": "/api/automation/sprint-viewer/issues",
+        "/automation/sprint-viewer/metrics": "/api/automation/sprint-viewer/metrics",
+        "/tableau/custom-views/link-details": "/api/reports/tci/link-details",
+    }
+
+    @app.after_request
+    def add_legacy_route_deprecation_headers(response):
+        if not app.config.get("LEGACY_ROUTE_DEPRECATION_HEADERS", True):
+            return response
+        successor = legacy_successors.get(request.path)
+        if not successor:
+            return response
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = f"<{successor}>; rel=\"successor-version\""
+        sunset = str(app.config.get("LEGACY_ROUTE_SUNSET") or "").strip()
+        if sunset:
+            response.headers["Sunset"] = sunset
+        return response
 
     # Error handlers
     @app.errorhandler(403)

@@ -95,3 +95,15 @@ def test_jira_pat_validation_is_cached_for_repeated_api_calls(tmp_path, monkeypa
         assert response.status_code == 200
 
     assert jira.calls == 1
+
+
+def test_sprint_metrics_parallelism_is_config_driven(tmp_path):
+    app = create_phase6_app(tmp_path)
+    app.config["SPRINT_METRICS_MAX_WORKERS"] = 2
+
+    with app.app_context():
+        from app.core.dependencies import sprint_viewer_service
+
+        service = sprint_viewer_service()
+
+    assert service.metrics_max_workers == 2

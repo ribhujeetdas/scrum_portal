@@ -27,9 +27,11 @@ class SprintViewerService:
         base_url: str,
         timeout_seconds: int = 30,
         http_client: ExternalHttpClient | None = None,
+        metrics_max_workers: int = 5,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout_seconds
+        self.metrics_max_workers = max(1, min(int(metrics_max_workers or 5), 16))
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
         self._client = http_client or self._new_client()
@@ -502,7 +504,7 @@ class SprintViewerService:
             )
             return name, agg
 
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=self.metrics_max_workers) as ex:
             futures = [ex.submit(run_one, name, spec)
                        for name, spec in jobs.items()]
             for f in as_completed(futures):

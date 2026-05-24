@@ -7,7 +7,7 @@ from datetime import date, datetime
 from flask import Response, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from ....core.api import json_error, json_ok
+from ....core.api import json_error, json_ok, safe_error_message
 from ....core.dependencies import crypto_service, jira_issue_links_service, tableau_service
 from ....core.error_logging import log_handled_exception
 from ....models import UserTableauCustomView
@@ -218,7 +218,7 @@ def custom_views_page():
                     operation="query_custom_view_csv",
                     context={"custom_view_id": selected_id},
                 )
-                flash(str(exc), "danger")
+                flash(safe_error_message("load TCI report data"), "danger")
                 return redirect(url_for("aliases.reports_tci"))
 
             if "download_csv" in request.form:
@@ -268,8 +268,17 @@ def custom_view_link_details():
 
     try:
         pat = _get_user_jira_pat()
-    except Exception as exc:
+    except ValueError as exc:
         return json_error(str(exc), status_code=403)
+    except Exception as exc:
+        log_handled_exception(
+            "TCI Jira PAT read failed",
+            exc,
+            event="reports.tci.jira_pat_failed",
+            feature="tci_reports",
+            operation="link_details",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
 
     try:
         result = jira_issue_links_service().validate_related_ticket(
@@ -299,7 +308,7 @@ def custom_view_link_details():
                 "application_id": application_id,
             },
         )
-        return json_error(str(exc), status_code=400)
+        return json_error(safe_error_message("load related Jira ticket details"), status_code=400)
     except Exception:
         current_app.logger.exception("Unexpected error in custom_view_link_details")
         return json_error("Unexpected error occurred.", status_code=500)
