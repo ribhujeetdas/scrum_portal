@@ -4,9 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
 class JiraIssueLinksServiceError(Exception):
@@ -29,21 +27,19 @@ class JiraIssueLinksService:
     that belongs to mapped_key (e.g. PKLGX/PBGXJ) and has label for application id.
     """
 
-    def __init__(self, base_url: str, timeout_seconds: int = 20):
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: int = 20,
+        http_client: ExternalHttpClient | None = None,
+    ):
         self.base_url = (base_url or "").rstrip("/")
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
         self.timeout = timeout_seconds
-        self._session = requests.Session()
-
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "POST"),
+        self._client = http_client or ExternalHttpClient(
+            "jira", self.base_url, timeout_seconds=timeout_seconds
         )
-        self._session.mount("https://", HTTPAdapter(max_retries=retries))
-        self._session.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _headers(self, pat: str) -> dict:
         return {
@@ -52,54 +48,53 @@ class JiraIssueLinksService:
         }
 
     def fetch_issue_links(self, issue_key: str, pat: str) -> List[dict]:
-        url = f"{self.base_url}/rest/api/2/issue/{issue_key}"
         params = {"fields": "issuelinks"}
         try:
-            resp = self._session.get(url, headers=self._headers(
-                pat), params=params, timeout=self.timeout)
-        except requests.RequestException as exc:
+            data = self._client.get_json(
+                f"/rest/api/2/issue/{issue_key}",
+                headers=self._headers(pat),
+                params=params,
+            )
+        except ExternalServiceError as exc:
+            if exc.status_code == 401:
+                raise JiraIssueLinksServiceError(
+                    "Unauthorized (401). Check Jira PAT.") from exc
+            if exc.status_code == 403:
+                raise JiraIssueLinksServiceError(
+                    "Forbidden (403). PAT lacks permission.") from exc
+            if exc.status_code == 404:
+                raise JiraIssueLinksServiceError(
+                    f"Issue not found (404): {issue_key}") from exc
+            if exc.status_code is not None:
+                raise JiraIssueLinksServiceError(
+                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}") from exc
             raise JiraIssueLinksServiceError(
                 f"Network error fetching issue links: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise JiraIssueLinksServiceError(
-                "Unauthorized (401). Check Jira PAT.")
-        if resp.status_code == 403:
-            raise JiraIssueLinksServiceError(
-                "Forbidden (403). PAT lacks permission.")
-        if resp.status_code == 404:
-            raise JiraIssueLinksServiceError(
-                f"Issue not found (404): {issue_key}")
-        if resp.status_code >= 400:
-            raise JiraIssueLinksServiceError(
-                f"Jira error {resp.status_code}: {resp.text[:200]}")
-
-        data = resp.json()
         fields = data.get("fields") or {}
         return fields.get("issuelinks") or []
 
     def fetch_issue_details_by_self(self, issue_self_url: str, pat: str) -> dict:
         params = {"fields": "labels,key,summary,status"}
         try:
-            resp = self._session.get(issue_self_url, headers=self._headers(
-                pat), params=params, timeout=self.timeout)
-        except requests.RequestException as exc:
+            return self._client.get_json(
+                issue_self_url,
+                headers=self._headers(pat),
+                params=params,
+            )
+        except ExternalServiceError as exc:
+            if exc.status_code == 401:
+                raise JiraIssueLinksServiceError(
+                    "Unauthorized (401). Check Jira PAT.") from exc
+            if exc.status_code == 403:
+                raise JiraIssueLinksServiceError(
+                    "Forbidden (403). PAT lacks permission.") from exc
+            if exc.status_code == 404:
+                raise JiraIssueLinksServiceError("Inward issue not found (404).") from exc
+            if exc.status_code is not None:
+                raise JiraIssueLinksServiceError(
+                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}") from exc
             raise JiraIssueLinksServiceError(
                 f"Network error fetching inward issue details: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise JiraIssueLinksServiceError(
-                "Unauthorized (401). Check Jira PAT.")
-        if resp.status_code == 403:
-            raise JiraIssueLinksServiceError(
-                "Forbidden (403). PAT lacks permission.")
-        if resp.status_code == 404:
-            raise JiraIssueLinksServiceError("Inward issue not found (404).")
-        if resp.status_code >= 400:
-            raise JiraIssueLinksServiceError(
-                f"Jira error {resp.status_code}: {resp.text[:200]}")
-
-        return resp.json()
 
     @staticmethod
     def _is_relates_type(t: dict) -> bool:

@@ -1,0 +1,1 @@
+"""Integration settings feature boundary."""

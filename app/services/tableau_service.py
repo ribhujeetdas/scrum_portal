@@ -1,9 +1,8 @@
 # ===== FILE: services/tableau_service.py =====
 from __future__ import annotations
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from urllib.parse import quote
+
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
 class TableauServiceError(Exception):
@@ -24,6 +23,7 @@ class TableauService:
         api_version: str = "3.7",
         site_content_url: str = "",
         timeout_seconds: int = 20,
+        http_client: ExternalHttpClient | None = None,
     ):
         self.base_url = (base_url or "").rstrip("/")
         self.api_version = (api_version or "3.7").strip()
@@ -33,18 +33,14 @@ class TableauService:
         if not self.base_url:
             raise ValueError("TABLEAU_BASE_URL is missing.")
 
-        self._session = requests.Session()
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "POST"),
+        self._client = http_client or ExternalHttpClient(
+            "tableau",
+            f"{self.base_url}/api/{self.api_version}",
+            timeout_seconds=timeout_seconds,
         )
-        self._session.mount("https://", HTTPAdapter(max_retries=retries))
-        self._session.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _api(self, path: str) -> str:
-        return f"{self.base_url}/api/{self.api_version}{path}"
+        return path
 
     @staticmethod
     def _headers_json() -> dict:
@@ -55,7 +51,6 @@ class TableauService:
         return {"Accept": "application/json", "X-Tableau-Auth": token}
 
     def sign_in_with_pat(self, pat_name: str, pat_secret: str) -> dict:
-        url = self._api("/auth/signin")
         payload = {
             "credentials": {
                 "personalAccessTokenName": pat_name,
@@ -65,28 +60,20 @@ class TableauService:
         }
 
         try:
-            resp = self._session.post(
-                url, headers=self._headers_json(), json=payload, timeout=self.timeout
+            data = self._client.post_json(
+                self._api("/auth/signin"),
+                headers=self._headers_json(),
+                json=payload,
             )
-        except requests.RequestException as exc:
-            raise TableauServiceError(
-                f"Network error calling Tableau sign-in: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise TableauServiceError(
-                "Unauthorized (401). Check Tableau PAT name/secret.")
-        if resp.status_code == 403:
-            raise TableauServiceError(
-                "Forbidden (403). Tableau PAT lacks access.")
-        if resp.status_code >= 400:
-            raise TableauServiceError(
-                f"Tableau sign-in error: {resp.status_code} {resp.text[:200]}")
-
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise TableauServiceError(
-                "Invalid JSON returned by Tableau sign-in.") from exc
+        except ExternalServiceError as exc:
+            self._raise_tableau_error(
+                exc,
+                network_message="Network error calling Tableau sign-in",
+                invalid_json_message="Invalid JSON returned by Tableau sign-in.",
+                generic_message="Tableau sign-in error",
+                unauthorized_message="Unauthorized (401). Check Tableau PAT name/secret.",
+                forbidden_message="Forbidden (403). Tableau PAT lacks access.",
+            )
 
         creds = (data.get("credentials") or {})
         token = creds.get("token")
@@ -109,35 +96,24 @@ class TableauService:
         }
 
     def get_user_details(self, token: str, site_id: str, user_id: str) -> dict:
-        url = self._api(f"/sites/{site_id}/users/{user_id}")
         try:
-            resp = self._session.get(
-                url, headers=self._headers_auth(token), timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise TableauServiceError(
-                f"Network error fetching Tableau user details: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise TableauServiceError(
-                "Unauthorized (401) while fetching Tableau user details.")
-        if resp.status_code == 403:
-            raise TableauServiceError(
-                "Forbidden (403) while fetching Tableau user details.")
-        if resp.status_code >= 400:
-            raise TableauServiceError(
-                f"Tableau user details error: {resp.status_code} {resp.text[:200]}")
-
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise TableauServiceError(
-                "Invalid JSON returned by Tableau user details endpoint.") from exc
+            return self._client.get_json(
+                self._api(f"/sites/{site_id}/users/{user_id}"),
+                headers=self._headers_auth(token),
+            )
+        except ExternalServiceError as exc:
+            self._raise_tableau_error(
+                exc,
+                network_message="Network error fetching Tableau user details",
+                invalid_json_message="Invalid JSON returned by Tableau user details endpoint.",
+                generic_message="Tableau user details error",
+                unauthorized_message="Unauthorized (401) while fetching Tableau user details.",
+                forbidden_message="Forbidden (403) while fetching Tableau user details.",
+            )
 
     def sign_out(self, token: str) -> None:
-        url = self._api("/auth/signout")
         try:
-            self._session.post(url, headers=self._headers_auth(
-                token), timeout=self.timeout)
+            self._client.post(self._api("/auth/signout"), headers=self._headers_auth(token))
         except Exception:
             return
 
@@ -206,30 +182,21 @@ class TableauService:
         if filter_expr:
             # keep ':' unescaped because filter expressions use ':'
             qs += f"&filter={quote(filter_expr, safe=':')}"
-        url = self._api(f"/sites/{site_id}/customviews{qs}")
-
         try:
-            resp = self._session.get(
-                url, headers=self._headers_auth(token), timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise TableauServiceError(
-                f"Network error listing Tableau custom views: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise TableauServiceError(
-                "Unauthorized (401) while listing Tableau custom views.")
-        if resp.status_code == 403:
-            raise TableauServiceError(
-                "Forbidden (403) while listing Tableau custom views.")
-        if resp.status_code >= 400:
-            raise TableauServiceError(
-                f"List custom views failed: {resp.status_code} {resp.text[:300]}")
-
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise TableauServiceError(
-                "Invalid JSON returned by Tableau custom views list.") from exc
+            return self._client.get_json(
+                self._api(f"/sites/{site_id}/customviews{qs}"),
+                headers=self._headers_auth(token),
+            )
+        except ExternalServiceError as exc:
+            self._raise_tableau_error(
+                exc,
+                network_message="Network error listing Tableau custom views",
+                invalid_json_message="Invalid JSON returned by Tableau custom views list.",
+                generic_message="List custom views failed",
+                unauthorized_message="Unauthorized (401) while listing Tableau custom views.",
+                forbidden_message="Forbidden (403) while listing Tableau custom views.",
+                snippet_length=300,
+            )
 
     @staticmethod
     def _extract_custom_view_items(payload: dict) -> list[dict]:
@@ -291,28 +258,44 @@ class TableauService:
         GET /api/{version}/sites/{site-id}/customviews/{customview-id}/data?maxAge=60
         Returns raw CSV bytes.
         """
-        url = self._api(f"/sites/{site_id}/customviews/{custom_view_id}/data")
-
         try:
             # Use permissive Accept to avoid 406
-            resp = self._session.get(
-                url,
+            resp = self._client.get(
+                self._api(f"/sites/{site_id}/customviews/{custom_view_id}/data"),
                 headers={**self._headers_auth(token), "Accept": "*/*"},
-                timeout=self.timeout,
             )
-        except requests.RequestException as exc:
-            raise TableauServiceError(
-                # improve error message
-                f"Network error querying custom view data: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise TableauServiceError(
-                "Unauthorized (401) while querying custom view data.")
-        if resp.status_code == 403:
-            raise TableauServiceError(
-                "Forbidden (403) while querying custom view data.")
-        if resp.status_code >= 400:
-            raise TableauServiceError(
-                f"Query custom view data failed: {resp.status_code} {resp.text[:300]}")
+        except ExternalServiceError as exc:
+            self._raise_tableau_error(
+                exc,
+                network_message="Network error querying custom view data",
+                invalid_json_message="Invalid JSON returned by Tableau custom view data.",
+                generic_message="Query custom view data failed",
+                unauthorized_message="Unauthorized (401) while querying custom view data.",
+                forbidden_message="Forbidden (403) while querying custom view data.",
+                snippet_length=300,
+            )
 
         return resp.content
+
+    @staticmethod
+    def _raise_tableau_error(
+        exc: ExternalServiceError,
+        *,
+        network_message: str,
+        invalid_json_message: str,
+        generic_message: str,
+        unauthorized_message: str,
+        forbidden_message: str,
+        snippet_length: int = 200,
+    ) -> None:
+        if exc.status_code == 401:
+            raise TableauServiceError(unauthorized_message) from exc
+        if exc.status_code == 403:
+            raise TableauServiceError(forbidden_message) from exc
+        if exc.message == "Invalid JSON response":
+            raise TableauServiceError(invalid_json_message) from exc
+        if exc.status_code is not None:
+            raise TableauServiceError(
+                f"{generic_message}: {exc.status_code} {(exc.response_snippet or '')[:snippet_length]}"
+            ) from exc
+        raise TableauServiceError(f"{network_message}: {exc}") from exc

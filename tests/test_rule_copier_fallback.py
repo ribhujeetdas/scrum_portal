@@ -78,16 +78,16 @@ def test_copy_rule_falls_back_to_user_jira_actor_when_config_actor_fails(tmp_pat
     app = create_rule_copy_app(tmp_path)
     fake_service = FakeRuleService()
 
-    import app.blueprints.automation.routes as automation_routes
+    import app.features.automation.rule_copier.routes as rule_copier_routes
 
-    monkeypatch.setattr(automation_routes, "_get_user_pat", lambda: "pat")
-    monkeypatch.setattr(automation_routes, "_validate_pat_belongs_to_user", lambda pat: None)
+    monkeypatch.setattr(rule_copier_routes, "_get_user_pat", lambda: "pat")
+    monkeypatch.setattr(rule_copier_routes, "_validate_pat_belongs_to_user", lambda pat: None)
     monkeypatch.setattr(
-        automation_routes,
+        rule_copier_routes,
         "_ensure_project_id_for_user_project",
         lambda project_key, board_id, pat: 12345,
     )
-    monkeypatch.setattr(automation_routes, "_rule_service", lambda: fake_service)
+    monkeypatch.setattr(rule_copier_routes, "_rule_service", lambda: fake_service)
 
     client = app.test_client()
     login_test_user(client)

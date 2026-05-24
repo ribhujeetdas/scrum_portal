@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Optional
 
@@ -34,6 +35,14 @@ _SECRET_PATTERNS = (
     (re.compile(r"(\bpassword\b\s*[=:]\s*)\S+", re.IGNORECASE), r"\1<redacted>"),
     (re.compile(r"(\bcsrf[_ -]?token\b\s*[=:]\s*)\S+", re.IGNORECASE), r"\1<redacted>"),
 )
+_SECRET_KEY_FRAGMENTS = (
+    "authorization",
+    "csrf",
+    "password",
+    "pat",
+    "secret",
+    "token",
+)
 
 
 def set_request_id(value: str) -> None:
@@ -47,6 +56,17 @@ def get_request_id() -> str:
 def _redact(value: Any) -> Any:
     if value is None:
         return None
+    if isinstance(value, Mapping):
+        redacted = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(fragment in key_text for fragment in _SECRET_KEY_FRAGMENTS):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact(item)
+        return redacted
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_redact(item) for item in value]
     if not isinstance(value, str):
         return value
     out = value
@@ -145,6 +165,13 @@ class JsonFormatter(logging.Formatter):
             "client_message",
             "client_url",
             "client_user_agent",
+            "context",
+            "error_type",
+            "external_operation",
+            "external_service",
+            "external_status_code",
+            "feature",
+            "operation",
             "remote_addr",
         ):
             if hasattr(record, key):

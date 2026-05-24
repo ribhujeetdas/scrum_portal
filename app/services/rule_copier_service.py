@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import copy
 import time
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
 class RuleCopierServiceError(Exception):
@@ -27,21 +26,20 @@ class RuleCopierService:
        (Internal endpoint patterns vary across DC instances) 
     """
 
-    def __init__(self, base_url: str, timeout_seconds: int = 30):
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: int = 30,
+        http_client: ExternalHttpClient | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout_seconds
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
 
-        self._session = requests.Session()
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "POST", "PUT"),
+        self._client = http_client or ExternalHttpClient(
+            "jira", self.base_url, timeout_seconds=timeout_seconds
         )
-        self._session.mount("https://", HTTPAdapter(max_retries=retries))
-        self._session.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _headers(self, pat: str) -> dict:
         return {
@@ -62,32 +60,16 @@ class RuleCopierService:
           issues[0].fields.project.id
           issues[0].fields.project.key
         """
-        url = f"{self.base_url}/rest/agile/1.0/board/{board_id}/issue"
         params = {"maxResults": 1}
 
         try:
-            resp = self._session.get(
-                url, headers=self._headers(pat), params=params, timeout=self.timeout
+            data = self._client.get_json(
+                f"/rest/agile/1.0/board/{board_id}/issue",
+                headers=self._headers(pat),
+                params=params,
             )
-        except requests.RequestException as exc:
-            raise RuleCopierServiceError(
-                f"Network error calling board issue API: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise RuleCopierServiceError(
-                "Unauthorized (401) while calling board issue API. Check PAT.")
-        if resp.status_code == 403:
-            raise RuleCopierServiceError(
-                "Forbidden (403) while calling board issue API.")
-        if resp.status_code >= 400:
-            raise RuleCopierServiceError(
-                f"Board issue API error: {resp.status_code} {resp.text[:200]}")
-
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise RuleCopierServiceError(
-                "Invalid JSON returned by board issue API.") from exc
+        except ExternalServiceError as exc:
+            self._raise_board_issue_error(exc)
 
         issues = data.get("issues") or []
         if not issues:
@@ -121,30 +103,13 @@ class RuleCopierService:
         Calls:
           GET /rest/cb-automation/latest/project/{project_identifier}/rule
         """
-        url = f"{self.base_url}/rest/cb-automation/latest/project/{project_identifier}/rule"
-
         try:
-            resp = self._session.get(
-                url, headers=self._headers(pat), timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise RuleCopierServiceError(
-                f"Network error calling automation rule list: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise RuleCopierServiceError(
-                "Unauthorized (401) while calling automation API. Check PAT.")
-        if resp.status_code == 403:
-            raise RuleCopierServiceError(
-                "Forbidden (403) while calling automation API.")
-        if resp.status_code >= 400:
-            raise RuleCopierServiceError(
-                f"Automation API error: {resp.status_code} {resp.text[:200]}")
-
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise RuleCopierServiceError(
-                "Invalid JSON returned by automation API.") from exc
+            data = self._client.get_json(
+                f"/rest/cb-automation/latest/project/{project_identifier}/rule",
+                headers=self._headers(pat),
+            )
+        except ExternalServiceError as exc:
+            self._raise_automation_api_error(exc, "list")
 
         if isinstance(data, list):
             return data
@@ -159,17 +124,12 @@ class RuleCopierService:
         (Internal endpoints vary across DC instances) [1](https://developer.atlassian.com/server/jira/platform/rest/v10000/)
         """
         # Attempt detail endpoint
-        url = f"{self.base_url}/rest/cb-automation/latest/project/{project_identifier}/rule/{rule_id}"
         try:
-            resp = self._session.get(
-                url, headers=self._headers(pat), timeout=self.timeout)
-            if resp.status_code == 200:
-                try:
-                    return resp.json()
-                except ValueError:
-                    # If it returns non-JSON, fall back
-                    pass
-        except requests.RequestException:
+            return self._client.get_json(
+                f"/rest/cb-automation/latest/project/{project_identifier}/rule/{rule_id}",
+                headers=self._headers(pat),
+            )
+        except ExternalServiceError:
             # ignore and fallback
             pass
 
@@ -268,26 +228,64 @@ class RuleCopierService:
         Calls:
           POST /rest/cb-automation/latest/project/{project_identifier}/rule  (https://developer.atlassian.com/server/jira/platform/rest/v10000/)
         """
-        url = f"{self.base_url}/rest/cb-automation/latest/project/{project_identifier}/rule"
-
         try:
-            resp = self._session.post(url, headers=self._headers(
-                pat), json=payload, timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise RuleCopierServiceError(
-                f"Network error calling create rule API: {exc}") from exc
-
-        if resp.status_code == 401:
-            raise RuleCopierServiceError(
-                "Unauthorized (401) while creating rule. Check PAT.")
-        if resp.status_code == 403:
-            raise RuleCopierServiceError(
-                "Forbidden (403) while creating rule.")
-        if resp.status_code >= 400:
-            raise RuleCopierServiceError(
-                f"Create rule API error: {resp.status_code} {resp.text[:200]}")
+            resp = self._client.post(
+                f"/rest/cb-automation/latest/project/{project_identifier}/rule",
+                headers=self._headers(pat),
+                json=payload,
+            )
+        except ExternalServiceError as exc:
+            self._raise_create_rule_error(exc)
 
         try:
             return resp.json()
         except ValueError:
             return {"status": "success", "http_status": resp.status_code}
+
+    @staticmethod
+    def _snippet(exc: ExternalServiceError) -> str:
+        return (exc.response_snippet or "")[:200]
+
+    def _raise_board_issue_error(self, exc: ExternalServiceError) -> None:
+        if exc.status_code == 401:
+            raise RuleCopierServiceError(
+                "Unauthorized (401) while calling board issue API. Check PAT.") from exc
+        if exc.status_code == 403:
+            raise RuleCopierServiceError(
+                "Forbidden (403) while calling board issue API.") from exc
+        if exc.message == "Invalid JSON response":
+            raise RuleCopierServiceError(
+                "Invalid JSON returned by board issue API.") from exc
+        if exc.status_code is not None:
+            raise RuleCopierServiceError(
+                f"Board issue API error: {exc.status_code} {self._snippet(exc)}") from exc
+        raise RuleCopierServiceError(
+            f"Network error calling board issue API: {exc}") from exc
+
+    def _raise_automation_api_error(self, exc: ExternalServiceError, operation: str) -> None:
+        if exc.status_code == 401:
+            raise RuleCopierServiceError(
+                "Unauthorized (401) while calling automation API. Check PAT.") from exc
+        if exc.status_code == 403:
+            raise RuleCopierServiceError(
+                "Forbidden (403) while calling automation API.") from exc
+        if exc.message == "Invalid JSON response":
+            raise RuleCopierServiceError(
+                "Invalid JSON returned by automation API.") from exc
+        if exc.status_code is not None:
+            raise RuleCopierServiceError(
+                f"Automation API error: {exc.status_code} {self._snippet(exc)}") from exc
+        raise RuleCopierServiceError(
+            f"Network error calling automation rule {operation}: {exc}") from exc
+
+    def _raise_create_rule_error(self, exc: ExternalServiceError) -> None:
+        if exc.status_code == 401:
+            raise RuleCopierServiceError(
+                "Unauthorized (401) while creating rule. Check PAT.") from exc
+        if exc.status_code == 403:
+            raise RuleCopierServiceError("Forbidden (403) while creating rule.") from exc
+        if exc.status_code is not None:
+            raise RuleCopierServiceError(
+                f"Create rule API error: {exc.status_code} {self._snippet(exc)}") from exc
+        raise RuleCopierServiceError(
+            f"Network error calling create rule API: {exc}") from exc

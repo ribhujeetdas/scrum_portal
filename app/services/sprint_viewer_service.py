@@ -5,11 +5,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, Set, Dict, Any, List
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
 from flask import current_app, has_app_context
+
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
 class SprintViewerServiceError(Exception):
@@ -24,12 +22,17 @@ class SprintViewerService:
     - GET /rest/api/2/search (for JQL metrics)
     """
 
-    def __init__(self, base_url: str, timeout_seconds: int = 30):
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: int = 30,
+        http_client: ExternalHttpClient | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout_seconds
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
-        self._session = self._new_session()
+        self._client = http_client or self._new_client()
 
     # ---------------------------
     # Trace helpers (config-driven)
@@ -45,23 +48,16 @@ class SprintViewerService:
             current_app.logger.debug(msg, *args)
 
     # ---------------------------
-    # HTTP session / headers
+    # HTTP client / headers
     # ---------------------------
-    def _new_session(self) -> requests.Session:
+    def _new_client(self) -> ExternalHttpClient:
         """
-        Create a requests.Session with retry policy.
-        Note: NOT thread-safe, create a new one per thread for metrics.
+        Create a client with retry policy.
+        Note: create a new one per thread for metrics.
         """
-        s = requests.Session()
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "POST"),
+        return ExternalHttpClient(
+            "jira", self.base_url, timeout_seconds=self.timeout
         )
-        s.mount("https://", HTTPAdapter(max_retries=retries))
-        s.mount("http://", HTTPAdapter(max_retries=retries))
-        return s
 
     def _headers(self, pat: str) -> dict:
         # Do NOT log this header; it contains bearer token
@@ -93,32 +89,24 @@ class SprintViewerService:
                     board_id, max_results)
 
         while True:
-            url = f"{self.base_url}/rest/agile/1.0/board/{board_id}/sprint"
             params = {"startAt": start_at,
                       "maxResults": max_results, "state": "closed"}
 
             try:
-                resp = self._session.get(url, headers=self._headers(
-                    pat), params=params, timeout=self.timeout)
-            except requests.RequestException as exc:
-                raise SprintViewerServiceError(
-                    f"Network error fetching sprints: {exc}") from exc
-
-            if resp.status_code == 401:
-                raise SprintViewerServiceError(
-                    "Unauthorized (401) while fetching sprints. Check PAT.")
-            if resp.status_code == 403:
-                raise SprintViewerServiceError(
-                    "Forbidden (403) while fetching sprints.")
-            if resp.status_code >= 400:
-                raise SprintViewerServiceError(
-                    f"Sprint API error: {resp.status_code} {resp.text[:200]}")
-
-            try:
-                data = resp.json()
-            except ValueError as exc:
-                raise SprintViewerServiceError(
-                    "Invalid JSON returned by sprint API.") from exc
+                data = self._client.get_json(
+                    f"/rest/agile/1.0/board/{board_id}/sprint",
+                    headers=self._headers(pat),
+                    params=params,
+                )
+            except ExternalServiceError as exc:
+                self._raise_sprint_api_error(
+                    exc,
+                    network_message="Network error fetching sprints",
+                    invalid_json_message="Invalid JSON returned by sprint API.",
+                    generic_message="Sprint API error",
+                    unauthorized_message="Unauthorized (401) while fetching sprints. Check PAT.",
+                    forbidden_message="Forbidden (403) while fetching sprints.",
+                )
 
             values = data.get("values") or []
             page_count = len(values)
@@ -177,32 +165,24 @@ class SprintViewerService:
                     sprint_id, max_results)
 
         while True:
-            url = f"{self.base_url}/rest/agile/1.0/sprint/{sprint_id}/issue"
             params = {"startAt": start_at, "maxResults": max_results,
                       "fields": ",".join(fields)}
 
             try:
-                resp = self._session.get(url, headers=self._headers(
-                    pat), params=params, timeout=self.timeout)
-            except requests.RequestException as exc:
-                raise SprintViewerServiceError(
-                    f"Network error fetching sprint issues: {exc}") from exc
-
-            if resp.status_code == 401:
-                raise SprintViewerServiceError(
-                    "Unauthorized (401) while fetching sprint issues. Check PAT.")
-            if resp.status_code == 403:
-                raise SprintViewerServiceError(
-                    "Forbidden (403) while fetching sprint issues.")
-            if resp.status_code >= 400:
-                raise SprintViewerServiceError(
-                    f"Sprint issues API error: {resp.status_code} {resp.text[:200]}")
-
-            try:
-                data = resp.json()
-            except ValueError as exc:
-                raise SprintViewerServiceError(
-                    "Invalid JSON returned by sprint issues API.") from exc
+                data = self._client.get_json(
+                    f"/rest/agile/1.0/sprint/{sprint_id}/issue",
+                    headers=self._headers(pat),
+                    params=params,
+                )
+            except ExternalServiceError as exc:
+                self._raise_sprint_api_error(
+                    exc,
+                    network_message="Network error fetching sprint issues",
+                    invalid_json_message="Invalid JSON returned by sprint issues API.",
+                    generic_message="Sprint issues API error",
+                    unauthorized_message="Unauthorized (401) while fetching sprint issues. Check PAT.",
+                    forbidden_message="Forbidden (403) while fetching sprint issues.",
+                )
 
             if total is None:
                 t = data.get("total")
@@ -395,9 +375,9 @@ class SprintViewerService:
     # ---------------------------
     # JQL Aggregation: SP + Count (+ optional keys)
     # ---------------------------
-    def _aggregate_by_jql_with_session(
+    def _aggregate_by_jql_with_client(
         self,
-        session: requests.Session,
+        client: ExternalHttpClient,
         jql: str,
         pat: str,
         capture_keys: bool = False,
@@ -417,7 +397,6 @@ class SprintViewerService:
                         start_at, max_results, jql_short)
 
         while True:
-            url = f"{self.base_url}/rest/api/2/search"
             params = {
                 "jql": jql,
                 "startAt": start_at,
@@ -426,27 +405,20 @@ class SprintViewerService:
             }
 
             try:
-                resp = session.get(url, headers=self._headers(
-                    pat), params=params, timeout=self.timeout)
-            except requests.RequestException as exc:
-                raise SprintViewerServiceError(
-                    f"Network error running JQL search: {exc}") from exc
-
-            if resp.status_code == 401:
-                raise SprintViewerServiceError(
-                    "Unauthorized (401) while running JQL search. Check PAT.")
-            if resp.status_code == 403:
-                raise SprintViewerServiceError(
-                    "Forbidden (403) while running JQL search.")
-            if resp.status_code >= 400:
-                raise SprintViewerServiceError(
-                    f"JQL search error: {resp.status_code} {resp.text[:200]}")
-
-            try:
-                data = resp.json()
-            except ValueError as exc:
-                raise SprintViewerServiceError(
-                    "Invalid JSON returned by JQL search.") from exc
+                data = client.get_json(
+                    "/rest/api/2/search",
+                    headers=self._headers(pat),
+                    params=params,
+                )
+            except ExternalServiceError as exc:
+                self._raise_sprint_api_error(
+                    exc,
+                    network_message="Network error running JQL search",
+                    invalid_json_message="Invalid JSON returned by JQL search.",
+                    generic_message="JQL search error",
+                    unauthorized_message="Unauthorized (401) while running JQL search. Check PAT.",
+                    forbidden_message="Forbidden (403) while running JQL search.",
+                )
 
             issues = data.get("issues") or []
             page_count = len(issues)
@@ -522,20 +494,13 @@ class SprintViewerService:
         scope_added_keys: list[str] = []
 
         def run_one(name: str, spec: dict) -> tuple[str, dict]:
-            session = self._new_session()
-            try:
-                agg = self._aggregate_by_jql_with_session(
-                    session=session,
-                    jql=spec["jql"],
-                    pat=pat,
-                    capture_keys=bool(spec.get("capture_keys", False)),
-                )
-                return name, agg
-            finally:
-                try:
-                    session.close()
-                except Exception:
-                    pass
+            agg = self._aggregate_by_jql_with_client(
+                client=self._new_client(),
+                jql=spec["jql"],
+                pat=pat,
+                capture_keys=bool(spec.get("capture_keys", False)),
+            )
+            return name, agg
 
         with ThreadPoolExecutor(max_workers=5) as ex:
             futures = [ex.submit(run_one, name, spec)
@@ -616,3 +581,25 @@ class SprintViewerService:
         self._trace("Metrics done board_id=%s sprint_id=%s result=%s",
                     board_id, sprint_id, out)
         return out
+
+    @staticmethod
+    def _raise_sprint_api_error(
+        exc: ExternalServiceError,
+        *,
+        network_message: str,
+        invalid_json_message: str,
+        generic_message: str,
+        unauthorized_message: str,
+        forbidden_message: str,
+    ) -> None:
+        if exc.status_code == 401:
+            raise SprintViewerServiceError(unauthorized_message) from exc
+        if exc.status_code == 403:
+            raise SprintViewerServiceError(forbidden_message) from exc
+        if exc.message == "Invalid JSON response":
+            raise SprintViewerServiceError(invalid_json_message) from exc
+        if exc.status_code is not None:
+            raise SprintViewerServiceError(
+                f"{generic_message}: {exc.status_code} {(exc.response_snippet or '')[:200]}"
+            ) from exc
+        raise SprintViewerServiceError(f"{network_message}: {exc}") from exc

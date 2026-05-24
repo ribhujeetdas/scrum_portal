@@ -7,18 +7,10 @@ from sqlalchemy import or_
 
 from . import auth_bp
 from .forms import LoginForm, SignupForm, ConfirmProfileForm, SetPasswordForm
+from ...core.dependencies import crypto_service, jira_service
 from ...extensions import db
 from ...models import User
-from ...services.jira_service import JiraService, JiraServiceError
-from ...services.crypto_service import CryptoService
-
-
-def _jira_service() -> JiraService:
-    return JiraService(current_app.config["JIRA_BASE_URL"])
-
-
-def _crypto() -> CryptoService:
-    return CryptoService(current_app.config["FERNET_KEY"])
+from ...services.jira_service import JiraServiceError
 
 
 @auth_bp.route("/", methods=["GET"])
@@ -94,7 +86,7 @@ def signup():
             return redirect(url_for("auth.login"))
 
         try:
-            profile = _jira_service().fetch_myself(pat)
+            profile = jira_service().fetch_myself(pat)
         except JiraServiceError as exc:
             current_app.logger.warning(
                 "Signup PAT validation failed for email=%s: %s", email, exc)
@@ -124,7 +116,7 @@ def signup():
             "timezone": profile.get("timeZone"),
             "locale": profile.get("locale"),
         }
-        session["signup_pat_enc"] = _crypto().encrypt(pat).decode("utf-8")
+        session["signup_pat_enc"] = crypto_service().encrypt(pat).decode("utf-8")
 
         current_app.logger.info(
             "Signup validated for email=%s eid=%s", api_email, profile.get("name"))

@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import pytest
+import requests
+
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+class FakeSession:
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        if self.exc:
+            raise self.exc
+        return self.response
+
+    def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        if self.exc:
+            raise self.exc
+        return self.response
+
+
+def test_http_client_get_json_joins_url_and_uses_timeout():
+    session = FakeSession(response=FakeResponse(payload={"accountId": "abc"}))
+    client = ExternalHttpClient(
+        "jira", "https://jira.example", session=session, timeout_seconds=7
+    )
+
+    payload = client.get_json(
+        "/rest/api/2/myself", headers={"Authorization": "Bearer secret-token"}
+    )
+
+    assert payload == {"accountId": "abc"}
+    assert session.calls == [
+        (
+            "GET",
+            "https://jira.example/rest/api/2/myself",
+            {"headers": {"Authorization": "Bearer secret-token"}, "timeout": 7},
+        )
+    ]
+
+
+def test_http_client_http_error_redacts_secret_snippets():
+    session = FakeSession(
+        response=FakeResponse(
+            status_code=500,
+            text="Authorization: Bearer secret-token pat_token=abc123 failed",
+        )
+    )
+    client = ExternalHttpClient("jira", "https://jira.example", session=session)
+
+    with pytest.raises(ExternalServiceError) as raised:
+        client.get_json("/broken")
+
+    err = raised.value
+    assert err.service == "jira"
+    assert err.operation == "GET /broken"
+    assert err.status_code == 500
+    assert "secret-token" not in str(err)
+    assert "abc123" not in str(err)
+    assert "<redacted>" in err.response_snippet
+
+
+def test_http_client_network_error_preserves_original_exception():
+    original = requests.Timeout("connect timed out")
+    session = FakeSession(exc=original)
+    client = ExternalHttpClient("jira", "https://jira.example", session=session)
+
+    with pytest.raises(ExternalServiceError) as raised:
+        client.post_json("/endpoint", json={"name": "rule"})
+
+    assert raised.value.__cause__ is original
+    assert raised.value.service == "jira"
+    assert raised.value.operation == "POST /endpoint"
+    assert raised.value.status_code is None
