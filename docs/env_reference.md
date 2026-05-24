@@ -8,6 +8,7 @@ Required for normal application use:
 - `FERNET_KEY`
 - `JIRA_BASE_URL`
 - `JIRA_AUTOMATION_ACTOR_ACCOUNT_ID`
+- `JIRA_PAT_VALIDATION_CACHE_SECONDS`
 - `TABLEAU_BASE_URL`
 
 Security:

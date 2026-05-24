@@ -41,12 +41,12 @@ def enforce_session_timeout():
             {
                 "authenticated": False,
                 "expired": True,
-                "redirect_url": url_for("auth.login"),
+                "redirect_url": url_for("aliases.auth_login"),
             }
         ), 401
 
     flash("Session expired. Please login again.", "warning")
-    return redirect(url_for("auth.login"))
+    return redirect(url_for("aliases.auth_login"))
 
 
 def _now() -> int:
@@ -84,7 +84,7 @@ def _session_payload(now: int, expires_at: int, timeout_seconds: int) -> dict:
         "warning_after_seconds": warning_after_seconds,
         "warning_remaining_seconds": warning_remaining_seconds,
         "show_warning": remaining_seconds <= warning_remaining_seconds,
-        "redirect_url": url_for("auth.login"),
+        "redirect_url": url_for("aliases.auth_login"),
     }
 
 

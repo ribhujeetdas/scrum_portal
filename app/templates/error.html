@@ -10,9 +10,9 @@
 
     <div class="mt-3">
       {% if current_user.is_authenticated %}
-        <a class="btn btn-primary" href="{{ url_for('main.home') }}">Go to Home</a>
+        <a class="btn btn-primary" href="{{ url_for('aliases.dashboard') }}">Go to Home</a>
       {% else %}
-        <a class="btn btn-primary" href="{{ url_for('auth.login') }}">Go to Login</a>
+        <a class="btn btn-primary" href="{{ url_for('aliases.auth_login') }}">Go to Login</a>
       {% endif %}
     </div>
   </div>

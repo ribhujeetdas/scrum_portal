@@ -67,6 +67,9 @@ class Config:
     JIRA_AUTOMATION_ACTOR_ACCOUNT_ID = os.getenv(
         "JIRA_AUTOMATION_ACTOR_ACCOUNT_ID", "JIRAUSER182483"
     )
+    JIRA_PAT_VALIDATION_CACHE_SECONDS = int(
+        os.getenv("JIRA_PAT_VALIDATION_CACHE_SECONDS", "300")
+    )
 
     TRACE_SPRINT_VIEWER = os.getenv(
         "TRACE_SPRINT_VIEWER", "false").lower() == "true"

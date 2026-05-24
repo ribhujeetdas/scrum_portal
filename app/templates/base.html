@@ -14,7 +14,7 @@
     {% include "_toasts.html" %}
 
     {% if current_user.is_authenticated %}
-      <form id="sessionLogoutForm" method="POST" action="{{ url_for('auth.logout') }}" class="d-none">
+      <form id="sessionLogoutForm" method="POST" action="{{ url_for('aliases.auth_logout') }}" class="d-none">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       </form>
 
@@ -48,8 +48,8 @@
 
         <ul class="nav nav-pills flex-column gap-1">
           <li class="nav-item">
-            <a class="nav-link text-white {% if request.path.startswith('/home') %}active{% endif %}"
-               href="{{ url_for('main.home') }}">
+            <a class="nav-link text-white {% if request.path.startswith('/dashboard') or request.path.startswith('/home') %}active{% endif %}"
+               href="{{ url_for('aliases.dashboard') }}">
               Home
             </a>
           </li>
@@ -62,8 +62,8 @@
           </li>
 
           <li class="nav-item">
-            <a class="nav-link text-white {% if request.path.startswith('/config') %}active{% endif %}"
-               href="{{ url_for('config.integrations') }}">
+            <a class="nav-link text-white {% if request.path.startswith('/settings') or request.path.startswith('/config') %}active{% endif %}"
+               href="{{ url_for('aliases.settings_integrations') }}">
               Settings
             </a>
           </li>
@@ -76,12 +76,12 @@
               <div class="text-white-50">{{ current_user.email }}</div>
             </div>
 
-            <form method="POST" action="{{ url_for('auth.logout') }}">
+            <form method="POST" action="{{ url_for('aliases.auth_logout') }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="btn btn-outline-light w-100" type="submit">Logout</button>
             </form>
           {% else %}
-            <a class="btn btn-outline-light w-100" href="{{ url_for('auth.login') }}">Login</a>
+            <a class="btn btn-outline-light w-100" href="{{ url_for('aliases.auth_login') }}">Login</a>
           {% endif %}
         </div>
       </nav>

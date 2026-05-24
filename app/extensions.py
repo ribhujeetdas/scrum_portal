@@ -8,5 +8,5 @@ login_manager = LoginManager()
 csrf = CSRFProtect()
 migrate = Migrate()
 
-login_manager.login_view = "auth.login"
+login_manager.login_view = "aliases.auth_login"
 login_manager.login_message_category = "warning"

@@ -38,7 +38,7 @@ def _masked_tableau_secret() -> str:
 @config_bp.route("/", methods=["GET"])
 @login_required
 def index():
-    return redirect(url_for("config.integrations"))
+    return redirect(url_for("aliases.settings_integrations"))
 
 
 @config_bp.route("/integrations", methods=["GET", "POST"])
@@ -84,17 +84,17 @@ def _save_jira_pat(pat_form: JiraConfigForm):
             context={"eid": current_user.eid, "email": current_user.email},
         )
         flash(str(exc), "danger")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     api_email = (profile_json.get("emailAddress") or "").strip()
     active = bool(profile_json.get("active"))
     deleted = bool(profile_json.get("deleted"))
     if api_email.lower() != current_user.email.lower():
         flash("Token belongs to a different user (email mismatch).", "danger")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
     if not active or deleted:
         flash("Jira profile is not active or is deleted.", "danger")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     current_user.jira_pat_enc = crypto_service().encrypt(pat_input)
     db.session.commit()
@@ -102,7 +102,7 @@ def _save_jira_pat(pat_form: JiraConfigForm):
         "User updated Jira PAT eid=%s email=%s", current_user.eid, current_user.email
     )
     flash("Token validated and saved successfully.", "success")
-    return redirect(url_for("config.integrations"))
+    return redirect(url_for("aliases.settings_integrations"))
 
 
 def _save_tableau_pat(tableau_form: TableauConfigForm):
@@ -120,11 +120,11 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
             context={"eid": current_user.eid, "email": current_user.email},
         )
         flash(str(exc), "danger")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
     except Exception as exc:
         current_app.logger.exception("Unexpected Tableau validation error: %s", exc)
         flash("Unexpected error occurred while validating Tableau PAT.", "danger")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     tableau_email = (identity.get("email") or "").strip()
     tableau_eid = (identity.get("eid") or "").strip()
@@ -133,13 +133,13 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
             f"Tableau user email '{tableau_email}' does not match your registered email '{current_user.email}'.",
             "danger",
         )
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
     if tableau_eid.lower() != current_user.eid.lower():
         flash(
             f"Tableau user name/EID '{tableau_eid}' does not match your registered EID '{current_user.eid}'.",
             "danger",
         )
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     current_user.tableau_pat_name = pat_name
     current_user.tableau_pat_secret_enc = crypto_service().encrypt(pat_secret)
@@ -155,7 +155,7 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
         current_user.email,
     )
     flash("Tableau PAT validated and saved successfully.", "success")
-    return redirect(url_for("config.integrations"))
+    return redirect(url_for("aliases.settings_integrations"))
 
 
 @config_bp.route("/projects", methods=["GET", "POST"])

@@ -52,24 +52,24 @@ def _handle_save_custom_view(
             "No Epic Keys found for your saved projects. Please add/refresh Projects & Boards so Epic Key is captured, then try again.",
             "warning",
         )
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     if not custom_view_form.validate_on_submit():
         flash("Please select an Epic Key and provide a valid Custom View ID.", "danger")
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     epic_key = (custom_view_form.epic_key.data or "").strip().upper()
     custom_view_id = (custom_view_form.tableau_custom_view_id.data or "").strip()
 
     if epic_key not in valid_epic_keys:
         flash("Invalid Epic Key selection. Please refresh and try again.", "danger")
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     if not getattr(current_user, "tableau_pat_name", None) or not getattr(
         current_user, "tableau_pat_secret_enc", None
     ):
         flash("Please configure Tableau PAT first under Settings -> Integrations.", "warning")
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     if not getattr(current_user, "tableau_site_id", None) or not getattr(
         current_user, "tableau_user_id", None
@@ -78,7 +78,7 @@ def _handle_save_custom_view(
             "Tableau identity is not saved. Please re-validate Tableau PAT under Settings -> Integrations.",
             "warning",
         )
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     try:
         pat_secret = crypto_service().decrypt(current_user.tableau_pat_secret_enc)
@@ -87,7 +87,7 @@ def _handle_save_custom_view(
             "Unable to read saved Tableau PAT. Please re-save it under Settings -> Integrations.",
             "danger",
         )
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     try:
         custom_view = tableau_service().fetch_custom_view_details_by_id(
@@ -106,7 +106,7 @@ def _handle_save_custom_view(
             context={"custom_view_id": custom_view_id, "epic_key": epic_key},
         )
         flash(str(exc), "danger")
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     row = UserTableauCustomView.query.filter_by(
         user_id=current_user.id,
@@ -131,7 +131,7 @@ def _handle_save_custom_view(
     db.session.commit()
 
     flash(f"Custom View saved and mapped to Epic Key: {epic_key}", "success")
-    return redirect(url_for("config.custom_views"))
+    return redirect(url_for("aliases.settings_tableau_custom_views"))
 
 
 def _handle_delete_custom_view(delete_form: TableauCustomViewDeleteForm):
@@ -140,7 +140,7 @@ def _handle_delete_custom_view(delete_form: TableauCustomViewDeleteForm):
             "Delete failed due to an invalid request (please refresh and try again).",
             "danger",
         )
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     delete_id = (delete_form.delete_custom_view_id.data or "").strip()
     row = UserTableauCustomView.query.filter_by(
@@ -149,7 +149,7 @@ def _handle_delete_custom_view(delete_form: TableauCustomViewDeleteForm):
     ).first()
     if not row:
         flash("Custom view not found.", "warning")
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     try:
         db.session.delete(row)
@@ -158,7 +158,7 @@ def _handle_delete_custom_view(delete_form: TableauCustomViewDeleteForm):
     except Exception:
         db.session.rollback()
         flash("Failed to delete the custom view. Please check logs.", "danger")
-    return redirect(url_for("config.custom_views"))
+    return redirect(url_for("aliases.settings_tableau_custom_views"))
 
 
 def _render_custom_views(

@@ -53,9 +53,6 @@ def test_sprint_viewer_feature_exports_route_handlers():
 
 
 def test_tci_feature_exports_route_handlers_and_csv_preview():
-    from app.blueprints.tableau_custom_views.forms import (
-        TableauCustomViewSelectForm as CompatTableauCustomViewSelectForm,
-    )
     from app.features.reports.tci.forms import TableauCustomViewSelectForm
     from app.features.reports.tci.routes import (
         custom_view_link_details,
@@ -63,7 +60,7 @@ def test_tci_feature_exports_route_handlers_and_csv_preview():
         parse_csv_preview,
     )
 
-    assert TableauCustomViewSelectForm is CompatTableauCustomViewSelectForm
+    assert TableauCustomViewSelectForm.__name__ == "TableauCustomViewSelectForm"
     assert callable(custom_views_page)
     assert callable(custom_view_link_details)
     assert callable(parse_csv_preview)

@@ -43,7 +43,7 @@ def projects_page():
             for errors in project_form.errors.values():
                 messages.extend(errors)
             flash(" ".join(messages) or "Please provide a valid Jira project key.", "danger")
-            return redirect(url_for("config.projects"))
+            return redirect(url_for("aliases.settings_projects_boards"))
 
         if "validate_and_add" in request.form and project_form.validate_on_submit():
             return _handle_add_project(project_form)
@@ -71,7 +71,7 @@ def _handle_add_project(project_form):
             "Please set your Enterprise Agile Jira PAT first under Settings -> Integrations.",
             "warning",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
     try:
         pat = crypto_service().decrypt(current_user.jira_pat_enc)
     except Exception:
@@ -79,7 +79,7 @@ def _handle_add_project(project_form):
             "Unable to read your saved PAT. Please re-save it under Settings -> Integrations.",
             "danger",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
 
     project_key = (project_form.project_key.data or "").strip().upper()
     jps = JiraProjectsService(current_app.config["JIRA_BASE_URL"])
@@ -96,13 +96,13 @@ def _handle_add_project(project_form):
             context={"project_key": project_key},
         )
         flash(str(exc), "danger")
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
     if not has_admin:
         flash(
             f"You do NOT have ADMINISTER_PROJECTS permission for project {project_key}.",
             "danger",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
 
     try:
         boards = jps.list_boards_for_project(project_key, pat)
@@ -116,7 +116,7 @@ def _handle_add_project(project_form):
             context={"project_key": project_key},
         )
         flash(str(exc), "danger")
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
 
     product_area_key = _detect_product_area_key(jps, boards, project_key, pat)
     return _save_project_boards(project_key, boards, product_area_key)
@@ -199,7 +199,7 @@ def _save_project_boards(project_key: str, boards: list[dict], product_area_key:
             current_user.eid, project_key, exc
         )
         flash("Failed to save project/boards. Please check logs.", "danger")
-    return redirect(url_for("config.projects"))
+    return redirect(url_for("aliases.settings_projects_boards"))
 
 
 def _handle_delete_project(delete_project_form, svc: ProfileService):
@@ -212,7 +212,7 @@ def _handle_delete_project(delete_project_form, svc: ProfileService):
             "Delete failed due to an invalid request (please refresh and try again).",
             "danger",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
     project_key = (
         delete_project_form.delete_project_key.data or "").strip().upper()
     try:
@@ -234,7 +234,7 @@ def _handle_delete_project(delete_project_form, svc: ProfileService):
             current_user.eid, project_key, exc
         )
         flash("Unexpected error occurred while deleting the project.", "danger")
-    return redirect(url_for("config.projects"))
+    return redirect(url_for("aliases.settings_projects_boards"))
 
 
 def _handle_delete_board(delete_board_form, svc: ProfileService):
@@ -247,7 +247,7 @@ def _handle_delete_board(delete_board_form, svc: ProfileService):
             "Delete failed due to an invalid request (please refresh and try again).",
             "danger",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
     project_key = (
         delete_board_form.delete_project_key.data or "").strip().upper()
     board_id_raw = (
@@ -256,7 +256,7 @@ def _handle_delete_board(delete_board_form, svc: ProfileService):
         board_id = int(board_id_raw)
     except ValueError:
         flash("Invalid Board ID.", "danger")
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
     try:
         project_deleted = svc.delete_board(DeleteBoardRequest(
             user_id=current_user.id,
@@ -282,4 +282,4 @@ def _handle_delete_board(delete_board_form, svc: ProfileService):
             current_user.eid, project_key, board_id, exc
         )
         flash("Unexpected error occurred while deleting the board.", "danger")
-    return redirect(url_for("config.projects"))
+    return redirect(url_for("aliases.settings_projects_boards"))

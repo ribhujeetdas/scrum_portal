@@ -2,14 +2,14 @@
 <ul class="nav nav-tabs mb-3">
   <li class="nav-item">
     <a class="nav-link {% if request.path.endswith('/integrations') %}active{% endif %}"
-       href="{{ url_for('config.integrations') }}">Integrations</a>
+       href="{{ url_for('aliases.settings_integrations') }}">Integrations</a>
   </li>
   <li class="nav-item">
     <a class="nav-link {% if request.path.endswith('/projects') %}active{% endif %}"
-       href="{{ url_for('config.projects') }}">Projects & Boards</a>
+       href="{{ url_for('aliases.settings_projects_boards') }}">Projects & Boards</a>
   </li>
   <li class="nav-item">
     <a class="nav-link {% if request.path.endswith('/custom-views') %}active{% endif %}"
-       href="{{ url_for('config.custom_views') }}">Tableau Custom Views</a>
+       href="{{ url_for('aliases.settings_tableau_custom_views') }}">Tableau Custom Views</a>
   </li>
 </ul>

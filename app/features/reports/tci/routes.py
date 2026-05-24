@@ -152,11 +152,11 @@ def custom_views_page():
         current_user, "tableau_pat_secret_enc", None
     ):
         flash("Please configure Tableau PAT in Settings -> Integrations first.", "warning")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     if not getattr(current_user, "tableau_site_id", None):
         flash("Tableau site identity not found. Please re-validate Tableau PAT.", "warning")
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     rows = (
         UserTableauCustomView.query.filter_by(user_id=current_user.id)
@@ -172,7 +172,7 @@ def custom_views_page():
             "No Tableau custom views saved yet. Add a Custom View ID in Settings -> Tableau Custom Views.",
             "info",
         )
-        return redirect(url_for("config.custom_views"))
+        return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     form = TableauCustomViewSelectForm()
     form.custom_view_id.choices = [
@@ -189,7 +189,7 @@ def custom_views_page():
             "Unable to read saved Tableau PAT. Please re-save it in Settings -> Integrations.",
             "danger",
         )
-        return redirect(url_for("config.integrations"))
+        return redirect(url_for("aliases.settings_integrations"))
 
     if request.method == "POST" and form.validate_on_submit():
         selected_id = form.custom_view_id.data
@@ -219,7 +219,7 @@ def custom_views_page():
                     context={"custom_view_id": selected_id},
                 )
                 flash(str(exc), "danger")
-                return redirect(url_for("tableau_custom_views.custom_views_page"))
+                return redirect(url_for("aliases.reports_tci"))
 
             if "download_csv" in request.form:
                 return Response(

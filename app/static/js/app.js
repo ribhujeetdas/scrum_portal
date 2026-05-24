@@ -192,7 +192,7 @@
       const remaining = Math.max(0, Math.floor(expiresAt - Date.now() / 1000));
       countdownEl.textContent = formatCountdown(remaining);
       if (remaining <= 0) {
-        window.location.href = "/login";
+        window.location.href = "/auth/login";
       }
     }
 
@@ -218,12 +218,12 @@
       try {
         const response = await apiFetch("/api/session/status", { method: "GET" });
         if (response.status === 401) {
-          window.location.href = "/login";
+          window.location.href = "/auth/login";
           return;
         }
         const data = await response.json();
         if (!data.authenticated || data.expired) {
-          window.location.href = data.redirect_url || "/login";
+          window.location.href = data.redirect_url || "/auth/login";
           return;
         }
         expiresAt = Number(data.expires_at || 0);
@@ -242,7 +242,7 @@
       try {
         const response = await apiFetch("/api/session/extend", { method: "POST" });
         if (response.status === 401) {
-          window.location.href = "/login";
+          window.location.href = "/auth/login";
           return;
         }
         const data = await response.json();

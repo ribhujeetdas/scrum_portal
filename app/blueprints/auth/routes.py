@@ -15,14 +15,14 @@ from ...services.jira_service import JiraServiceError
 
 @auth_bp.route("/", methods=["GET"])
 def root():
-    return redirect(url_for("auth.login"))
+    return redirect(url_for("aliases.auth_login"))
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     # If already logged in, go to home (so sidebar/logout is present)
     if current_user.is_authenticated:
-        return redirect(url_for("main.home"))
+        return redirect(url_for("aliases.dashboard"))
 
     form = LoginForm()
     if form.validate_on_submit():
@@ -45,7 +45,7 @@ def login():
         login_user(user)
         session.permanent = True
         current_app.logger.info("User logged in: eid=%s", user.eid)
-        return redirect(url_for("main.home"))
+        return redirect(url_for("aliases.dashboard"))
 
     if request.args.get("next"):
         flash("Please login to continue.", "warning")
@@ -58,7 +58,7 @@ def login():
 def logout():
     logout_user()
     flash("Logged out successfully.", "info")
-    return redirect(url_for("auth.login"))
+    return redirect(url_for("aliases.auth_login"))
 
 
 @auth_bp.route("/forgot-password", methods=["GET"])
@@ -66,14 +66,14 @@ def forgot_password():
     admin_email = current_app.config["ADMIN_EMAIL"]
     flash(
         f"Password reset is managed by Admin. Please contact: {admin_email}", "warning")
-    return redirect(url_for("auth.login"))
+    return redirect(url_for("aliases.auth_login"))
 
 
 @auth_bp.route("/signup", methods=["GET", "POST"])
 def signup():
     # If already logged in, go to home
     if current_user.is_authenticated:
-        return redirect(url_for("main.home"))
+        return redirect(url_for("aliases.dashboard"))
 
     form = SignupForm()
     if form.validate_on_submit():
@@ -83,7 +83,7 @@ def signup():
         existing = User.query.filter(User.email.ilike(email)).first()
         if existing:
             flash("Account already exists for this email. Please login.", "info")
-            return redirect(url_for("auth.login"))
+            return redirect(url_for("aliases.auth_login"))
 
         try:
             profile = jira_service().fetch_myself(pat)
@@ -120,7 +120,7 @@ def signup():
 
         current_app.logger.info(
             "Signup validated for email=%s eid=%s", api_email, profile.get("name"))
-        return redirect(url_for("auth.confirm_profile"))
+        return redirect(url_for("aliases.auth_signup_confirm"))
 
     return render_template("auth/signup.html", form=form)
 
@@ -130,11 +130,11 @@ def confirm_profile():
     profile = session.get("signup_profile")
     if not profile:
         flash("Signup session expired. Please start again.", "warning")
-        return redirect(url_for("auth.signup"))
+        return redirect(url_for("aliases.auth_signup"))
 
     form = ConfirmProfileForm()
     if form.validate_on_submit():
-        return redirect(url_for("auth.set_password"))
+        return redirect(url_for("aliases.auth_signup_set_password"))
 
     return render_template("auth/confirm_profile.html", profile=profile, form=form)
 
@@ -146,7 +146,7 @@ def set_password():
 
     if not profile or not pat_enc_str:
         flash("Signup session expired. Please start again.", "warning")
-        return redirect(url_for("auth.signup"))
+        return redirect(url_for("aliases.auth_signup"))
 
     form = SetPasswordForm()
     if form.validate_on_submit():
@@ -156,11 +156,11 @@ def set_password():
 
         if not eid or not email or not display_name:
             flash("Invalid profile data. Please retry signup.", "danger")
-            return redirect(url_for("auth.signup"))
+            return redirect(url_for("aliases.auth_signup"))
 
         if User.query.filter(User.email.ilike(email)).first() or User.query.filter(User.eid.ilike(eid)).first():
             flash("Account already exists. Please login.", "info")
-            return redirect(url_for("auth.login"))
+            return redirect(url_for("aliases.auth_login"))
 
         user = User(
             eid=eid,
@@ -185,6 +185,6 @@ def set_password():
         current_app.logger.info(
             "User created eid=%s email=%s", user.eid, user.email)
         flash("Account created successfully. Please login.", "success")
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("aliases.auth_login"))
 
     return render_template("auth/set_password.html", form=form)

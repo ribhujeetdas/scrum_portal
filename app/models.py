@@ -1,12 +1,16 @@
 # app/models.py
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from .extensions import db, login_manager
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class User(db.Model, UserMixin):
@@ -43,10 +47,10 @@ class User(db.Model, UserMixin):
     # Tableau "name" stored as EID
     tableau_eid = db.Column(db.String(128), nullable=True)
 
-    created_at = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
-                           onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
     # Relationships
     projects = db.relationship(
@@ -67,6 +71,7 @@ class UserProject(db.Model):
     __tablename__ = "user_projects"
     __table_args__ = (
         UniqueConstraint("user_id", "project_key", name="uq_user_project_key"),
+        db.Index("ix_user_projects_project_id", "project_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -84,10 +89,10 @@ class UserProject(db.Model):
     # This is kept separate from project_key so existing behavior does not break.
     epic_key = db.Column(db.String(32), nullable=True)
 
-    created_at = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
-                           onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
     user = db.relationship("User", back_populates="projects")
 
@@ -103,6 +108,7 @@ class UserBoard(db.Model):
     __tablename__ = "user_boards"
     __table_args__ = (
         UniqueConstraint("project_id", "board_id", name="uq_project_board_id"),
+        db.Index("ix_user_boards_board_id", "board_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -114,10 +120,10 @@ class UserBoard(db.Model):
     board_type = db.Column(db.String(32), nullable=True)
     board_url = db.Column(db.String(1024), nullable=True)
 
-    created_at = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
-                           onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
     project = db.relationship("UserProject", back_populates="boards")
 
@@ -149,10 +155,10 @@ class UserBoardSprint(db.Model):
     synced = db.Column(db.Boolean, nullable=True)
     auto_start_stop = db.Column(db.Boolean, nullable=True)
 
-    created_at = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
-                           onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
 
 class UserTableauCustomView(db.Model):
@@ -160,6 +166,7 @@ class UserTableauCustomView(db.Model):
     __table_args__ = (
         UniqueConstraint("user_id", "custom_view_id",
                          name="uq_user_custom_view"),
+        db.Index("ix_user_tableau_custom_views_user_updated", "user_id", "updated_at"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -177,10 +184,10 @@ class UserTableauCustomView(db.Model):
     workbook_name = db.Column(db.String(255), nullable=True)
     shared = db.Column(db.Boolean, nullable=True)
 
-    created_at = db.Column(
-        db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
-                           onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
 
 @login_manager.user_loader

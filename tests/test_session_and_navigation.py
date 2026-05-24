@@ -88,7 +88,7 @@ def test_rule_copier_redirects_to_projects_when_no_project_keys(tmp_path):
     response = client.get("/automation/rule-copier", follow_redirects=False)
 
     assert response.status_code == 302
-    assert "/config/projects" in response.headers["Location"]
+    assert "/settings/projects-boards" in response.headers["Location"]
 
 
 def test_sprint_viewer_redirects_to_projects_when_no_project_keys(tmp_path):
@@ -99,7 +99,7 @@ def test_sprint_viewer_redirects_to_projects_when_no_project_keys(tmp_path):
     response = client.get("/automation/sprint-viewer", follow_redirects=False)
 
     assert response.status_code == 302
-    assert "/config/projects" in response.headers["Location"]
+    assert "/settings/projects-boards" in response.headers["Location"]
 
 
 def test_automation_pages_load_when_project_key_exists(tmp_path):

@@ -93,7 +93,7 @@ def test_empty_project_key_post_redirects_with_toast_message(tmp_path):
     )
 
     assert response.status_code == 302
-    assert "/config/projects" in response.headers["Location"]
+    assert "/settings/projects-boards" in response.headers["Location"]
 
     follow = client.get("/config/projects")
     html = follow.get_data(as_text=True)

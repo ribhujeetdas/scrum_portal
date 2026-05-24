@@ -8,6 +8,7 @@ from flask_login import current_user
 from ....core.api import json_error, json_ok
 from ....core.dependencies import crypto_service, jira_service, sprint_viewer_service
 from ....core.error_logging import log_handled_exception
+from ....core.jira_pat_validation import validate_jira_pat_for_current_user
 from ....extensions import db
 from ....models import UserBoard, UserBoardSprint, UserProject
 from ....services.jira_service import JiraServiceError
@@ -32,14 +33,7 @@ def _get_user_pat() -> str:
 
 
 def _validate_pat_belongs_to_user(pat: str) -> None:
-    myself = jira_service().fetch_myself(pat)
-    api_email = (myself.get("emailAddress") or "").strip()
-    active = bool(myself.get("active"))
-    deleted = bool(myself.get("deleted"))
-    if api_email.lower() != current_user.email.lower():
-        raise ValueError("Saved PAT belongs to a different user (email mismatch).")
-    if not active or deleted:
-        raise ValueError("Jira profile is not active or is deleted.")
+    validate_jira_pat_for_current_user(pat, jira_service().fetch_myself)
 
 
 def _board_belongs_to_user_and_project(user_id: int, project_key: str, board_id: int) -> bool:
@@ -78,7 +72,7 @@ def sprint_viewer_page():
             "No project key found. Redirecting you to Settings to add Projects & Boards.",
             "warning",
         )
-        return redirect(url_for("config.projects"))
+        return redirect(url_for("aliases.settings_projects_boards"))
 
     boards_by_project: dict[str, list[dict]] = {}
     for project in projects:
