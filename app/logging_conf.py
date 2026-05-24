@@ -168,6 +168,8 @@ class JsonFormatter(logging.Formatter):
             "context",
             "error_type",
             "external_operation",
+            "external_endpoint",
+            "external_response_snippet",
             "external_service",
             "external_status_code",
             "feature",

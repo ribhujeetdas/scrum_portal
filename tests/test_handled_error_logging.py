@@ -10,6 +10,8 @@ from app.config import Config
 from app.core.error_logging import log_handled_exception
 from app.extensions import db
 from app.models import User, UserBoard, UserProject
+from app.models import UserTableauCustomView
+from app.services.jira_issue_links_service import JiraIssueLinksServiceError
 from app.services.sprint_viewer_service import SprintViewerServiceError
 
 
@@ -151,5 +153,67 @@ def test_sprint_viewer_service_error_is_logged_with_stacktrace(tmp_path, monkeyp
     assert record["feature"] == "sprint_viewer"
     assert record["operation"] == "fetch_issues"
     assert record["error_type"] == "SprintViewerServiceError"
+    assert "Traceback" in record["exception"]
+    assert "super-secret" not in json.dumps(record)
+
+
+class FailingIssueLinksService:
+    def validate_related_ticket(self, **kwargs):
+        raise JiraIssueLinksServiceError("Jira links failed pat_token=super-secret")
+
+
+def _add_user_tableau_custom_view():
+    db.session.add(
+        UserTableauCustomView(
+            user_id=1,
+            custom_view_id="cv-123",
+            epic_key="ABC",
+            custom_view_name="TCI View",
+        )
+    )
+    db.session.commit()
+
+
+def test_tci_link_details_service_error_is_logged_with_stacktrace(
+    tmp_path, monkeypatch
+):
+    app = _create_test_app(tmp_path)
+    with app.app_context():
+        db.create_all()
+        _add_user_project_and_board()
+        _add_user_tableau_custom_view()
+
+    import app.features.reports.tci.routes as tci_routes
+
+    monkeypatch.setattr(tci_routes, "_get_user_jira_pat", lambda: "pat")
+    monkeypatch.setattr(
+        tci_routes, "jira_issue_links_service", lambda: FailingIssueLinksService()
+    )
+
+    client = app.test_client()
+    _login(client)
+
+    response = client.post(
+        "/api/reports/tci/link-details",
+        json={
+            "custom_view_id": "cv-123",
+            "feature_key": "ABC-1",
+            "application_id": "APP1",
+        },
+        headers={"X-Request-ID": "tci-link-123"},
+    )
+
+    assert response.status_code == 400
+
+    records = _read_json_lines(tmp_path / "test-app.log")
+    record = next(
+        r for r in records if r.get("event") == "reports.tci.link_details_failed"
+    )
+
+    assert record["request_id"] == "tci-link-123"
+    assert record["feature"] == "tci_reports"
+    assert record["operation"] == "link_details"
+    assert record["error_type"] == "JiraIssueLinksServiceError"
+    assert record["context"]["feature_key"] == "ABC-1"
     assert "Traceback" in record["exception"]
     assert "super-secret" not in json.dumps(record)

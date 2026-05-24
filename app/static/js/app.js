@@ -62,7 +62,7 @@
       userAgent: navigator.userAgent
     };
 
-    return fetch("/client-log", {
+    return fetch("/api/client-log", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -216,7 +216,7 @@
 
     async function pollStatus() {
       try {
-        const response = await apiFetch("/session/status", { method: "GET" });
+        const response = await apiFetch("/api/session/status", { method: "GET" });
         if (response.status === 401) {
           window.location.href = "/login";
           return;
@@ -240,7 +240,7 @@
     extendBtn.addEventListener("click", async () => {
       extendBtn.setAttribute("disabled", "disabled");
       try {
-        const response = await apiFetch("/session/extend", { method: "POST" });
+        const response = await apiFetch("/api/session/extend", { method: "POST" });
         if (response.status === 401) {
           window.location.href = "/login";
           return;
@@ -269,6 +269,21 @@
     });
   }
 
+  const loadedFeatureScripts = new Set();
+
+  function loadFeatureScripts() {
+    document.querySelectorAll("[data-feature-script-src]").forEach((el) => {
+      const src = el.getAttribute("data-feature-script-src");
+      if (!src || loadedFeatureScripts.has(src)) return;
+      loadedFeatureScripts.add(src);
+      const script = document.createElement("script");
+      script.src = src;
+      script.defer = true;
+      script.setAttribute("data-feature-script", "true");
+      document.body.appendChild(script);
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".portal-toast").forEach((toastEl) => {
       const toast = bootstrap.Toast.getOrCreateInstance(toastEl, {
@@ -278,6 +293,7 @@
       toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
       toast.show();
     });
+    loadFeatureScripts();
     startSessionMonitor();
   });
 

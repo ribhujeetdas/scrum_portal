@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 import requests
 
@@ -90,3 +92,27 @@ def test_http_client_network_error_preserves_original_exception():
     assert raised.value.service == "jira"
     assert raised.value.operation == "POST /endpoint"
     assert raised.value.status_code is None
+
+
+def test_http_client_logs_external_api_failure_metadata(caplog):
+    session = FakeSession(
+        response=FakeResponse(
+            status_code=503,
+            text="pat_secret=super-secret upstream outage",
+        )
+    )
+    client = ExternalHttpClient("tableau", "https://tableau.example", session=session)
+
+    with caplog.at_level(logging.WARNING, logger="app.external"):
+        with pytest.raises(ExternalServiceError):
+            client.get_json("/sites/site-1/customviews")
+
+    record = next(
+        record for record in caplog.records if record.event == "tableau.request.failed"
+    )
+    assert record.external_service == "tableau"
+    assert record.external_operation == "GET /sites/site-1/customviews"
+    assert record.external_endpoint == "/sites/site-1/customviews"
+    assert record.external_status_code == 503
+    assert "super-secret" not in record.external_response_snippet
+    assert "<redacted>" in record.external_response_snippet
