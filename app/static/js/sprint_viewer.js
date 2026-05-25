@@ -13,11 +13,13 @@
   const fetchIssuesBtn = document.getElementById("fetchIssuesBtn");
   const msgBox = document.getElementById("msgBox");
   const resultsCard = document.getElementById("resultsCard");
+  const downloadSprintReportBtn = document.getElementById("downloadSprintReportBtn");
   const sprintMetaBox = document.getElementById("sprintMetaBox");
   const statsBox = document.getElementById("statsBox");
   const metricsBox = document.getElementById("metricsBox");
   const workTypeMixBox = document.getElementById("workTypeMixBox");
   const assigneeAccordion = document.getElementById("assigneeAccordion");
+  let currentReportData = null;
 
   function $(id) {
     return document.getElementById(id);
@@ -30,6 +32,11 @@
 
   function clear(el) {
     if (el) el.replaceChildren();
+  }
+
+  function setReportDownloadReady(ready) {
+    if (!downloadSprintReportBtn) return;
+    setDisabled(downloadSprintReportBtn, !ready);
   }
 
   function errorMessage(data, fallback) {
@@ -92,6 +99,8 @@
   }
 
   function resetResults() {
+    currentReportData = null;
+    setReportDownloadReady(false);
     resultsCard.classList.add("d-none");
     metricsBox.classList.add("d-none");
     statsBox.classList.add("d-none");
@@ -119,6 +128,189 @@
     const safeSp = sp ?? 0;
     const spText = typeof safeSp === "number" ? safeSp.toFixed(2) : safeSp;
     return `${safeCount} # (${spText} pts)`;
+  }
+
+  function selectedText(select) {
+    if (!select || !select.selectedOptions || !select.selectedOptions.length) return "";
+    return select.selectedOptions[0].textContent || "";
+  }
+
+  function xmlEscape(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function cellXml(value) {
+    const isNumber = typeof value === "number" && Number.isFinite(value);
+    const type = isNumber ? "Number" : "String";
+    return `<Cell><Data ss:Type="${type}">${xmlEscape(value)}</Data></Cell>`;
+  }
+
+  function rowXml(values) {
+    return `<Row>${(values || []).map(cellXml).join("")}</Row>`;
+  }
+
+  function worksheetXml(name, rows) {
+    return `<Worksheet ss:Name="${xmlEscape(name)}"><Table>${rows.map(rowXml).join("")}</Table></Worksheet>`;
+  }
+
+  function addKeyValueSection(rows, title, pairs) {
+    rows.push([title]);
+    rows.push(["Field", "Value"]);
+    (pairs || []).forEach(([label, value]) => rows.push([label, value ?? ""]));
+    rows.push([]);
+  }
+
+  function buildSprintSummaryRows(report) {
+    const issueData = report.issueData || {};
+    const metrics = report.metrics || {};
+    const stats = issueData.stats || {};
+    const sprint = issueData.sprint || {};
+    const workTypeMix = issueData.work_type_mix || {};
+    const rows = [];
+
+    addKeyValueSection(rows, "Sprint Metadata", [
+      ["Project Key", report.projectKey],
+      ["Board", report.boardName],
+      ["Board ID", report.boardId],
+      ["Sprint", sprint.name || report.sprintName],
+      ["Sprint ID", report.sprintId],
+      ["Start", shortDate(sprint.start_date)],
+      ["End", shortDate(sprint.end_date)],
+      ["Completed", shortDate(sprint.complete_date)],
+      ["Goal", sprint.goal || ""],
+      ["Historical fallback rows", issueData.historical_fallback_count ?? 0],
+    ]);
+
+    addKeyValueSection(rows, "Totals", [
+      ["Total issues", issueData.total ?? 0],
+      ["Standard issues", issueData.standard_total ?? 0],
+      ["Total points", issueData.total_sp ?? 0],
+    ]);
+
+    addKeyValueSection(rows, "Quality Metrics", [
+      ["Unestimated count", stats.unestimated_count ?? 0],
+      ["Unestimated %", stats.unestimated_pct ?? 0],
+      ["Bug count", stats.bug_count ?? 0],
+      ["Bug %", stats.bug_pct ?? 0],
+      ["Bug points", stats.bug_sp ?? 0],
+      ["Unassigned count", stats.unassigned_count ?? 0],
+      ["Unassigned %", stats.unassigned_pct ?? 0],
+      ["No relevant comments count", stats.zero_relevant_comment_count ?? 0],
+      ["No relevant comments %", stats.zero_relevant_comment_pct ?? 0],
+      ["Relevant comments count", stats.relevant_comment_count ?? 0],
+      ["Carryover count", stats.carryover_count ?? 0],
+      ["Carryover points", stats.carryover_sp ?? 0],
+    ]);
+
+    rows.push(["Scrum Metrics", "Count", "Points", "Percent/Value"]);
+    rows.push(["Original Commitment", metrics.committed_count ?? 0, metrics.committed_sp ?? 0, ""]);
+    rows.push(["Completed from Commitment", metrics.completed_original_count ?? 0, metrics.completed_original_sp ?? 0, ""]);
+    rows.push(["Total Completed", metrics.delivered_count ?? 0, metrics.delivered_sp ?? 0, ""]);
+    rows.push(["Carryover", metrics.spillover_count ?? 0, metrics.spillover_sp ?? 0, ""]);
+    rows.push(["Added Scope", metrics.scope_added_count ?? 0, metrics.scope_added_sp ?? 0, metrics.scope_pct ?? 0]);
+    rows.push(["Removed Scope", metrics.descope_count ?? 0, metrics.descope_sp ?? 0, ""]);
+    rows.push(["Net Scope Change", metrics.scope_net_count ?? 0, metrics.scope_net_sp ?? 0, ""]);
+    rows.push(["Commitment Predictability %", "", "", metrics.predictability_pct ?? 0]);
+    rows.push(["Total Delivery vs Commitment %", "", "", metrics.total_delivery_vs_commitment_pct ?? 0]);
+    rows.push(["Scope Change %", "", "", metrics.scope_change_pct ?? 0]);
+    rows.push([]);
+
+    rows.push(["Work Type Mix", "Count", "Points"]);
+    Object.entries(workTypeMix.overall || {}).forEach(([type, bucket]) => {
+      rows.push([type, bucket.count ?? 0, bucket.pts ?? 0]);
+    });
+    rows.push([]);
+
+    rows.push(["Work Type Mix by Developer", "Type Mix"]);
+    (workTypeMix.by_assignee || []).forEach((row) => {
+      const mix = Object.entries(row.types || {})
+        .map(([type, bucket]) => `${type}: ${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`)
+        .join("; ");
+      rows.push([row.assignee_name || row.assignee_eid || "Unassigned", mix]);
+    });
+
+    return rows;
+  }
+
+  function buildTicketDetailRows(report) {
+    const groups = (report.issueData && report.issueData.groups) || [];
+    const scopeKeys = new Set((report.metrics && report.metrics.scope_added_keys) || []);
+    const rows = [[
+      "Developer",
+      "Developer EID",
+      "Issue Key",
+      "Summary",
+      "Type",
+      "Status",
+      "Story Points",
+      "Feature Key",
+      "Relevant Comments",
+      "Data",
+      "Added After Sprint Start",
+    ]];
+
+    groups.forEach((group) => {
+      (group.issues || []).forEach((issue) => {
+        rows.push([
+          group.assignee_name || "Unassigned",
+          group.assignee_eid || "",
+          issue.issue_key || "",
+          issue.summary || "",
+          issue.issue_type || "",
+          issue.status || "",
+          issue.story_points ?? "",
+          issue.feature_key || "",
+          issue.relevant_comment_count ?? 0,
+          issue.historical_fallback ? "Current fallback" : "Sprint-end",
+          scopeKeys.has(issue.issue_key) ? "Yes" : "No",
+        ]);
+      });
+    });
+
+    return rows;
+  }
+
+  function buildSprintReportWorkbook(report) {
+    const summaryRows = buildSprintSummaryRows(report);
+    const detailRows = buildTicketDetailRows(report);
+    return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+${worksheetXml("Sprint Summary", summaryRows)}
+${worksheetXml("Ticket Details", detailRows)}
+</Workbook>`;
+  }
+
+  function safeFileName(value) {
+    return String(value || "sprint-report")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "sprint-report";
+  }
+
+  function downloadSprintReport() {
+    if (!currentReportData || !currentReportData.metrics) return;
+    const workbook = buildSprintReportWorkbook(currentReportData);
+    const blob = new Blob([workbook], {
+      type: "application/vnd.ms-excel;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const sprintPart = safeFileName(currentReportData.sprintName || currentReportData.sprintId);
+    link.href = url;
+    link.download = `${sprintPart}-sprint-report.xls`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function loadSprints(refresh) {
@@ -388,13 +580,19 @@
       if (!data.ok) {
         showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
         metricsBox.classList.add("d-none");
+        setReportDownloadReady(false);
         return;
       }
       renderMetrics(data.metrics);
       applyScopeStars(data.metrics && data.metrics.scope_added_keys ? data.metrics.scope_added_keys : []);
+      if (currentReportData && currentReportData.boardId === bid && currentReportData.sprintId === sid) {
+        currentReportData.metrics = data.metrics || {};
+        setReportDownloadReady(true);
+      }
     } catch (error) {
       showAlert("warning", "Issues loaded. Metrics failed due to network/unexpected error.");
       metricsBox.classList.add("d-none");
+      setReportDownloadReady(false);
     }
   }
 
@@ -450,6 +648,16 @@
         showAlert("danger", errorMessage(data, "Failed to fetch sprint issues."));
         return;
       }
+      currentReportData = {
+        projectKey: projectKey.value.trim().toUpperCase(),
+        boardId: bid,
+        boardName: selectedText(boardId),
+        sprintId: sid,
+        sprintName: selectedText(sprintId),
+        issueData: data,
+        metrics: null,
+      };
+      setReportDownloadReady(false);
       setTotals(data.total, data.total_sp, data.standard_total);
       renderSprintMeta(data.sprint, data.historical_fallback_count);
       renderStats(data.stats);
@@ -465,4 +673,8 @@
       unlockUi();
     }
   });
+
+  if (downloadSprintReportBtn) {
+    downloadSprintReportBtn.addEventListener("click", downloadSprintReport);
+  }
 })();

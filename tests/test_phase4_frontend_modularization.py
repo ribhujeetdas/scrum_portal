@@ -67,3 +67,15 @@ def test_phase4_feature_fetches_use_canonical_api_routes():
         assert f'"{legacy_path}' not in combined
         assert f"'{legacy_path}" not in combined
         assert f"`{legacy_path}" not in combined
+
+
+def test_sprint_viewer_report_download_waits_for_metrics():
+    template = read("app/templates/automation/sprint_viewer.html")
+    script = read("app/static/js/sprint_viewer.js")
+
+    assert 'id="downloadSprintReportBtn"' in template
+    assert "Download Report" in template
+    assert "downloadSprintReportBtn" in script
+    assert "buildSprintReportWorkbook" in script
+    assert "setReportDownloadReady(false)" in script
+    assert "setReportDownloadReady(true)" in script
