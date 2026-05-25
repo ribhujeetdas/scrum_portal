@@ -86,6 +86,9 @@ class Config:
     LEGACY_ROUTE_SUNSET = os.getenv("LEGACY_ROUTE_SUNSET", "")
 
     SPRINT_METRICS_MAX_WORKERS = int(os.getenv("SPRINT_METRICS_MAX_WORKERS", "5"))
+    SPRINT_METRICS_HTTP_TIMEOUT_SECONDS = int(
+        os.getenv("SPRINT_METRICS_HTTP_TIMEOUT_SECONDS", str(EXTERNAL_HTTP_TIMEOUT_SECONDS))
+    )
 
     TRACE_SPRINT_VIEWER = os.getenv(
         "TRACE_SPRINT_VIEWER", "false").lower() == "true"

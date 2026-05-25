@@ -73,9 +73,17 @@ def test_sprint_viewer_report_download_waits_for_metrics():
     template = read("app/templates/automation/sprint_viewer.html")
     script = read("app/static/js/sprint_viewer.js")
 
+    assert "sv-reset-fetch-mode" in template
+    assert "sprintViewerFavicon" in template
+    assert "Actual Start" in template
+    assert "Completed:" not in template
     assert 'id="downloadSprintReportBtn"' in template
     assert "Download Report" in template
     assert "downloadSprintReportBtn" in script
+    assert "confirmStartOver" in script
     assert "buildSprintReportWorkbook" in script
+    assert "buildXlsxBlob" in script
+    assert ".xlsx" in script
+    assert "startMetricsRequest" in script
     assert "setReportDownloadReady(false)" in script
     assert "setReportDownloadReady(true)" in script

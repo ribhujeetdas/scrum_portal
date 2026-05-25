@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from flask import current_app, render_template, redirect, url_for, flash, session, request
 from flask_login import login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import CSRFError
 from sqlalchemy import or_
 
 from . import auth_bp
@@ -13,6 +14,43 @@ from ...core.dependencies import crypto_service, jira_service
 from ...extensions import db
 from ...models import User
 from ...services.jira_service import JiraServiceError
+
+
+def _login_with_form(form):
+    identifier = form.identifier.data.strip()
+    password = form.password.data
+
+    user = User.query.filter(or_(User.email.ilike(
+        identifier), User.eid.ilike(identifier))).first()
+
+    if not user or not user.check_password(password):
+        current_app.logger.warning(
+            "Failed login attempt for identifier=%s", identifier)
+        flash("Invalid credentials.", "danger")
+        return render_template("auth/login.html", form=form)
+
+    if not user.active or user.deleted:
+        flash("Your account is inactive. Contact admin.", "danger")
+        return render_template("auth/login.html", form=form)
+
+    login_user(user)
+    session.permanent = True
+    current_app.logger.info("User logged in: eid=%s", user.eid)
+    return redirect(url_for("aliases.dashboard"))
+
+
+@auth_bp.app_errorhandler(CSRFError)
+def handle_auth_csrf_error(error):
+    if request.endpoint in {"auth.login", "aliases.auth_login"} and request.method == "POST":
+        form = LoginForm(meta={"csrf": False})
+        if form.validate():
+            current_app.logger.info("Recovering login POST after stale CSRF token.")
+            return _login_with_form(form)
+        flash("Session expired. Please login again.", "warning")
+        return render_template("auth/login.html", form=LoginForm()), 400
+
+    current_app.logger.warning("CSRF validation failed: %s", error.description)
+    return render_template("error.html", code=400, message="CSRF validation failed."), 400
 
 
 @auth_bp.route("/", methods=["GET"])
@@ -28,26 +66,7 @@ def login():
 
     form = LoginForm()
     if form.validate_on_submit():
-        identifier = form.identifier.data.strip()
-        password = form.password.data
-
-        user = User.query.filter(or_(User.email.ilike(
-            identifier), User.eid.ilike(identifier))).first()
-
-        if not user or not user.check_password(password):
-            current_app.logger.warning(
-                "Failed login attempt for identifier=%s", identifier)
-            flash("Invalid credentials.", "danger")
-            return render_template("auth/login.html", form=form)
-
-        if not user.active or user.deleted:
-            flash("Your account is inactive. Contact admin.", "danger")
-            return render_template("auth/login.html", form=form)
-
-        login_user(user)
-        session.permanent = True
-        current_app.logger.info("User logged in: eid=%s", user.eid)
-        return redirect(url_for("aliases.dashboard"))
+        return _login_with_form(form)
 
     if request.args.get("next"):
         flash("Please login to continue.", "warning")

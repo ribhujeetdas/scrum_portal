@@ -305,6 +305,7 @@ def sprint_viewer_fetch_issues():
             "state": sprint_row.sprint_state if sprint_row else "",
             "start_date": sprint_row.start_date if sprint_row else None,
             "end_date": sprint_row.end_date if sprint_row else None,
+            "activated_date": sprint_row.activated_date if sprint_row else None,
             "complete_date": sprint_row.complete_date if sprint_row else None,
             "goal": sprint_row.goal if sprint_row else None,
         }

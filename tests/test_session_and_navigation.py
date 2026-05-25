@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from cryptography.fernet import Fernet
 
 from app import create_app
@@ -36,6 +38,29 @@ def create_test_app(tmp_path):
             deleted=False,
             password_hash="not-used",
         )
+        db.session.add(user)
+        db.session.commit()
+    return app
+
+
+def create_csrf_test_app(tmp_path):
+    class TestConfig(SessionNavTestConfig):
+        LOG_DIR = str(tmp_path)
+        WTF_CSRF_ENABLED = True
+
+    app = create_app(TestConfig)
+    with app.app_context():
+        db.create_all()
+        user = User(
+            eid="E123",
+            jira_key="JIRAUSER1",
+            email="user@wellsfargo.com",
+            display_name="Test User",
+            active=True,
+            deleted=False,
+            password_hash="not-used",
+        )
+        user.set_password("Password123")
         db.session.add(user)
         db.session.commit()
     return app
@@ -115,4 +140,29 @@ def test_automation_pages_load_when_project_key_exists(tmp_path):
 
     assert client.get("/automation/rule-copier").status_code == 200
     assert client.get("/automation/sprint-viewer").status_code == 200
+
+
+def test_login_recovers_from_stale_csrf_after_session_expiry(tmp_path):
+    app = create_csrf_test_app(tmp_path)
+    client = app.test_client()
+
+    login_page = client.get("/auth/login").get_data(as_text=True)
+    token = re.search(r'name="csrf_token" type="hidden" value="([^"]+)"', login_page).group(1)
+
+    with client.session_transaction() as sess:
+        sess.clear()
+
+    response = client.post(
+        "/auth/login",
+        data={
+            "csrf_token": token,
+            "identifier": "user@wellsfargo.com",
+            "password": "Password123",
+            "submit": "Login",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/dashboard")
 

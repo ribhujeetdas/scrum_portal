@@ -46,7 +46,10 @@ def rule_copier_service() -> RuleCopierService:
 def sprint_viewer_service() -> SprintViewerService:
     return SprintViewerService(
         current_app.config["JIRA_BASE_URL"],
-        timeout_seconds=current_app.config.get("EXTERNAL_HTTP_TIMEOUT_SECONDS", 30),
+        timeout_seconds=current_app.config.get(
+            "SPRINT_METRICS_HTTP_TIMEOUT_SECONDS",
+            current_app.config.get("EXTERNAL_HTTP_TIMEOUT_SECONDS", 30),
+        ),
         metrics_max_workers=current_app.config.get("SPRINT_METRICS_MAX_WORKERS", 5),
     )
 

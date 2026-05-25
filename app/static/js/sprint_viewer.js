@@ -20,6 +20,7 @@
   const workTypeMixBox = document.getElementById("workTypeMixBox");
   const assigneeAccordion = document.getElementById("assigneeAccordion");
   let currentReportData = null;
+  let activeFetchToken = 0;
 
   function $(id) {
     return document.getElementById(id);
@@ -37,6 +38,31 @@
   function setReportDownloadReady(ready) {
     if (!downloadSprintReportBtn) return;
     setDisabled(downloadSprintReportBtn, !ready);
+  }
+
+  function setFetchButtonMode(mode) {
+    fetchIssuesBtn.dataset.mode = mode;
+    if (mode === "start-over") {
+      fetchIssuesBtn.textContent = "Start Over";
+      fetchIssuesBtn.classList.remove("btn-primary");
+      fetchIssuesBtn.classList.add("btn-outline-danger");
+      return;
+    }
+    fetchIssuesBtn.textContent = "Fetch Issues";
+    fetchIssuesBtn.classList.remove("btn-outline-danger");
+    fetchIssuesBtn.classList.add("btn-primary");
+  }
+
+  function isStartOverMode() {
+    return fetchIssuesBtn.dataset.mode === "start-over";
+  }
+
+  function updateControlAvailability() {
+    const resultsActive = isStartOverMode();
+    setDisabled(boardId, resultsActive || !projectKey.value);
+    setDisabled(sprintId, resultsActive || !boardId.value);
+    setDisabled(refreshSprintsBtn, resultsActive || !boardId.value);
+    setDisabled(fetchIssuesBtn, resultsActive ? false : !sprintId.value);
   }
 
   function errorMessage(data, fallback) {
@@ -71,10 +97,7 @@
       delete el.dataset.prevDisabled;
       delete el.dataset.prevPointer;
     });
-    setDisabled(boardId, !projectKey.value);
-    setDisabled(sprintId, !boardId.value);
-    setDisabled(refreshSprintsBtn, !boardId.value);
-    setDisabled(fetchIssuesBtn, !sprintId.value);
+    updateControlAvailability();
   }
 
   function showAlert(kind, text) {
@@ -107,6 +130,24 @@
     sprintMetaBox.classList.add("d-none");
     workTypeMixBox.classList.add("d-none");
     clear(msgBox);
+  }
+
+  function resetPageState() {
+    activeFetchToken += 1;
+    resetResults();
+    setFetchButtonMode("fetch");
+    projectKey.value = "";
+    boardId.replaceChildren(makeOption("", "-- Select Board --"));
+    sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
+    updateControlAvailability();
+  }
+
+  function confirmStartOver() {
+    if (!window.confirm("Everything displayed for this sprint will be reset. Start over?")) {
+      return false;
+    }
+    resetPageState();
+    return true;
   }
 
   function populateBoards(project) {
@@ -144,24 +185,38 @@
       .replace(/'/g, "&apos;");
   }
 
-  function cellXml(value) {
-    const isNumber = typeof value === "number" && Number.isFinite(value);
-    const type = isNumber ? "Number" : "String";
-    return `<Cell><Data ss:Type="${type}">${xmlEscape(value)}</Data></Cell>`;
+  function columnName(index) {
+    let name = "";
+    let n = index + 1;
+    while (n > 0) {
+      const rem = (n - 1) % 26;
+      name = String.fromCharCode(65 + rem) + name;
+      n = Math.floor((n - 1) / 26);
+    }
+    return name;
   }
 
-  function rowXml(values) {
-    return `<Row>${(values || []).map(cellXml).join("")}</Row>`;
+  function xlsxCell(value, rowNumber, colIndex) {
+    const ref = `${columnName(colIndex)}${rowNumber}`;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return `<c r="${ref}"><v>${value}</v></c>`;
+    }
+    return `<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(value)}</t></is></c>`;
   }
 
-  function worksheetXml(name, rows) {
-    return `<Worksheet ss:Name="${xmlEscape(name)}"><Table>${rows.map(rowXml).join("")}</Table></Worksheet>`;
+  function worksheetXml(rows) {
+    const body = rows.map((row, rowIndex) => {
+      const rowNumber = rowIndex + 1;
+      return `<row r="${rowNumber}">${(row || []).map((value, colIndex) => xlsxCell(value, rowNumber, colIndex)).join("")}</row>`;
+    }).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
   }
 
   function addKeyValueSection(rows, title, pairs) {
-    rows.push([title]);
-    rows.push(["Field", "Value"]);
-    (pairs || []).forEach(([label, value]) => rows.push([label, value ?? ""]));
+    rows.push([title, "", "", "", "", ""]);
+    rows.push(["Section", "Metric", "Count", "Points", "Percent", "Value"]);
+    (pairs || []).forEach(([label, value]) => rows.push([title, label, "", "", "", value ?? ""]));
     rows.push([]);
   }
 
@@ -179,9 +234,10 @@
       ["Board ID", report.boardId],
       ["Sprint", sprint.name || report.sprintName],
       ["Sprint ID", report.sprintId],
-      ["Start", shortDate(sprint.start_date)],
-      ["End", shortDate(sprint.end_date)],
-      ["Completed", shortDate(sprint.complete_date)],
+      ["Planned Start", shortDate(sprint.start_date)],
+      ["Actual Start", shortDate(sprint.activated_date)],
+      ["Planned End", shortDate(sprint.end_date)],
+      ["Actual End", shortDate(sprint.complete_date)],
       ["Goal", sprint.goal || ""],
       ["Historical fallback rows", issueData.historical_fallback_count ?? 0],
     ]);
@@ -207,31 +263,31 @@
       ["Carryover points", stats.carryover_sp ?? 0],
     ]);
 
-    rows.push(["Scrum Metrics", "Count", "Points", "Percent/Value"]);
-    rows.push(["Original Commitment", metrics.committed_count ?? 0, metrics.committed_sp ?? 0, ""]);
-    rows.push(["Completed from Commitment", metrics.completed_original_count ?? 0, metrics.completed_original_sp ?? 0, ""]);
-    rows.push(["Total Completed", metrics.delivered_count ?? 0, metrics.delivered_sp ?? 0, ""]);
-    rows.push(["Carryover", metrics.spillover_count ?? 0, metrics.spillover_sp ?? 0, ""]);
-    rows.push(["Added Scope", metrics.scope_added_count ?? 0, metrics.scope_added_sp ?? 0, metrics.scope_pct ?? 0]);
-    rows.push(["Removed Scope", metrics.descope_count ?? 0, metrics.descope_sp ?? 0, ""]);
-    rows.push(["Net Scope Change", metrics.scope_net_count ?? 0, metrics.scope_net_sp ?? 0, ""]);
-    rows.push(["Commitment Predictability %", "", "", metrics.predictability_pct ?? 0]);
-    rows.push(["Total Delivery vs Commitment %", "", "", metrics.total_delivery_vs_commitment_pct ?? 0]);
-    rows.push(["Scope Change %", "", "", metrics.scope_change_pct ?? 0]);
+    rows.push(["Scrum Metrics", "Metric", "Count", "Points", "Percent", "Value"]);
+    rows.push(["Scrum Metrics", "Original Commitment", metrics.committed_count ?? 0, metrics.committed_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Completed from Commitment", metrics.completed_original_count ?? 0, metrics.completed_original_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Total Completed", metrics.delivered_count ?? 0, metrics.delivered_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Carryover", metrics.spillover_count ?? 0, metrics.spillover_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Added Scope", metrics.scope_added_count ?? 0, metrics.scope_added_sp ?? 0, metrics.scope_pct ?? 0, ""]);
+    rows.push(["Scrum Metrics", "Removed Scope", metrics.descope_count ?? 0, metrics.descope_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Net Scope Change", metrics.scope_net_count ?? 0, metrics.scope_net_sp ?? 0, "", ""]);
+    rows.push(["Scrum Metrics", "Commitment Predictability", "", "", metrics.predictability_pct ?? 0, ""]);
+    rows.push(["Scrum Metrics", "Total Delivery vs Commitment", "", "", metrics.total_delivery_vs_commitment_pct ?? 0, ""]);
+    rows.push(["Scrum Metrics", "Scope Change", "", "", metrics.scope_change_pct ?? 0, ""]);
     rows.push([]);
 
-    rows.push(["Work Type Mix", "Count", "Points"]);
+    rows.push(["Work Type Mix", "Issue Type", "Count", "Points", "", ""]);
     Object.entries(workTypeMix.overall || {}).forEach(([type, bucket]) => {
-      rows.push([type, bucket.count ?? 0, bucket.pts ?? 0]);
+      rows.push(["Work Type Mix", type, bucket.count ?? 0, bucket.pts ?? 0, "", ""]);
     });
     rows.push([]);
 
-    rows.push(["Work Type Mix by Developer", "Type Mix"]);
+    rows.push(["Work Type Mix by Developer", "Developer", "", "", "", "Type Mix"]);
     (workTypeMix.by_assignee || []).forEach((row) => {
       const mix = Object.entries(row.types || {})
         .map(([type, bucket]) => `${type}: ${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`)
         .join("; ");
-      rows.push([row.assignee_name || row.assignee_eid || "Unassigned", mix]);
+      rows.push(["Work Type Mix by Developer", row.assignee_name || row.assignee_eid || "Unassigned", "", "", "", mix]);
     });
 
     return rows;
@@ -276,17 +332,137 @@
   }
 
   function buildSprintReportWorkbook(report) {
-    const summaryRows = buildSprintSummaryRows(report);
-    const detailRows = buildTicketDetailRows(report);
-    return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-${worksheetXml("Sprint Summary", summaryRows)}
-${worksheetXml("Ticket Details", detailRows)}
-</Workbook>`;
+    return {
+      sheets: [
+        { name: "Sprint Summary", rows: buildSprintSummaryRows(report) },
+        { name: "Ticket Details", rows: buildTicketDetailRows(report) },
+      ],
+    };
+  }
+
+  function crc32(bytes) {
+    if (!crc32.table) {
+      crc32.table = Array.from({ length: 256 }, (_, n) => {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        return c >>> 0;
+      });
+    }
+    let crc = 0xffffffff;
+    bytes.forEach((byte) => {
+      crc = crc32.table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    });
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function writeUint16(target, offset, value) {
+    target[offset] = value & 0xff;
+    target[offset + 1] = (value >>> 8) & 0xff;
+  }
+
+  function writeUint32(target, offset, value) {
+    target[offset] = value & 0xff;
+    target[offset + 1] = (value >>> 8) & 0xff;
+    target[offset + 2] = (value >>> 16) & 0xff;
+    target[offset + 3] = (value >>> 24) & 0xff;
+  }
+
+  function concatBytes(parts) {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    parts.forEach((part) => {
+      out.set(part, offset);
+      offset += part.length;
+    });
+    return out;
+  }
+
+  function zipFiles(files) {
+    const encoder = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    files.forEach((file) => {
+      const nameBytes = encoder.encode(file.name);
+      const dataBytes = encoder.encode(file.content);
+      const crc = crc32(dataBytes);
+      const local = new Uint8Array(30 + nameBytes.length);
+      writeUint32(local, 0, 0x04034b50);
+      writeUint16(local, 4, 20);
+      writeUint16(local, 8, 0);
+      writeUint32(local, 14, crc);
+      writeUint32(local, 18, dataBytes.length);
+      writeUint32(local, 22, dataBytes.length);
+      writeUint16(local, 26, nameBytes.length);
+      local.set(nameBytes, 30);
+      localParts.push(local, dataBytes);
+
+      const central = new Uint8Array(46 + nameBytes.length);
+      writeUint32(central, 0, 0x02014b50);
+      writeUint16(central, 4, 20);
+      writeUint16(central, 6, 20);
+      writeUint16(central, 10, 0);
+      writeUint32(central, 16, crc);
+      writeUint32(central, 20, dataBytes.length);
+      writeUint32(central, 24, dataBytes.length);
+      writeUint16(central, 28, nameBytes.length);
+      writeUint32(central, 42, offset);
+      central.set(nameBytes, 46);
+      centralParts.push(central);
+
+      offset += local.length + dataBytes.length;
+    });
+
+    const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+    const end = new Uint8Array(22);
+    writeUint32(end, 0, 0x06054b50);
+    writeUint16(end, 8, files.length);
+    writeUint16(end, 10, files.length);
+    writeUint32(end, 12, centralSize);
+    writeUint32(end, 16, offset);
+    return concatBytes([...localParts, ...centralParts, end]);
+  }
+
+  function workbookXml(workbook) {
+    const sheets = workbook.sheets.map((sheet, idx) => (
+      `<sheet name="${xmlEscape(sheet.name)}" sheetId="${idx + 1}" r:id="rId${idx + 1}"/>`
+    )).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets}</sheets></workbook>`;
+  }
+
+  function workbookRelsXml(workbook) {
+    const rels = workbook.sheets.map((_, idx) => (
+      `<Relationship Id="rId${idx + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${idx + 1}.xml"/>`
+    )).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`;
+  }
+
+  function contentTypesXml(workbook) {
+    const sheets = workbook.sheets.map((_, idx) => (
+      `<Override PartName="/xl/worksheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+    )).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets}</Types>`;
+  }
+
+  function buildXlsxBlob(workbook) {
+    const files = [
+      { name: "[Content_Types].xml", content: contentTypesXml(workbook) },
+      { name: "_rels/.rels", content: "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>" },
+      { name: "xl/workbook.xml", content: workbookXml(workbook) },
+      { name: "xl/_rels/workbook.xml.rels", content: workbookRelsXml(workbook) },
+      ...workbook.sheets.map((sheet, idx) => ({
+        name: `xl/worksheets/sheet${idx + 1}.xml`,
+        content: worksheetXml(sheet.rows),
+      })),
+    ];
+    return new Blob([zipFiles(files)], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
   }
 
   function safeFileName(value) {
@@ -299,14 +475,12 @@ ${worksheetXml("Ticket Details", detailRows)}
   function downloadSprintReport() {
     if (!currentReportData || !currentReportData.metrics) return;
     const workbook = buildSprintReportWorkbook(currentReportData);
-    const blob = new Blob([workbook], {
-      type: "application/vnd.ms-excel;charset=utf-8",
-    });
+    const blob = buildXlsxBlob(workbook);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const sprintPart = safeFileName(currentReportData.sprintName || currentReportData.sprintId);
     link.href = url;
-    link.download = `${sprintPart}-sprint-report.xls`;
+    link.download = `${sprintPart}-sprint-report.xlsx`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -354,8 +528,9 @@ ${worksheetXml("Ticket Details", detailRows)}
     sprintMetaBox.classList.remove("d-none");
     $("sprintName").textContent = sprint.name || sprint.id || "-";
     $("sprintStartDate").textContent = shortDate(sprint.start_date);
+    $("sprintActualStartDate").textContent = shortDate(sprint.activated_date);
     $("sprintEndDate").textContent = shortDate(sprint.end_date);
-    $("sprintCompleteDate").textContent = shortDate(sprint.complete_date);
+    $("sprintActualEndDate").textContent = shortDate(sprint.complete_date);
     $("sprintGoal").textContent = sprint.goal || "-";
     const note = $("historicalFallbackNote");
     if ((fallbackCount || 0) > 0) {
@@ -569,54 +744,52 @@ ${worksheetXml("Ticket Details", detailRows)}
     });
   }
 
-  async function fetchMetricsAsync(bid, sid, totalSp, totalCount) {
+  async function startMetricsRequest(bid, sid) {
     try {
-      const data = await postJson("/api/automation/sprint-viewer/metrics", {
+      return await postJson("/api/automation/sprint-viewer/metrics", {
         board_id: bid,
         sprint_id: sid,
-        total_sp: totalSp,
-        total_count: totalCount
+        total_sp: 0,
+        total_count: 0
       });
-      if (!data.ok) {
-        showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
-        metricsBox.classList.add("d-none");
-        setReportDownloadReady(false);
-        return;
-      }
-      renderMetrics(data.metrics);
-      applyScopeStars(data.metrics && data.metrics.scope_added_keys ? data.metrics.scope_added_keys : []);
-      if (currentReportData && currentReportData.boardId === bid && currentReportData.sprintId === sid) {
-        currentReportData.metrics = data.metrics || {};
-        setReportDownloadReady(true);
-      }
     } catch (error) {
-      showAlert("warning", "Issues loaded. Metrics failed due to network/unexpected error.");
+      return { ok: false, error: "Network/Unexpected error while calculating metrics." };
+    }
+  }
+
+  function renderMetricsResult(data, bid, sid) {
+    if (!data || !data.ok) {
+      showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
       metricsBox.classList.add("d-none");
       setReportDownloadReady(false);
+      return false;
     }
+    renderMetrics(data.metrics);
+    applyScopeStars(data.metrics && data.metrics.scope_added_keys ? data.metrics.scope_added_keys : []);
+    if (currentReportData && currentReportData.boardId === bid && currentReportData.sprintId === sid) {
+      currentReportData.metrics = data.metrics || {};
+      setReportDownloadReady(true);
+    }
+    return true;
   }
 
   projectKey.addEventListener("change", () => {
     const selectedProject = (projectKey.value || "").trim().toUpperCase();
     projectKey.value = selectedProject;
     resetResults();
+    setFetchButtonMode("fetch");
     populateBoards(selectedProject);
-    setDisabled(boardId, false);
     sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
-    setDisabled(sprintId, true);
-    setDisabled(refreshSprintsBtn, true);
-    setDisabled(fetchIssuesBtn, true);
+    updateControlAvailability();
   });
 
   boardId.addEventListener("change", () => {
     resetResults();
     if (!boardId.value) {
-      setDisabled(sprintId, true);
-      setDisabled(refreshSprintsBtn, true);
-      setDisabled(fetchIssuesBtn, true);
+      updateControlAvailability();
       return;
     }
-    setDisabled(refreshSprintsBtn, false);
+    updateControlAvailability();
     loadSprints(false);
   });
 
@@ -626,26 +799,32 @@ ${worksheetXml("Ticket Details", detailRows)}
   });
 
   sprintId.addEventListener("change", () => {
-    resultsCard.classList.add("d-none");
-    metricsBox.classList.add("d-none");
-    statsBox.classList.add("d-none");
-    sprintMetaBox.classList.add("d-none");
-    workTypeMixBox.classList.add("d-none");
-    setDisabled(fetchIssuesBtn, !sprintId.value);
+    resetResults();
+    updateControlAvailability();
   });
 
   fetchIssuesBtn.addEventListener("click", async () => {
+    if (isStartOverMode()) {
+      confirmStartOver();
+      return;
+    }
     const bid = Number(boardId.value);
     const sid = Number(sprintId.value);
+    const fetchToken = activeFetchToken + 1;
+    activeFetchToken = fetchToken;
     resetResults();
+    setFetchButtonMode("start-over");
     lockUi();
+    const metricsPromise = startMetricsRequest(bid, sid);
     try {
       const data = await postJson("/api/automation/sprint-viewer/issues", {
         board_id: bid,
         sprint_id: sid
       });
+      if (fetchToken !== activeFetchToken) return;
       if (!data.ok) {
         showAlert("danger", errorMessage(data, "Failed to fetch sprint issues."));
+        setFetchButtonMode("fetch");
         return;
       }
       currentReportData = {
@@ -666,9 +845,12 @@ ${worksheetXml("Ticket Details", detailRows)}
       resultsCard.classList.remove("d-none");
       showAlert("success", "Issues fetched successfully. Metrics are calculating...");
       showMetricsLoading();
-      fetchMetricsAsync(bid, sid, data.total_sp, data.standard_total || data.total);
+      const metricsData = await metricsPromise;
+      if (fetchToken !== activeFetchToken) return;
+      renderMetricsResult(metricsData, bid, sid);
     } catch (error) {
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
+      setFetchButtonMode("fetch");
     } finally {
       unlockUi();
     }

@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Sprint Viewer{% endblock %}
+{% block head_extra %}
+  <link id="sprintViewerFavicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230d6efd'/%3E%3Cpath d='M18 18h28v6H18zM18 29h28v6H18zM18 40h18v6H18z' fill='white'/%3E%3Cpath d='M43 39l4 4 8-10' fill='none' stroke='%23ffc107' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+{% endblock %}
 {% block content %}
 <style>
   .nowrap { white-space: nowrap; }
@@ -97,7 +100,7 @@
       </div>
 
       <div class="col-md-2">
-        <button id="fetchIssuesBtn" class="btn btn-primary w-100" disabled>
+        <button id="fetchIssuesBtn" class="btn btn-primary w-100 sv-reset-fetch-mode" disabled>
           Fetch Issues
         </button>
       </div>
@@ -119,9 +122,8 @@
     <div id="sprintMetaBox" class="sv-metadata border rounded p-2 mb-3 d-none">
       <div class="row g-2">
         <div class="col-md-3"><strong>Sprint:</strong> <span id="sprintName">-</span></div>
-        <div class="col-md-3"><strong>Start:</strong> <span id="sprintStartDate">-</span></div>
-        <div class="col-md-3"><strong>End:</strong> <span id="sprintEndDate">-</span></div>
-        <div class="col-md-3"><strong>Completed:</strong> <span id="sprintCompleteDate">-</span></div>
+        <div class="col-md-4"><strong>Start:</strong> <span id="sprintStartDate">-</span> <span class="text-muted">(Actual Start: <span id="sprintActualStartDate">-</span>)</span></div>
+        <div class="col-md-5"><strong>End:</strong> <span id="sprintEndDate">-</span> <span class="text-muted">(Actual End: <span id="sprintActualEndDate">-</span>)</span></div>
         <div class="col-12"><strong>Goal:</strong> <span id="sprintGoal">-</span></div>
         <div class="col-12 text-muted d-none" id="historicalFallbackNote">
           Some rows use current Jira values because sprint-end changelog data was unavailable.
