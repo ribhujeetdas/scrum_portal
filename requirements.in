@@ -11,3 +11,6 @@ Flask-Migrate>=4,<5
 alembic>=1.16,<2
 waitress>=3,<4
 tzdata>=2026.1,<2027
+# Keep pip-compile's Windows-only portalocker dependency guarded in a lock file
+# that is intentionally shared by Windows and Linux installations.
+pywin32>=312,<313 ; sys_platform == "win32"
