@@ -4,9 +4,11 @@ from flask import flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from ....core.api import safe_error_message
+from ....core.database import execute_write
 from ....core.dependencies import crypto_service, tableau_service
 from ....core.error_logging import log_handled_exception
 from ....extensions import db
+from ....logging_conf import audit_event
 from ....models import UserProject, UserTableauCustomView
 from ....services.tableau_service import TableauServiceError
 from .forms import TableauCustomViewDeleteForm, TableauCustomViewForm
@@ -109,27 +111,36 @@ def _handle_save_custom_view(
         flash(safe_error_message("validate the Tableau custom view"), "danger")
         return redirect(url_for("aliases.settings_tableau_custom_views"))
 
-    row = UserTableauCustomView.query.filter_by(
-        user_id=current_user.id,
-        custom_view_id=custom_view_id,
-    ).first()
-    if not row:
-        row = UserTableauCustomView(
-            user_id=current_user.id,
-            custom_view_id=custom_view_id,
-        )
-        db.session.add(row)
-
-    row.epic_key = epic_key
-    row.custom_view_name = custom_view.get("name")
-    row.shared = custom_view.get("shared")
     view = custom_view.get("view") or {}
     workbook = custom_view.get("workbook") or {}
-    row.view_id = view.get("id")
-    row.view_name = view.get("name")
-    row.workbook_id = workbook.get("id")
-    row.workbook_name = workbook.get("name")
-    db.session.commit()
+
+    def _save() -> None:
+        row = UserTableauCustomView.query.filter_by(
+            user_id=current_user.id,
+            custom_view_id=custom_view_id,
+        ).first()
+        if not row:
+            row = UserTableauCustomView(
+                user_id=current_user.id,
+                custom_view_id=custom_view_id,
+            )
+            db.session.add(row)
+        row.epic_key = epic_key
+        row.custom_view_name = custom_view.get("name")
+        row.shared = custom_view.get("shared")
+        row.view_id = view.get("id")
+        row.view_name = view.get("name")
+        row.workbook_id = workbook.get("id")
+        row.workbook_name = workbook.get("name")
+
+    execute_write(_save, retries=0)
+    audit_event(
+        "settings.tableau_custom_views.saved",
+        "Tableau custom view mapping saved",
+        resource_type="tableau_custom_view",
+        resource_id=custom_view_id,
+        result="success",
+    )
 
     flash(f"Custom View saved and mapped to Epic Key: {epic_key}", "success")
     return redirect(url_for("aliases.settings_tableau_custom_views"))
@@ -144,20 +155,30 @@ def _handle_delete_custom_view(delete_form: TableauCustomViewDeleteForm):
         return redirect(url_for("aliases.settings_tableau_custom_views"))
 
     delete_id = (delete_form.delete_custom_view_id.data or "").strip()
-    row = UserTableauCustomView.query.filter_by(
-        user_id=current_user.id,
-        custom_view_id=delete_id,
-    ).first()
-    if not row:
-        flash("Custom view not found.", "warning")
-        return redirect(url_for("aliases.settings_tableau_custom_views"))
-
     try:
-        db.session.delete(row)
-        db.session.commit()
+
+        def _delete() -> bool:
+            row = UserTableauCustomView.query.filter_by(
+                user_id=current_user.id,
+                custom_view_id=delete_id,
+            ).first()
+            if not row:
+                return False
+            db.session.delete(row)
+            return True
+
+        if not execute_write(_delete, retries=0):
+            flash("Custom view not found.", "warning")
+            return redirect(url_for("aliases.settings_tableau_custom_views"))
+        audit_event(
+            "settings.tableau_custom_views.deleted",
+            "Tableau custom view mapping deleted",
+            resource_type="tableau_custom_view",
+            resource_id=delete_id,
+            result="success",
+        )
         flash("Custom view deleted successfully.", "success")
     except Exception:
-        db.session.rollback()
         flash("Failed to delete the custom view. Please check logs.", "danger")
     return redirect(url_for("aliases.settings_tableau_custom_views"))
 

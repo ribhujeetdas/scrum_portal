@@ -2,17 +2,31 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from flask import Flask, render_template, request
 
-from .config import Config
-from .extensions import db, login_manager, csrf, migrate
+from click import ClickException
+from flask import Flask, make_response, render_template, request
+
+from .config import CONFIG_BY_ENV, Config
+from .core.api import json_error
+from .core.config_validation import (
+    collect_config_warnings,
+    log_config_warnings,
+    validate_config_or_raise,
+)
+from .core.database import configure_database
+from .core.rate_limit import RateLimitExceeded, init_rate_limiter
+from .core.security import init_security_headers
+from .extensions import csrf, db, login_manager, migrate
 from .logging_conf import configure_logging, init_request_correlation
-from .core.config_validation import collect_config_warnings, log_config_warnings
 
 
-def create_app(config_object: type[Config] = Config) -> Flask:
+def create_app(config_object: type[Config] | None = None) -> Flask:
     app = Flask(__name__)
-    app.config.from_object(config_object)
+    selected_config = config_object or CONFIG_BY_ENV.get(Config.APP_ENV, Config)
+    app.config.from_object(selected_config)
+
+    if app.config.get("APP_ENV") == "production" and not app.config.get("TESTING", False):
+        validate_config_or_raise(app)
 
     app.permanent_session_lifetime = timedelta(
         minutes=int(app.config.get("SESSION_TIMEOUT_MINUTES", 15))
@@ -23,8 +37,12 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     login_manager.init_app(app)
     csrf.init_app(app)
     migrate.init_app(app, db)
+    init_rate_limiter(app)
+    init_security_headers(app)
 
     from . import models  # noqa: F401
+
+    configure_database(app)
 
     # Logging
     configure_logging(app)
@@ -32,14 +50,14 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     log_config_warnings(app, collect_config_warnings(app))
 
     # Blueprints
-    from .blueprints.auth import auth_bp
-    from .blueprints.main import main_bp
-    from .blueprints.profile import profile_bp
-    from .blueprints.config import config_bp
-    from .blueprints.automation import automation_bp
-    from .blueprints.tableau_custom_views import tableau_custom_views_bp
     from .blueprints.aliases import aliases_bp
     from .blueprints.aliases import routes as aliases_routes  # noqa: F401
+    from .blueprints.auth import auth_bp
+    from .blueprints.automation import automation_bp
+    from .blueprints.config import config_bp
+    from .blueprints.main import main_bp
+    from .blueprints.profile import profile_bp
+    from .blueprints.tableau_custom_views import tableau_custom_views_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -77,7 +95,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         if not successor:
             return response
         response.headers["Deprecation"] = "true"
-        response.headers["Link"] = f"<{successor}>; rel=\"successor-version\""
+        response.headers["Link"] = f'<{successor}>; rel="successor-version"'
         sunset = str(app.config.get("LEGACY_ROUTE_SUNSET") or "").strip()
         if sunset:
             response.headers["Sunset"] = sunset
@@ -102,12 +120,45 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         )
         return render_template("error.html", code=500, message="Internal Server Error"), 500
 
+    @app.errorhandler(RateLimitExceeded)
+    def rate_limit_exceeded(error: RateLimitExceeded):
+        app.logger.warning(
+            "Request rate limited",
+            extra={
+                "event": "security.rate_limit.exceeded",
+                "scope": error.scope,
+                "retry_after": error.retry_after,
+                "result": "rejected",
+            },
+        )
+        if request.path.startswith("/api/") or request.is_json:
+            response, status = json_error(
+                "Too many requests. Please retry shortly.",
+                status_code=429,
+                code="rate_limited",
+                details={"retry_after": error.retry_after},
+            )
+            response.headers["Retry-After"] = str(error.retry_after)
+            return response, status
+        else:
+            response = make_response(
+                render_template(
+                    "error.html",
+                    code=429,
+                    message="Too many requests. Please retry shortly.",
+                ),
+                429,
+            )
+        response.headers["Retry-After"] = str(error.retry_after)
+        return response
+
     # CLI: init db
     @app.cli.command("init-db")
     def init_db_command():
-        """Initialize the database."""
-        with app.app_context():
-            db.create_all()
-        print("Database initialized.")
+        """Reject the legacy unsafe initializer in favor of the migration runbook."""
+        raise ClickException(
+            "Use 'python scripts/migrate_db.py' so initialization, backup, and "
+            "migration-head validation are applied consistently."
+        )
 
     return app

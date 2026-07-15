@@ -1,8 +1,13 @@
 # ===== FILE: services/tableau_service.py =====
 from __future__ import annotations
+
 from urllib.parse import quote
 
-from app.core.http_client import ExternalHttpClient, ExternalServiceError
+from app.core.http_client import (
+    ExternalHttpClient,
+    ExternalOperationBudget,
+    ExternalServiceError,
+)
 
 
 class TableauServiceError(Exception):
@@ -75,7 +80,7 @@ class TableauService:
                 forbidden_message="Forbidden (403). Tableau PAT lacks access.",
             )
 
-        creds = (data.get("credentials") or {})
+        creds = data.get("credentials") or {}
         token = creds.get("token")
         site = creds.get("site") or {}
         user = creds.get("user") or {}
@@ -85,8 +90,7 @@ class TableauService:
         content_url = site.get("contentUrl", self.site_content_url)
 
         if not token or not site_id or not user_id:
-            raise TableauServiceError(
-                "Tableau sign-in response missing token/site.id/user.id.")
+            raise TableauServiceError("Tableau sign-in response missing token/site.id/user.id.")
 
         return {
             "token": token,
@@ -125,8 +129,7 @@ class TableauService:
           - eid: user.name (stored as tableau_eid)
           - email: user.email (or fallbacks)
         """
-        u = user_details_json.get(
-            "user") or user_details_json.get("users") or {}
+        u = user_details_json.get("user") or user_details_json.get("users") or {}
         if isinstance(u, dict) and "user" in u and isinstance(u["user"], dict):
             # handle odd nesting
             u = u["user"]
@@ -153,18 +156,17 @@ class TableauService:
         signin = self.sign_in_with_pat(pat_name, pat_secret)
         token = signin["token"]
         try:
-            details = self.get_user_details(
-                token, signin["site_id"], signin["user_id"])
+            details = self.get_user_details(token, signin["site_id"], signin["user_id"])
             ident = self._extract_identity(details)
         finally:
             self.sign_out(token)
 
         if not ident.get("eid"):
             raise TableauServiceError(
-                "Unable to extract Tableau user 'name' (EID) from Tableau response.")
+                "Unable to extract Tableau user 'name' (EID) from Tableau response."
+            )
         if not ident.get("email"):
-            raise TableauServiceError(
-                "Unable to extract Tableau user email from Tableau response.")
+            raise TableauServiceError("Unable to extract Tableau user email from Tableau response.")
 
         return {
             "site_id": signin["site_id"],
@@ -174,7 +176,14 @@ class TableauService:
             "email": ident["email"],
         }
 
-    def list_custom_views(self, token: str, site_id: str, page_size: int = 1000, page_number: int = 1, filter_expr: str | None = None) -> dict:
+    def list_custom_views(
+        self,
+        token: str,
+        site_id: str,
+        page_size: int = 1000,
+        page_number: int = 1,
+        filter_expr: str | None = None,
+    ) -> dict:
         """
         GET /api/{version}/sites/{site_id}/customviews?pageSize=...&filter=...
         """
@@ -224,8 +233,15 @@ class TableauService:
         try:
             page_size = 1000
             page_number = 1
+            budget = ExternalOperationBudget("tableau", "find custom view")
 
             while True:
+                try:
+                    budget.next_page()
+                except ExternalServiceError as exc:
+                    raise TableauServiceError(
+                        "Tableau custom view lookup exceeded its safety budget."
+                    ) from exc
                 payload = self.list_custom_views(
                     token=token,
                     site_id=site_id,
@@ -250,10 +266,11 @@ class TableauService:
         finally:
             self.sign_out(token)
 
-        raise TableauServiceError(
-            "Custom view not found or not accessible for this user.")
+        raise TableauServiceError("Custom view not found or not accessible for this user.")
 
-    def query_custom_view_data_csv(self, token: str, site_id: str, custom_view_id: str, max_age_minutes: int = 60) -> bytes:
+    def query_custom_view_data_csv(
+        self, token: str, site_id: str, custom_view_id: str, max_age_minutes: int = 60
+    ) -> bytes:
         """
         GET /api/{version}/sites/{site-id}/customviews/{customview-id}/data?maxAge=60
         Returns raw CSV bytes.

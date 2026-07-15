@@ -21,13 +21,11 @@ class AddProjectForm(FlaskForm):
 
 
 class DeleteProjectForm(FlaskForm):
-    delete_project_key = HiddenField(
-        validators=[DataRequired(), Length(max=32)])
+    delete_project_key = HiddenField(validators=[DataRequired(), Length(max=32)])
     delete_project = SubmitField("Delete Project")
 
 
 class DeleteBoardForm(FlaskForm):
-    delete_project_key = HiddenField(
-        validators=[DataRequired(), Length(max=32)])
+    delete_project_key = HiddenField(validators=[DataRequired(), Length(max=32)])
     delete_board_id = HiddenField(validators=[DataRequired(), Length(max=32)])
     delete_board = SubmitField("Delete Board")

@@ -18,7 +18,11 @@ def test_json_error_returns_consistent_sanitized_payload():
             "Invalid request",
             status_code=422,
             code="validation_failed",
-            details={"field": "project_key", "pat_token": "secret-token"},
+            details={
+                "field": "project_key",
+                "pat_token": "secret-token",
+                "upstream": '{"access_token":"another-secret"}',
+            },
         )
 
     response = app.test_client().get("/fail")
@@ -29,7 +33,11 @@ def test_json_error_returns_consistent_sanitized_payload():
         "error": {
             "message": "Invalid request",
             "code": "validation_failed",
-            "details": {"field": "project_key", "pat_token": "<redacted>"},
+            "details": {
+                "field": "project_key",
+                "pat_token": "<redacted>",
+                "upstream": '{"access_token":"<redacted>"}',
+            },
         },
         "request_id": "api-123",
     }

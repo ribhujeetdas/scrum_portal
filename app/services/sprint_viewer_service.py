@@ -1,14 +1,20 @@
 # app/services/sprint_viewer_service.py
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 import re
-from typing import Optional, Set, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import current_app, has_app_context
 
-from app.core.http_client import ExternalHttpClient, ExternalServiceError
+from app.core.datetime_utils import parse_external_datetime
+from app.core.http_client import (
+    ExternalHttpClient,
+    ExternalOperationBudget,
+    ExternalServiceError,
+)
+from app.features.automation.sprint_viewer.metrics import build_scrum_metrics
 
 
 class SprintViewerServiceError(Exception):
@@ -35,6 +41,38 @@ class SprintViewerService:
         self.metrics_max_workers = max(1, min(int(metrics_max_workers or 5), 16))
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
+
+        # Metric collection creates clients inside worker threads. Flask's
+        # application context is thread-local, so resolve every configured
+        # resilience setting here and pass explicit values to those clients.
+        self._client_options = {
+            "connect_timeout_seconds": ExternalHttpClient._config_int(
+                "EXTERNAL_HTTP_CONNECT_TIMEOUT_SECONDS", 5
+            ),
+            "retry_total": ExternalHttpClient._config_int("EXTERNAL_HTTP_RETRY_TOTAL", 3),
+            "retry_backoff_factor": ExternalHttpClient._config_float(
+                "EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", 0.5
+            ),
+            "retry_status_forcelist": ExternalHttpClient._config_status_codes(
+                "EXTERNAL_HTTP_RETRY_STATUS_CODES", (429, 500, 502, 503, 504)
+            ),
+            "max_concurrent": ExternalHttpClient._config_int("EXTERNAL_HTTP_MAX_CONCURRENT", 12),
+            "bulkhead_wait_seconds": ExternalHttpClient._config_float(
+                "EXTERNAL_HTTP_BULKHEAD_WAIT_SECONDS", 1.0
+            ),
+            "circuit_failure_threshold": ExternalHttpClient._config_int(
+                "EXTERNAL_HTTP_CIRCUIT_FAILURE_THRESHOLD", 5
+            ),
+            "circuit_reset_seconds": ExternalHttpClient._config_int(
+                "EXTERNAL_HTTP_CIRCUIT_RESET_SECONDS", 30
+            ),
+        }
+        self._operation_max_pages = ExternalHttpClient._config_int(
+            "EXTERNAL_OPERATION_MAX_PAGES", 100
+        )
+        self._operation_deadline_seconds = ExternalHttpClient._config_float(
+            "EXTERNAL_OPERATION_DEADLINE_SECONDS", 120.0
+        )
         self._client = http_client or self._new_client()
 
     # ---------------------------
@@ -59,7 +97,10 @@ class SprintViewerService:
         Note: create a new one per thread for metrics.
         """
         return ExternalHttpClient(
-            "jira", self.base_url, timeout_seconds=self.timeout
+            "jira",
+            self.base_url,
+            timeout_seconds=self.timeout,
+            **self._client_options,
         )
 
     def _headers(self, pat: str) -> dict:
@@ -70,7 +111,7 @@ class SprintViewerService:
         }
 
     @staticmethod
-    def _year_from_start_date(start_date: Optional[str]) -> Optional[int]:
+    def _year_from_start_date(start_date: str | None) -> int | None:
         if not start_date:
             return None
         try:
@@ -79,26 +120,8 @@ class SprintViewerService:
             return None
 
     @staticmethod
-    def _parse_jira_datetime(value: Optional[str]):
-        if not value:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-        if text.endswith("Z"):
-            text = text[:-1] + "+0000"
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
-            try:
-                return datetime.strptime(text, fmt)
-            except ValueError:
-                continue
-        try:
-            parsed = datetime.fromisoformat(text)
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=timezone.utc)
-            return parsed
-        except ValueError:
-            return None
+    def _parse_jira_datetime(value: str | datetime | None) -> datetime | None:
+        return parse_external_datetime(value)
 
     @staticmethod
     def _comment_author_eid(comment: dict) -> str:
@@ -132,12 +155,14 @@ class SprintViewerService:
             return None
 
     @staticmethod
-    def _reconstruct_at_sprint_end(issue: dict, values: dict, sprint_complete_date: Optional[str]) -> tuple[dict, bool]:
+    def _reconstruct_at_sprint_end(
+        issue: dict, values: dict, sprint_complete_date: str | datetime | None
+    ) -> tuple[dict, bool]:
         cutoff = SprintViewerService._parse_jira_datetime(sprint_complete_date)
         if cutoff is None:
             return values, False
 
-        histories = ((issue.get("changelog") or {}).get("histories") or [])
+        histories = (issue.get("changelog") or {}).get("histories") or []
         if not histories:
             return values, True
 
@@ -146,7 +171,7 @@ class SprintViewerService:
             histories,
             key=lambda h: (
                 SprintViewerService._parse_jira_datetime(h.get("created"))
-                or datetime.min.replace(tzinfo=timezone.utc)
+                or datetime.min.replace(tzinfo=UTC)
             ),
             reverse=True,
         ):
@@ -159,8 +184,12 @@ class SprintViewerService:
                 if field == "status":
                     reconstructed["status"] = item.get("fromString") or reconstructed["status"]
                 elif field == "assignee":
-                    reconstructed["assignee_eid"] = item.get("from") or item.get("fromString") or reconstructed["assignee_eid"]
-                    reconstructed["assignee_name"] = item.get("fromString") or reconstructed["assignee_name"]
+                    reconstructed["assignee_eid"] = (
+                        item.get("from") or item.get("fromString") or reconstructed["assignee_eid"]
+                    )
+                    reconstructed["assignee_name"] = (
+                        item.get("fromString") or reconstructed["assignee_name"]
+                    )
                 elif field in {"story points", "customfield_10106"}:
                     sp = SprintViewerService._safe_story_points(item.get("fromString"))
                     reconstructed["story_points"] = sp
@@ -193,15 +222,15 @@ class SprintViewerService:
         all_sprints: list[dict] = []
         start_at = 0
         max_results = 50
+        budget = ExternalOperationBudget("jira", "list closed sprints")
 
-        self._trace("Sprints start board_id=%s maxResults=%s",
-                    board_id, max_results)
+        self._trace("Sprints start board_id=%s maxResults=%s", board_id, max_results)
 
         while True:
-            params = {"startAt": start_at,
-                      "maxResults": max_results, "state": "closed"}
+            params = {"startAt": start_at, "maxResults": max_results, "state": "closed"}
 
             try:
+                budget.next_page()
                 data = self._client.get_json(
                     f"/rest/agile/1.0/board/{board_id}/sprint",
                     headers=self._headers(pat),
@@ -231,7 +260,11 @@ class SprintViewerService:
             is_last = data.get("isLast")
             self._trace(
                 "Sprints page board_id=%s startAt=%s got=%s isLast=%s total_collected=%s",
-                board_id, start_at, page_count, is_last, len(all_sprints)
+                board_id,
+                start_at,
+                page_count,
+                is_last,
+                len(all_sprints),
             )
 
             if is_last is True:
@@ -246,8 +279,7 @@ class SprintViewerService:
 
             start_at += page_count
 
-        self._trace("Sprints done board_id=%s final_count=%s",
-                    board_id, len(all_sprints))
+        self._trace("Sprints done board_id=%s final_count=%s", board_id, len(all_sprints))
         return all_sprints
 
     # ---------------------------
@@ -257,7 +289,8 @@ class SprintViewerService:
         start_at = 0
         max_results = 50
         all_issues: list[dict] = []
-        total: Optional[int] = None
+        total: int | None = None
+        budget = ExternalOperationBudget("jira", "list sprint issues")
 
         fields = [
             "summary",
@@ -271,14 +304,18 @@ class SprintViewerService:
             "parent",
         ]
 
-        self._trace("SprintIssues start sprint_id=%s maxResults=%s",
-                    sprint_id, max_results)
+        self._trace("SprintIssues start sprint_id=%s maxResults=%s", sprint_id, max_results)
 
         while True:
-            params = {"startAt": start_at, "maxResults": max_results,
-                      "fields": ",".join(fields), "expand": "changelog"}
+            params = {
+                "startAt": start_at,
+                "maxResults": max_results,
+                "fields": ",".join(fields),
+                "expand": "changelog",
+            }
 
             try:
+                budget.next_page()
                 data = self._client.get_json(
                     f"/rest/agile/1.0/sprint/{sprint_id}/issue",
                     headers=self._headers(pat),
@@ -307,8 +344,12 @@ class SprintViewerService:
 
             self._trace(
                 "SprintIssues page sprint_id=%s startAt=%s got=%s isLast=%s total=%s collected=%s",
-                sprint_id, start_at, page_count, is_last, total, len(
-                    all_issues)
+                sprint_id,
+                start_at,
+                page_count,
+                is_last,
+                total,
+                len(all_issues),
             )
 
             if is_last is True:
@@ -325,14 +366,18 @@ class SprintViewerService:
                     if (start_at + page_count) >= int(total):
                         self._trace("SprintIssues stop reason=reached_total")
                         break
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
             start_at += page_count
 
         final_total = int(total) if total is not None else len(all_issues)
-        self._trace("SprintIssues done sprint_id=%s final_total=%s collected=%s",
-                    sprint_id, final_total, len(all_issues))
+        self._trace(
+            "SprintIssues done sprint_id=%s final_total=%s collected=%s",
+            sprint_id,
+            final_total,
+            len(all_issues),
+        )
         return {"total": final_total, "issues": all_issues}
 
     def _hydrate_incomplete_comments(self, issues: list[dict], pat: str) -> None:
@@ -346,21 +391,18 @@ class SprintViewerService:
             issue_key = issue.get("key") or issue.get("id")
             if not issue_key:
                 continue
-            try:
-                comment_obj["comments"] = self._fetch_all_comments_for_issue(str(issue_key), pat)
-                fields["comment"] = comment_obj
-                issue["fields"] = fields
-            except SprintViewerServiceError:
-                raise
-            except Exception:
-                continue
+            comment_obj["comments"] = self._fetch_all_comments_for_issue(str(issue_key), pat)
+            fields["comment"] = comment_obj
+            issue["fields"] = fields
 
     def _fetch_all_comments_for_issue(self, issue_key: str, pat: str) -> list[dict]:
         all_comments: list[dict] = []
         start_at = 0
         max_results = 100
+        budget = ExternalOperationBudget("jira", "list issue comments")
         while True:
             try:
+                budget.next_page()
                 data = self._client.get_json(
                     f"/rest/api/2/issue/{issue_key}/comment",
                     headers=self._headers(pat),
@@ -387,7 +429,9 @@ class SprintViewerService:
     # Field extraction / grouping
     # ---------------------------
     @staticmethod
-    def extract_issue_fields(issue: dict, sprint_complete_date: Optional[str] = None) -> dict:
+    def extract_issue_fields(
+        issue: dict, sprint_complete_date: str | datetime | None = None
+    ) -> dict:
         fields = issue.get("fields") or {}
         assignee = fields.get("assignee") or {}
         assignee_eid = assignee.get("name") or "UNASSIGNED"
@@ -401,8 +445,7 @@ class SprintViewerService:
         app_name = app_obj.get("value") or ""
 
         epic_obj = fields.get("epic") or {}
-        epic_key = epic_obj.get("key") or (
-            fields.get("customfield_10100") or "")
+        epic_key = epic_obj.get("key") or (fields.get("customfield_10100") or "")
         epic_name = epic_obj.get("name") or ""
 
         comment_obj = fields.get("comment") or {}
@@ -446,7 +489,9 @@ class SprintViewerService:
             return 0.0
 
     @staticmethod
-    def apply_relevant_comment_counts(extracted_issues: list[dict], sprint_complete_date: Optional[str] = None) -> None:
+    def apply_relevant_comment_counts(
+        extracted_issues: list[dict], sprint_complete_date: str | datetime | None = None
+    ) -> None:
         team_eids = {
             str(issue.get("assignee_eid") or "").strip()
             for issue in extracted_issues
@@ -493,13 +538,12 @@ class SprintViewerService:
             groups[eid]["issues"].append(it)
             groups[eid]["issue_count"] += 1
             groups[eid]["sp_sum"] += self._safe_float(it.get("story_points"))
-            groups[eid]["relevant_comment_count"] = (
-                groups[eid].get("relevant_comment_count", 0)
-                + int(it.get("relevant_comment_count") or 0)
-            )
+            groups[eid]["relevant_comment_count"] = groups[eid].get(
+                "relevant_comment_count", 0
+            ) + int(it.get("relevant_comment_count") or 0)
 
         for g in groups.values():
-            g["issues"].sort(key=lambda x: (x.get("issue_key") or ""))
+            g["issues"].sort(key=lambda x: x.get("issue_key") or "")
 
         def group_sort_key(g: dict) -> tuple:
             name = g.get("assignee_name") or ""
@@ -553,7 +597,7 @@ class SprintViewerService:
                 bug_count += 1
                 try:
                     bug_sp += float(sp) if sp is not None else 0.0
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
             if (it.get("assignee_eid") or "") == "UNASSIGNED":
@@ -643,14 +687,21 @@ class SprintViewerService:
 
         total_sp = 0.0
         total_count = 0
-        keys: Set[str] = set()
+        keys: set[str] = set()
+        budget = ExternalOperationBudget(
+            "jira",
+            "aggregate JQL search",
+            max_pages=self._operation_max_pages,
+            deadline_seconds=self._operation_deadline_seconds,
+        )
 
         jql_short = jql.replace("\n", " ").strip()
         if len(jql_short) > 180:
             jql_short = jql_short[:180] + "..."
 
-        self._trace_jql("JQLAgg start startAt=%s maxResults=%s jql=%s",
-                        start_at, max_results, jql_short)
+        self._trace_jql(
+            "JQLAgg start startAt=%s maxResults=%s jql=%s", start_at, max_results, jql_short
+        )
 
         while True:
             params = {
@@ -661,6 +712,7 @@ class SprintViewerService:
             }
 
             try:
+                budget.next_page()
                 data = client.get_json(
                     "/rest/api/2/search",
                     headers=self._headers(pat),
@@ -692,25 +744,28 @@ class SprintViewerService:
                     continue
                 try:
                     total_sp += float(sp)
-                except Exception:
+                except (TypeError, ValueError):
                     continue
 
             is_last = data.get("isLast")
             self._trace_jql(
                 "JQLAgg page startAt=%s got=%s isLast=%s count_so_far=%s sp_so_far=%.2f jql=%s",
-                start_at, page_count, is_last, total_count, total_sp, jql_short
+                start_at,
+                page_count,
+                is_last,
+                total_count,
+                total_sp,
+                jql_short,
             )
 
             if is_last is True:
                 self._trace_jql("JQLAgg stop reason=isLast jql=%s", jql_short)
                 break
             if page_count == 0:
-                self._trace_jql(
-                    "JQLAgg stop reason=page_count=0 jql=%s", jql_short)
+                self._trace_jql("JQLAgg stop reason=page_count=0 jql=%s", jql_short)
                 break
             if page_count < max_results:
-                self._trace_jql(
-                    "JQLAgg stop reason=page_count<maxResults jql=%s", jql_short)
+                self._trace_jql("JQLAgg stop reason=page_count<maxResults jql=%s", jql_short)
                 break
 
             start_at += page_count
@@ -718,90 +773,19 @@ class SprintViewerService:
         out = {"sp": float(total_sp), "count": int(total_count)}
         if capture_keys:
             out["keys"] = sorted(keys)
-        self._trace_jql("JQLAgg done sp=%.2f count=%s jql=%s",
-                        out["sp"], out["count"], jql_short)
+        self._trace_jql("JQLAgg done sp=%.2f count=%s jql=%s", out["sp"], out["count"], jql_short)
         return out
 
     # ---------------------------
     # Metrics in parallel (SP + Count + scope_added keys)
     # ---------------------------
     @staticmethod
-    def build_scrum_metrics(results: Dict[str, dict]) -> dict:
-        original = results.get("original_commitment", {})
-        completed_original = results.get("completed_original", {})
-        total_completed = results.get("total_completed", {})
-        added = results.get("added_scope", {})
-        removed = results.get("removed_scope", {})
+    def build_scrum_metrics(results: dict[str, dict]) -> dict:
+        return build_scrum_metrics(results)
 
-        original_sp = float(original.get("sp", 0.0))
-        original_count = int(original.get("count", 0))
-        completed_original_sp = float(completed_original.get("sp", 0.0))
-        completed_original_count = int(completed_original.get("count", 0))
-        total_completed_sp = float(total_completed.get("sp", 0.0))
-        total_completed_count = int(total_completed.get("count", 0))
-        added_sp = float(added.get("sp", 0.0))
-        added_count = int(added.get("count", 0))
-        removed_sp = float(removed.get("sp", 0.0))
-        removed_count = int(removed.get("count", 0))
-
-        completed_added_sp = max(0.0, total_completed_sp - completed_original_sp)
-        completed_added_count = max(0, total_completed_count - completed_original_count)
-        carryover_sp = max(0.0, original_sp - completed_original_sp - removed_sp)
-        carryover_count = max(0, original_count - completed_original_count - removed_count)
-        scope_net_sp = added_sp - removed_sp
-        scope_net_count = added_count - removed_count
-
-        def pct(n: float, d: float) -> float:
-            return (n / d) * 100.0 if d and d > 0 else 0.0
-
-        out = {
-            "original_commitment_sp": round(original_sp, 2),
-            "original_commitment_count": original_count,
-            "completed_original_sp": round(completed_original_sp, 2),
-            "completed_original_count": completed_original_count,
-            "completed_added_sp": round(completed_added_sp, 2),
-            "completed_added_count": completed_added_count,
-            "total_completed_sp": round(total_completed_sp, 2),
-            "total_completed_count": total_completed_count,
-            "added_scope_sp": round(added_sp, 2),
-            "added_scope_count": added_count,
-            "removed_scope_sp": round(removed_sp, 2),
-            "removed_scope_count": removed_count,
-            "carryover_sp": round(carryover_sp, 2),
-            "carryover_count": carryover_count,
-            "scope_net_sp": round(scope_net_sp, 2),
-            "scope_net_count": scope_net_count,
-            "commitment_predictability_pct": round(pct(completed_original_sp, original_sp), 1),
-            "total_delivery_vs_commitment_pct": round(pct(total_completed_sp, original_sp), 1),
-            "added_scope_pct": round(pct(added_sp, original_sp), 1),
-            "removed_scope_pct": round(pct(removed_sp, original_sp), 1),
-            "scope_change_pct": round(pct(added_sp + removed_sp, original_sp), 1),
-            "scope_added_keys": added.get("keys") or [],
-        }
-
-        # Backward-compatible aliases for existing callers/UI during migration.
-        out.update(
-            {
-                "committed_sp": out["original_commitment_sp"],
-                "committed_count": out["original_commitment_count"],
-                "delivered_sp": out["total_completed_sp"],
-                "delivered_count": out["total_completed_count"],
-                "spillover_sp": out["carryover_sp"],
-                "spillover_count": out["carryover_count"],
-                "scope_added_sp": out["added_scope_sp"],
-                "scope_added_count": out["added_scope_count"],
-                "descope_sp": out["removed_scope_sp"],
-                "descope_count": out["removed_scope_count"],
-                "predictability_pct": out["commitment_predictability_pct"],
-                "spill_pct": round(pct(carryover_sp, original_sp), 1),
-                "scope_pct": out["added_scope_pct"],
-                "spill_red": pct(carryover_sp, original_sp) > 20.0,
-                "scope_red": out["added_scope_pct"] > 20.0,
-            }
-        )
-        return out
-
-    def compute_sprint_metrics_parallel(self, board_id: int, sprint_id: int, pat: str, total_sp: float, total_count: int) -> dict:
+    def compute_sprint_metrics_parallel(
+        self, board_id: int, sprint_id: int, pat: str, total_sp: float, total_count: int
+    ) -> dict:
         # ScriptRunner JQLs already used in our app
         completed_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issuetype IN standardIssueTypes()"
         completed_original_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
@@ -823,10 +807,15 @@ class SprintViewerService:
             "removed_scope": {"jql": removed_scope_jql, "capture_keys": False},
         }
 
-        self._trace("Metrics start board_id=%s sprint_id=%s total_sp=%.2f total_count=%s",
-                    board_id, sprint_id, total_sp, total_count)
+        self._trace(
+            "Metrics start board_id=%s sprint_id=%s total_sp=%.2f total_count=%s",
+            board_id,
+            sprint_id,
+            total_sp,
+            total_count,
+        )
 
-        results: Dict[str, dict] = {k: {"sp": 0.0, "count": 0} for k in jobs.keys()}
+        results: dict[str, dict] = {k: {"sp": 0.0, "count": 0} for k in jobs.keys()}
 
         def run_one(name: str, spec: dict) -> tuple[str, dict]:
             agg = self._aggregate_by_jql_with_client(
@@ -838,17 +827,19 @@ class SprintViewerService:
             return name, agg
 
         with ThreadPoolExecutor(max_workers=self.metrics_max_workers) as ex:
-            futures = [ex.submit(run_one, name, spec)
-                       for name, spec in jobs.items()]
+            futures = [ex.submit(run_one, name, spec) for name, spec in jobs.items()]
             for f in as_completed(futures):
                 name, agg = f.result()
                 results[name] = agg
-                self._trace("Metrics partial %s sp=%.2f count=%s", name, float(
-                    agg.get("sp", 0.0)), int(agg.get("count", 0)))
+                self._trace(
+                    "Metrics partial %s sp=%.2f count=%s",
+                    name,
+                    float(agg.get("sp", 0.0)),
+                    int(agg.get("count", 0)),
+                )
         out = self.build_scrum_metrics(results)
 
-        self._trace("Metrics done board_id=%s sprint_id=%s result=%s",
-                    board_id, sprint_id, out)
+        self._trace("Metrics done board_id=%s sprint_id=%s result=%s", board_id, sprint_id, out)
         return out
 
     @staticmethod

@@ -1,0 +1,44 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-config --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+omit = ["app/templates/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 55
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [".git", ".worktrees", ".code-review-graph"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/blueprints/*/__init__.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+follow_imports = "skip"
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+exclude = "(?x)(^migrations/|^tests/|^.worktrees/)"
+
+[tool.bandit]
+exclude_dirs = ["tests", ".worktrees", ".code-review-graph"]
+skips = ["B101"]

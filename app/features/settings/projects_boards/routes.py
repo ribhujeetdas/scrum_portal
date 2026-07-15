@@ -3,11 +3,12 @@ from __future__ import annotations
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from .forms import AddProjectForm, DeleteBoardForm, DeleteProjectForm
 from ....core.api import safe_error_message
+from ....core.database import execute_write
 from ....core.dependencies import crypto_service
 from ....core.error_logging import log_handled_exception
 from ....extensions import db
+from ....logging_conf import audit_event
 from ....models import UserBoard, UserProject
 from ....services.jira_projects_service import JiraProjectsService, JiraProjectsServiceError
 from ....services.profile_service import (
@@ -16,6 +17,7 @@ from ....services.profile_service import (
     ProfileService,
     ProfileServiceError,
 )
+from .forms import AddProjectForm, DeleteBoardForm, DeleteProjectForm
 
 
 def _load_user_projects():
@@ -141,63 +143,87 @@ def _detect_product_area_key(jps, boards, project_key: str, pat: str):
             operation="detect_product_area_key",
             context={"project_key": project_key},
         )
-    except Exception as exc:
+    except Exception:
         current_app.logger.exception(
-            "Unexpected Product Area key detection error eid=%s project=%s err=%s",
-            current_user.eid, project_key, exc
+            "Unexpected Product Area key detection error",
+            extra={
+                "event": "settings.projects.product_area_detection_unexpected",
+                "resource_type": "jira_project",
+                "resource_id": project_key,
+            },
         )
     return product_area_key
 
 
 def _save_project_boards(project_key: str, boards: list[dict], product_area_key: str | None):
     try:
-        proj = UserProject.query.filter_by(
-            user_id=current_user.id, project_key=project_key).first()
-        if not proj:
-            proj = UserProject(
-                user_id=current_user.id,
-                project_key=project_key,
-                admin_projects=True,
-            )
-            db.session.add(proj)
-            db.session.flush()
-        else:
-            proj.admin_projects = True
-            UserBoard.query.filter_by(project_id=proj.id).delete()
 
-        proj.epic_key = (product_area_key or None)
-        for board in boards:
-            db.session.add(
-                UserBoard(
-                    project_id=proj.id,
-                    board_id=board["board_id"],
-                    board_name=board["board_name"],
-                    board_type=board["board_type"],
-                    board_url=board["board_url"],
+        def _save() -> None:
+            project = UserProject.query.filter_by(
+                user_id=current_user.id, project_key=project_key
+            ).first()
+            if not project:
+                project = UserProject(
+                    user_id=current_user.id,
+                    project_key=project_key,
+                    admin_projects=True,
                 )
-            )
-        db.session.commit()
+                db.session.add(project)
+                db.session.flush()
+            else:
+                project.admin_projects = True
+                UserBoard.query.filter_by(project_id=project.id).delete(synchronize_session=False)
+
+            project.epic_key = product_area_key or None
+            for board in boards:
+                db.session.add(
+                    UserBoard(
+                        project_id=project.id,
+                        board_id=board["board_id"],
+                        board_name=board["board_name"],
+                        board_type=board["board_type"],
+                        board_url=board["board_url"],
+                    )
+                )
+
+        execute_write(_save, retries=0)
+        audit_event(
+            "settings.projects.saved",
+            "Project and board settings saved",
+            resource_type="jira_project",
+            resource_id=project_key,
+            result="success",
+        )
         current_app.logger.info(
-            "Project added eid=%s project=%s boards=%s product_area_key=%s",
-            current_user.eid, project_key, len(boards), product_area_key
+            "Project and boards saved",
+            extra={
+                "event": "settings.projects.saved",
+                "resource_type": "jira_project",
+                "resource_id": project_key,
+                "result": "success",
+            },
         )
         if product_area_key:
             flash(
                 f"Project {project_key} added successfully. Boards saved: {len(boards)}. "
                 f"Epic key captured: {product_area_key}",
-                "success"
+                "success",
             )
         else:
             flash(
                 f"Project {project_key} added successfully. Boards saved: {len(boards)}. "
                 f"Epic key not found for boards (will remain empty).",
-                "success"
+                "success",
             )
-    except Exception as exc:
-        db.session.rollback()
+    except Exception:
         current_app.logger.exception(
-            "DB save failed eid=%s project=%s err=%s",
-            current_user.eid, project_key, exc
+            "Project and board persistence failed",
+            extra={
+                "event": "settings.projects.save_failed",
+                "resource_type": "jira_project",
+                "resource_id": project_key,
+                "result": "failed",
+            },
         )
         flash("Failed to save project/boards. Please check logs.", "danger")
     return redirect(url_for("aliases.settings_projects_boards"))
@@ -206,19 +232,29 @@ def _save_project_boards(project_key: str, boards: list[dict], product_area_key:
 def _handle_delete_project(delete_project_form, svc: ProfileService):
     if not delete_project_form.validate_on_submit():
         current_app.logger.warning(
-            "Delete project validation failed eid=%s errors=%s form=%s",
-            current_user.eid, delete_project_form.errors, dict(request.form)
+            "Delete project validation failed",
+            extra={
+                "event": "settings.projects.delete_validation_failed",
+                "result": "rejected",
+            },
         )
         flash(
             "Delete failed due to an invalid request (please refresh and try again).",
             "danger",
         )
         return redirect(url_for("aliases.settings_projects_boards"))
-    project_key = (
-        delete_project_form.delete_project_key.data or "").strip().upper()
+    project_key = (delete_project_form.delete_project_key.data or "").strip().upper()
     try:
-        removed = svc.delete_project(DeleteProjectRequest(
-            user_id=current_user.id, project_key=project_key))
+        removed = svc.delete_project(
+            DeleteProjectRequest(user_id=current_user.id, project_key=project_key)
+        )
+        audit_event(
+            "settings.projects.deleted",
+            "Project settings deleted",
+            resource_type="jira_project",
+            resource_id=project_key,
+            result="success",
+        )
         flash(
             f"Project {project_key} deleted successfully (boards removed: {removed}).",
             "success",
@@ -233,10 +269,15 @@ def _handle_delete_project(delete_project_form, svc: ProfileService):
             context={"project_key": project_key},
         )
         flash(safe_error_message("delete the project"), "danger")
-    except Exception as exc:
+    except Exception:
         current_app.logger.exception(
-            "Unexpected delete project error eid=%s project=%s err=%s",
-            current_user.eid, project_key, exc
+            "Unexpected project deletion error",
+            extra={
+                "event": "settings.projects.delete_failed",
+                "resource_type": "jira_project",
+                "resource_id": project_key,
+                "result": "failed",
+            },
         )
         flash("Unexpected error occurred while deleting the project.", "danger")
     return redirect(url_for("aliases.settings_projects_boards"))
@@ -245,29 +286,35 @@ def _handle_delete_project(delete_project_form, svc: ProfileService):
 def _handle_delete_board(delete_board_form, svc: ProfileService):
     if not delete_board_form.validate_on_submit():
         current_app.logger.warning(
-            "Delete board validation failed eid=%s errors=%s form=%s",
-            current_user.eid, delete_board_form.errors, dict(request.form)
+            "Delete board validation failed",
+            extra={
+                "event": "settings.boards.delete_validation_failed",
+                "result": "rejected",
+            },
         )
         flash(
             "Delete failed due to an invalid request (please refresh and try again).",
             "danger",
         )
         return redirect(url_for("aliases.settings_projects_boards"))
-    project_key = (
-        delete_board_form.delete_project_key.data or "").strip().upper()
-    board_id_raw = (
-        delete_board_form.delete_board_id.data or "").strip()
+    project_key = (delete_board_form.delete_project_key.data or "").strip().upper()
+    board_id_raw = (delete_board_form.delete_board_id.data or "").strip()
     try:
         board_id = int(board_id_raw)
     except ValueError:
         flash("Invalid Board ID.", "danger")
         return redirect(url_for("aliases.settings_projects_boards"))
     try:
-        project_deleted = svc.delete_board(DeleteBoardRequest(
-            user_id=current_user.id,
-            project_key=project_key,
-            board_id=board_id
-        ))
+        project_deleted = svc.delete_board(
+            DeleteBoardRequest(user_id=current_user.id, project_key=project_key, board_id=board_id)
+        )
+        audit_event(
+            "settings.boards.deleted",
+            "Board settings deleted",
+            resource_type="jira_board",
+            resource_id=str(board_id),
+            result="success",
+        )
         if project_deleted:
             flash(
                 f"Board {board_id} deleted successfully. Project {project_key} was also removed because it had no remaining boards.",
@@ -285,10 +332,15 @@ def _handle_delete_board(delete_board_form, svc: ProfileService):
             context={"project_key": project_key, "board_id": board_id},
         )
         flash(safe_error_message("delete the board"), "danger")
-    except Exception as exc:
+    except Exception:
         current_app.logger.exception(
-            "Unexpected delete board error eid=%s project=%s board_id=%s err=%s",
-            current_user.eid, project_key, board_id, exc
+            "Unexpected board deletion error",
+            extra={
+                "event": "settings.boards.delete_failed",
+                "resource_type": "jira_board",
+                "resource_id": str(board_id),
+                "result": "failed",
+            },
         )
         flash("Unexpected error occurred while deleting the board.", "danger")
     return redirect(url_for("aliases.settings_projects_boards"))

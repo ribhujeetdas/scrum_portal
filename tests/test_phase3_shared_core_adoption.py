@@ -28,6 +28,7 @@ def test_feature_routes_use_shared_dependencies_and_api_helpers():
     import app.features.automation.rule_copier.routes as rule_copier_routes
     import app.features.automation.sprint_viewer.routes as sprint_viewer_routes
     import app.features.reports.tci.routes as tci_routes
+    import app.features.settings.integrations.routes as integrations_routes
     import app.features.settings.projects_boards.routes as projects_boards_routes
     import app.features.settings.tableau_custom_views.routes as tableau_settings_routes
 
@@ -36,6 +37,7 @@ def test_feature_routes_use_shared_dependencies_and_api_helpers():
         sprint_viewer_routes,
         tci_routes,
         projects_boards_routes,
+        integrations_routes,
         tableau_settings_routes,
     ):
         source = inspect.getsource(module)

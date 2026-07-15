@@ -1,66 +1,31 @@
-# Operations And Logging
+# Operations, Logging, and Traceability
 
-## Logging
+## Health and startup
 
-Logs are JSON by default and include request correlation fields:
-- `request_id`
-- `method`
-- `path`
-- `endpoint`
-- `status_code`
-- `duration_ms`
-- `user_id`
-- `eid`
+- `GET /health/live` confirms that the process can serve requests.
+- `GET /health/ready` checks SQLite connectivity, foreign-key enforcement, migration head, log-directory writability, and free disk. A non-ready process returns 503.
+- `scripts/run_server.py` repeats critical checks before Waitress starts and holds an advisory lock for the life of the process. A second process fails immediately.
+- `scripts/diagnose.py` emits a sanitized configuration and runtime report. It never prints secret values.
 
-Every frontend request should send `X-Request-ID`. The backend returns the same header on responses.
+## Logs
 
-External Jira/Tableau failures include:
-- `event`: normalized as `<service>.request.failed` or `<service>.response.invalid_json`
-- `external_service`: `jira` or `tableau`
-- `external_operation`: HTTP method and path
-- `external_endpoint`: Jira/Tableau endpoint path
-- `external_status_code`
-- `external_response_snippet`: sanitized response body snippet
+`logs/app.log` contains JSON application and request records. `logs/audit.log` is a separate rotating audit trail. Records include the server `request_id`, optional untrusted `client_request_id`, method, path without query data, endpoint, status, duration, authenticated user identifiers, stable event name, and sanitized exception context.
 
-Handled feature failures use stable event names, for example:
-- `automation.rule_copier.copy_failed`
-- `automation.sprint_viewer.issues_failed`
-- `settings.projects.board_list_failed`
-- `settings.tableau_custom_views.validate_failed`
-- `reports.tci.csv_failed`
-- `reports.tci.link_details_failed`
+The response `X-Request-ID` is server-generated and authoritative. If a client supplied an ID, the response exposes it separately as `X-Client-Request-ID` and logs it only as supporting context.
 
-## Trace By X-Request-ID
+External events use sanitized endpoint paths and fields such as `external_service`, `external_operation`, `external_status_code`, category, retryability, and duration. Redirects and cross-origin absolute URLs are rejected before credentials can be forwarded.
 
-1. Capture the `X-Request-ID` from the browser network tab or UI logs.
-2. Search `logs/app.log` for `"request_id":"<id>"`.
-3. Start with the final `request.complete` record to confirm `path`, `endpoint`, `status_code`, and `duration_ms`.
-4. Review earlier records with the same `request_id`, especially `event`, `feature`, `operation`, `user_id`, `eid`, and `exception`.
-5. If Jira or Tableau failed, inspect `external_service`, `external_operation`, `external_status_code`, and `external_response_snippet`.
-6. Use `client.event`, `fetch.http_error`, or `fetch.network_error` records to connect browser-side failures to the same request flow.
+## Trace a failure
 
-## Troubleshooting 500s
+1. Capture `X-Request-ID` from the failed response or UI message.
+2. Search `app.log` for the exact JSON `request_id`.
+3. Start at `request.complete` to confirm route, status, and duration.
+4. Review earlier records with the same ID, especially feature-scoped handled failures and adjacent `<service>.request.failed` events.
+5. Use the exception stack only from the log. User responses intentionally contain a generic message and request ID.
+6. Never paste PATs, passwords, session cookies, CSRF tokens, `.env`, or full upstream bodies into an incident record.
 
-1. Follow the request ID trace above.
-2. Check the `exception` field for the Python stack trace.
-3. For handled integration failures, check both the feature event and any adjacent `<service>.request.failed` event.
-4. Do not paste PATs, tokens, or passwords into tickets. Logs redact known secret patterns, but tickets should still contain only request IDs and sanitized snippets.
+## Routine checks
 
-## Production Defaults
+Before deployment and after dependency changes run `python scripts/verify.py`. Daily operational checks should include `python scripts/check_db.py`, readiness status, free disk, backup age, and application/audit log rotation. Run `python scripts/diagnose.py` when startup or readiness fails.
 
-Recommended production values:
-
-```text
-LOG_LEVEL=INFO
-LOG_FORMAT=json
-LOG_TO_CONSOLE=false
-LOG_WERKZEUG_LEVEL=WARNING
-LOG_URLLIB3_LEVEL=WARNING
-LOG_SQLALCHEMY_LEVEL=WARNING
-TRACE_SPRINT_VIEWER=false
-TRACE_JIRA_JQL=false
-TRACE_SPRINT_VIEWER_API=false
-TRACE_SPRINT_VIEWER_UI=false
-SESSION_COOKIE_SECURE=true
-REMEMBER_COOKIE_SECURE=true
-```
+Backups, restores, journal changes, and schema migrations are covered by [SQLite operations](sqlite_operations.md). Manual release steps are covered by [Manual deployment](manual_deployment.md).

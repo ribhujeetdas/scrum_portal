@@ -1,0 +1,9 @@
+# Database migrations
+
+Do not invoke Alembic directly for routine deployment. With the application server stopped, run:
+
+```text
+python scripts/migrate_db.py
+```
+
+The command handles fresh SQLite initialization, verified pre-upgrade backups, migration to the repository head, and final status validation. See `docs/sqlite_operations.md` for backup and rollback procedures.

@@ -10,9 +10,22 @@ def test_projects_boards_feature_exports_page_handler_and_forms():
     assert callable(projects_page)
 
 
+def test_integrations_feature_exports_page_handler_and_forms():
+    from app.blueprints.config.forms import JiraConfigForm as CompatJiraConfigForm
+    from app.blueprints.config.forms import TableauConfigForm as CompatTableauConfigForm
+    from app.features.settings.integrations.forms import JiraConfigForm, TableauConfigForm
+    from app.features.settings.integrations.routes import integrations_page
+
+    assert JiraConfigForm is CompatJiraConfigForm
+    assert TableauConfigForm is CompatTableauConfigForm
+    assert callable(integrations_page)
+
+
 def test_tableau_custom_view_settings_feature_exports_page_handler_and_forms():
     from app.blueprints.config.forms import (
         TableauCustomViewDeleteForm as CompatDeleteForm,
+    )
+    from app.blueprints.config.forms import (
         TableauCustomViewForm as CompatCustomViewForm,
     )
     from app.features.settings.tableau_custom_views.forms import (

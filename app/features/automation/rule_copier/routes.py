@@ -4,10 +4,12 @@ from flask import current_app, flash, redirect, render_template, request, url_fo
 from flask_login import current_user
 
 from ....core.api import json_error, json_ok, safe_error_message
+from ....core.database import execute_write
 from ....core.dependencies import crypto_service, jira_service, rule_copier_service
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
-from ....extensions import db
+from ....core.rate_limit import enforce_limit
+from ....logging_conf import audit_event
 from ....models import UserBoard, UserProject
 from ....services.jira_service import JiraServiceError
 from ....services.rule_copier_service import RuleCopierService, RuleCopierServiceError
@@ -19,8 +21,7 @@ def _rule_service() -> RuleCopierService:
 
 def _get_user_pat() -> str:
     if not current_user.jira_pat_enc:
-        raise ValueError(
-            "Enterprise Agile Jira PAT is not set. Please set it in Profile.")
+        raise ValueError("Enterprise Agile Jira PAT is not set. Please set it in Profile.")
     return crypto_service().decrypt(current_user.jira_pat_enc)
 
 
@@ -29,11 +30,9 @@ def _validate_pat_belongs_to_user(pat: str) -> None:
 
 
 def _ensure_project_id_for_user_project(project_key: str, board_id: int, pat: str) -> int:
-    proj = UserProject.query.filter_by(
-        user_id=current_user.id, project_key=project_key).first()
+    proj = UserProject.query.filter_by(user_id=current_user.id, project_key=project_key).first()
     if not proj:
-        raise ValueError(
-            "Project not found for your account. Add it in Profile first.")
+        raise ValueError("Project not found for your account. Add it in Profile first.")
 
     resolved = _rule_service().resolve_project_from_board_issue(board_id, pat)
     resolved_project_id = int(resolved["project_id"])
@@ -45,8 +44,11 @@ def _ensure_project_id_for_user_project(project_key: str, board_id: int, pat: st
         )
 
     if proj.project_id != resolved_project_id:
-        proj.project_id = resolved_project_id
-        db.session.commit()
+
+        def _save_project_id() -> None:
+            proj.project_id = resolved_project_id
+
+        execute_write(_save_project_id)
 
     return resolved_project_id
 
@@ -82,8 +84,7 @@ def _create_rule_with_identifier_fallback(
 
 def rule_copier_page():
     projects = (
-        UserProject.query.filter_by(
-            user_id=current_user.id, admin_projects=True)
+        UserProject.query.filter_by(user_id=current_user.id, admin_projects=True)
         .order_by(UserProject.project_key.asc())
         .all()
     )
@@ -97,8 +98,7 @@ def rule_copier_page():
     boards_by_project: dict[str, list[dict]] = {}
     for project in projects:
         boards = (
-            UserBoard.query.join(
-                UserProject, UserBoard.project_id == UserProject.id)
+            UserBoard.query.join(UserProject, UserBoard.project_id == UserProject.id)
             .filter(UserProject.user_id == current_user.id, UserProject.id == project.id)
             .order_by(UserBoard.board_name.asc())
             .all()
@@ -121,6 +121,7 @@ def rule_copier_page():
 
 
 def fetch_rule():
+    enforce_limit("automation.rule_copier.fetch", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
     project_key = str(payload.get("project_key") or "").strip().upper()
     board_id = payload.get("board_id")
@@ -151,8 +152,7 @@ def fetch_rule():
         return json_error(str(exc), status_code=403)
 
     try:
-        jira_project_id = _ensure_project_id_for_user_project(
-            project_key, board_id_int, pat)
+        jira_project_id = _ensure_project_id_for_user_project(project_key, board_id_int, pat)
     except RuleCopierServiceError as exc:
         log_handled_exception(
             "Rule Copier project resolution failed",
@@ -162,7 +162,9 @@ def fetch_rule():
             operation="fetch_rule",
             context={"project_key": project_key, "board_id": board_id_int},
         )
-        return json_error(safe_error_message("validate selected project and board"), status_code=400)
+        return json_error(
+            safe_error_message("validate selected project and board"), status_code=400
+        )
     except ValueError as exc:
         return json_error(str(exc), status_code=400)
 
@@ -203,9 +205,9 @@ def fetch_rule():
 
 
 def copy_rule():
+    enforce_limit("automation.rule_copier.copy", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
-    target_project_key = str(payload.get(
-        "target_project_key") or "").strip().upper()
+    target_project_key = str(payload.get("target_project_key") or "").strip().upper()
     target_board_id = payload.get("target_board_id")
     rule_json = payload.get("rule_json")
 
@@ -236,7 +238,8 @@ def copy_rule():
 
     try:
         target_jira_project_id = _ensure_project_id_for_user_project(
-            target_project_key, target_board_id_int, pat)
+            target_project_key, target_board_id_int, pat
+        )
     except RuleCopierServiceError as exc:
         log_handled_exception(
             "Rule Copier project resolution failed",
@@ -244,9 +247,14 @@ def copy_rule():
             event="automation.rule_copier.project_resolution_failed",
             feature="rule_copier",
             operation="copy_rule",
-            context={"target_project_key": target_project_key, "target_board_id": target_board_id_int},
+            context={
+                "target_project_key": target_project_key,
+                "target_board_id": target_board_id_int,
+            },
         )
-        return json_error(safe_error_message("validate selected project and board"), status_code=400)
+        return json_error(
+            safe_error_message("validate selected project and board"), status_code=400
+        )
     except ValueError as exc:
         return json_error(str(exc), status_code=400)
 
@@ -307,6 +315,13 @@ def copy_rule():
             )
             actor_used = author_account_id
 
+        audit_event(
+            "automation.rule_copier.copied",
+            "Automation rule copied",
+            resource_type="jira_project",
+            resource_id=target_project_key,
+            result="success",
+        )
         return json_ok(
             message="Rule copied successfully.",
             target_project_key=target_project_key,

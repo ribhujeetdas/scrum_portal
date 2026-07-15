@@ -36,6 +36,14 @@ instance/
 *.sqlite3
 *.db-journal
 *.sqlite-journal
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.server.lock
+backups/
 
 ####################################
 # Logs
@@ -57,11 +65,14 @@ pip-log.txt
 # Test / Coverage
 ####################################
 .pytest_cache/
+.ruff_cache/
 .mypy_cache/
 .coverage
 coverage.xml
 htmlcov/
 .worktrees/
+artifacts/
+.code-review-graph/
 
 ####################################
 # OS files

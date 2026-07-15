@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from . import aliases_bp
 from ..auth.routes import (
     confirm_profile,
     forgot_password,
@@ -19,7 +18,7 @@ from ..automation.routes import (
 from ..config.routes import custom_views, integrations, projects
 from ..main.routes import client_log, extend_session, home, session_status
 from ..tableau_custom_views.routes import custom_view_link_details, custom_views_page
-
+from . import aliases_bp
 
 # Canonical user-facing routes. Existing routes stay registered on their
 # original blueprints, so bookmarks and current template URLs keep working.
@@ -106,6 +105,10 @@ aliases_bp.add_url_rule(
     custom_view_link_details,
     methods=["POST"],
 )
-aliases_bp.add_url_rule("/api/session/status", "api_session_status", session_status, methods=["GET"])
-aliases_bp.add_url_rule("/api/session/extend", "api_session_extend", extend_session, methods=["POST"])
+aliases_bp.add_url_rule(
+    "/api/session/status", "api_session_status", session_status, methods=["GET"]
+)
+aliases_bp.add_url_rule(
+    "/api/session/extend", "api_session_extend", extend_session, methods=["POST"]
+)
 aliases_bp.add_url_rule("/api/client-log", "api_client_log", client_log, methods=["POST"])

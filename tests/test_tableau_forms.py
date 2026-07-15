@@ -1,5 +1,5 @@
-from wtforms.fields import SubmitField
 from flask import Flask
+from wtforms.fields import SubmitField
 
 from app.features.reports.tci.forms import TableauCustomViewSelectForm
 

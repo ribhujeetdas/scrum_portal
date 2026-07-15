@@ -1,47 +1,41 @@
-# First-Time Setup Guide
+# First-Time Setup
 
-## 1. Create A Virtual Environment
+Python 3.12 is required. Keep the repository, virtual environment, SQLite file, logs, and backups on a local disk rather than a synchronized or network-mounted folder.
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install -r requirements.txt
-```
-
-## 2. Create `.env`
-
-Copy `.env.example` to `.env` and replace every placeholder. Generate `FERNET_KEY` with:
+## Windows
 
 ```powershell
-py -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.txt
+Copy-Item .env.example .env
 ```
 
-Never commit `.env`, database files, or logs.
+## Linux
 
-## 3. Initialize Or Upgrade The Database
-
-```powershell
-flask db upgrade
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.txt
+cp .env.example .env
 ```
 
-For a brand-new local database:
+Generate independent keys and place them only in `.env`:
 
-```powershell
-flask init-db
-flask db upgrade
+```text
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-## 4. Run Verification
+Set `SECRET_KEY` to the first value and `FERNET_KEY` to the second. Replace the Jira, Tableau, administrator, and runtime placeholders. Production startup fails closed if secrets are weak, URLs are malformed, SQLite is not file-backed, or a requested WAL mode is unsafe.
 
-```powershell
-py -m pytest
-py scripts\smoke_check.py
+Initialize or upgrade the database, apply its configured journal mode, then run the local quality gate:
+
+```text
+python scripts/migrate_db.py
+python scripts/database_configure.py
+python scripts/verify.py
+python scripts/diagnose.py
 ```
 
-## 5. Start The App
+Start the production server with `python scripts/run_server.py`. `wsgi.py` only exports the WSGI application for tooling; it is not a development-server launcher.
 
-```powershell
-py wsgi.py
-```
-
-Open `http://127.0.0.1:5000/login`.
+For an existing installation, read [Manual deployment](manual_deployment.md) and [SQLite operations](sqlite_operations.md) before replacing code or changing schema.

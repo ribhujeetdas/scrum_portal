@@ -14,7 +14,7 @@ class RuleCopierService:
     """
     Implements:
     1) Resolve projectId+projectKey from board issues endpoint:
-       GET /rest/agile/1.0/board/{board_id}/issue?maxResults=1  
+       GET /rest/agile/1.0/board/{board_id}/issue?maxResults=1
 
     2) Fetch/list automation rules for project:
        GET /rest/cb-automation/latest/project/{project_identifier}/rule
@@ -23,7 +23,7 @@ class RuleCopierService:
 
     3) Create rule:
        POST /rest/cb-automation/latest/project/{project_identifier}/rule
-       (Internal endpoint patterns vary across DC instances) 
+       (Internal endpoint patterns vary across DC instances)
     """
 
     def __init__(
@@ -54,7 +54,7 @@ class RuleCopierService:
     def resolve_project_from_board_issue(self, board_id: int, pat: str) -> dict:
         """
         Calls:
-          GET /rest/agile/1.0/board/{board_id}/issue?maxResults=1  
+          GET /rest/agile/1.0/board/{board_id}/issue?maxResults=1
 
         Extracts:
           issues[0].fields.project.id
@@ -85,13 +85,13 @@ class RuleCopierService:
 
         if project_id is None or project_key is None:
             raise RuleCopierServiceError(
-                "Could not extract project.id/project.key from board issue response.")
+                "Could not extract project.id/project.key from board issue response."
+            )
 
         try:
             project_id_int = int(project_id)
-        except Exception:
-            raise RuleCopierServiceError(
-                f"Project id is not numeric: {project_id}")
+        except (TypeError, ValueError) as exc:
+            raise RuleCopierServiceError(f"Project id is not numeric: {project_id}") from exc
 
         return {"project_id": project_id_int, "project_key": str(project_key).strip()}
 
@@ -137,8 +137,7 @@ class RuleCopierService:
         rules = self.list_rules_for_project(project_identifier, pat)
         found = self.find_rule(rules, rule_id)
         if not found:
-            raise RuleCopierServiceError(
-                "Rule not found in automation rule list for this project.")
+            raise RuleCopierServiceError("Rule not found in automation rule list for this project.")
         return found
 
     def find_rule(self, rules: list[dict], rule_id: int) -> dict | None:
@@ -146,14 +145,16 @@ class RuleCopierService:
             try:
                 if int(r.get("id")) == int(rule_id):
                     return r
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return None
 
     # ---------------------------
     # Transform + Create rule
     # ---------------------------
-    def transform_rule_for_create(self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str) -> dict:
+    def transform_rule_for_create(
+        self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str
+    ) -> dict:
         """
         Takes fetched rule JSON and transforms into a payload suitable for create.
 
@@ -249,43 +250,44 @@ class RuleCopierService:
     def _raise_board_issue_error(self, exc: ExternalServiceError) -> None:
         if exc.status_code == 401:
             raise RuleCopierServiceError(
-                "Unauthorized (401) while calling board issue API. Check PAT.") from exc
+                "Unauthorized (401) while calling board issue API. Check PAT."
+            ) from exc
         if exc.status_code == 403:
-            raise RuleCopierServiceError(
-                "Forbidden (403) while calling board issue API.") from exc
+            raise RuleCopierServiceError("Forbidden (403) while calling board issue API.") from exc
         if exc.message == "Invalid JSON response":
-            raise RuleCopierServiceError(
-                "Invalid JSON returned by board issue API.") from exc
+            raise RuleCopierServiceError("Invalid JSON returned by board issue API.") from exc
         if exc.status_code is not None:
             raise RuleCopierServiceError(
-                f"Board issue API error: {exc.status_code} {self._snippet(exc)}") from exc
-        raise RuleCopierServiceError(
-            f"Network error calling board issue API: {exc}") from exc
+                f"Board issue API error: {exc.status_code} {self._snippet(exc)}"
+            ) from exc
+        raise RuleCopierServiceError(f"Network error calling board issue API: {exc}") from exc
 
     def _raise_automation_api_error(self, exc: ExternalServiceError, operation: str) -> None:
         if exc.status_code == 401:
             raise RuleCopierServiceError(
-                "Unauthorized (401) while calling automation API. Check PAT.") from exc
+                "Unauthorized (401) while calling automation API. Check PAT."
+            ) from exc
         if exc.status_code == 403:
-            raise RuleCopierServiceError(
-                "Forbidden (403) while calling automation API.") from exc
+            raise RuleCopierServiceError("Forbidden (403) while calling automation API.") from exc
         if exc.message == "Invalid JSON response":
-            raise RuleCopierServiceError(
-                "Invalid JSON returned by automation API.") from exc
+            raise RuleCopierServiceError("Invalid JSON returned by automation API.") from exc
         if exc.status_code is not None:
             raise RuleCopierServiceError(
-                f"Automation API error: {exc.status_code} {self._snippet(exc)}") from exc
+                f"Automation API error: {exc.status_code} {self._snippet(exc)}"
+            ) from exc
         raise RuleCopierServiceError(
-            f"Network error calling automation rule {operation}: {exc}") from exc
+            f"Network error calling automation rule {operation}: {exc}"
+        ) from exc
 
     def _raise_create_rule_error(self, exc: ExternalServiceError) -> None:
         if exc.status_code == 401:
             raise RuleCopierServiceError(
-                "Unauthorized (401) while creating rule. Check PAT.") from exc
+                "Unauthorized (401) while creating rule. Check PAT."
+            ) from exc
         if exc.status_code == 403:
             raise RuleCopierServiceError("Forbidden (403) while creating rule.") from exc
         if exc.status_code is not None:
             raise RuleCopierServiceError(
-                f"Create rule API error: {exc.status_code} {self._snippet(exc)}") from exc
-        raise RuleCopierServiceError(
-            f"Network error calling create rule API: {exc}") from exc
+                f"Create rule API error: {exc.status_code} {self._snippet(exc)}"
+            ) from exc
+        raise RuleCopierServiceError(f"Network error calling create rule API: {exc}") from exc

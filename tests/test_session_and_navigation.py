@@ -105,6 +105,64 @@ def test_session_extend_adds_full_timeout_to_existing_expiry(tmp_path):
     assert 1190 <= data["remaining_seconds"] <= 1200
 
 
+def test_session_extension_never_exceeds_absolute_limit(tmp_path):
+    app = create_test_app(tmp_path)
+    client = app.test_client()
+    login_test_user(client)
+    first = client.get("/session/status").get_json()
+    absolute_limit = first["expires_at"] + 30
+    with client.session_transaction() as sess:
+        sess["session_absolute_expires_at"] = str(absolute_limit)
+        sess["session_started_at"] = "invalid-but-recoverable"
+
+    response = client.post("/session/extend")
+
+    assert response.status_code == 200
+    assert response.get_json()["expires_at"] == absolute_limit
+
+
+def test_expired_canonical_api_session_returns_json_instead_of_html_redirect(tmp_path):
+    app = create_test_app(tmp_path)
+    client = app.test_client()
+    login_test_user(client)
+    with client.session_transaction() as sess:
+        sess["session_expires_at"] = 0
+        sess["session_absolute_expires_at"] = 0
+
+    response = client.get("/api/session/status")
+
+    assert response.status_code == 401
+    assert response.is_json
+    assert response.get_json()["expired"] is True
+
+
+def test_health_response_has_browser_security_headers(tmp_path):
+    app = create_test_app(tmp_path)
+
+    response = app.test_client().get("/health/live")
+
+    assert response.status_code == 200
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+
+
+def test_client_log_requires_authentication_and_allowlisted_event(tmp_path):
+    app = create_test_app(tmp_path)
+    client = app.test_client()
+
+    assert client.post("/client-log", json={"event": "window.error"}).status_code == 302
+    login_test_user(client)
+    assert client.post("/client-log", json={"event": "made.up"}).status_code == 400
+    assert (
+        client.post(
+            "/client-log",
+            json={"event": "window.error", "url": "https://portal.local/page?secret=x"},
+        ).status_code
+        == 200
+    )
+
+
 def test_rule_copier_redirects_to_projects_when_no_project_keys(tmp_path):
     app = create_test_app(tmp_path)
     client = app.test_client()
@@ -130,9 +188,7 @@ def test_sprint_viewer_redirects_to_projects_when_no_project_keys(tmp_path):
 def test_automation_pages_load_when_project_key_exists(tmp_path):
     app = create_test_app(tmp_path)
     with app.app_context():
-        db.session.add(
-            UserProject(user_id=1, project_key="ABC", admin_projects=True)
-        )
+        db.session.add(UserProject(user_id=1, project_key="ABC", admin_projects=True))
         db.session.commit()
 
     client = app.test_client()
@@ -142,7 +198,7 @@ def test_automation_pages_load_when_project_key_exists(tmp_path):
     assert client.get("/automation/sprint-viewer").status_code == 200
 
 
-def test_login_recovers_from_stale_csrf_after_session_expiry(tmp_path):
+def test_login_rejects_stale_csrf_and_requires_fresh_submission(tmp_path):
     app = create_csrf_test_app(tmp_path)
     client = app.test_client()
 
@@ -163,6 +219,23 @@ def test_login_recovers_from_stale_csrf_after_session_expiry(tmp_path):
         follow_redirects=False,
     )
 
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/dashboard")
+    assert response.status_code == 400
+    assert "Session expired" in response.get_data(as_text=True)
+    with client.session_transaction() as sess:
+        assert "_user_id" not in sess
 
+    fresh_page = client.get("/auth/login").get_data(as_text=True)
+    fresh_token = re.search(r'name="csrf_token" type="hidden" value="([^"]+)"', fresh_page).group(1)
+    fresh_response = client.post(
+        "/auth/login",
+        data={
+            "csrf_token": fresh_token,
+            "identifier": "user@wellsfargo.com",
+            "password": "Password123",
+            "submit": "Login",
+        },
+        follow_redirects=False,
+    )
+
+    assert fresh_response.status_code == 302
+    assert fresh_response.headers["Location"].endswith("/dashboard")

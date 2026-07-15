@@ -49,6 +49,8 @@ def log_handled_exception(
                 "external_endpoint": external_exc.endpoint,
                 "external_status_code": external_exc.status_code,
                 "external_response_snippet": external_exc.response_snippet,
+                "category": external_exc.category,
+                "retryable": external_exc.retryable,
             }
         )
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
@@ -17,7 +17,7 @@ class JiraRelatedTicketResult:
     feature_key: str
     mapped_key: str
     application_id: str
-    matches: List[Dict[str, Any]]
+    matches: list[dict[str, Any]]
     message: str
 
 
@@ -47,7 +47,7 @@ class JiraIssueLinksService:
             "Accept": "application/json",
         }
 
-    def fetch_issue_links(self, issue_key: str, pat: str) -> List[dict]:
+    def fetch_issue_links(self, issue_key: str, pat: str) -> list[dict]:
         params = {"fields": "issuelinks"}
         try:
             data = self._client.get_json(
@@ -57,19 +57,16 @@ class JiraIssueLinksService:
             )
         except ExternalServiceError as exc:
             if exc.status_code == 401:
-                raise JiraIssueLinksServiceError(
-                    "Unauthorized (401). Check Jira PAT.") from exc
+                raise JiraIssueLinksServiceError("Unauthorized (401). Check Jira PAT.") from exc
             if exc.status_code == 403:
-                raise JiraIssueLinksServiceError(
-                    "Forbidden (403). PAT lacks permission.") from exc
+                raise JiraIssueLinksServiceError("Forbidden (403). PAT lacks permission.") from exc
             if exc.status_code == 404:
-                raise JiraIssueLinksServiceError(
-                    f"Issue not found (404): {issue_key}") from exc
+                raise JiraIssueLinksServiceError(f"Issue not found (404): {issue_key}") from exc
             if exc.status_code is not None:
                 raise JiraIssueLinksServiceError(
-                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}") from exc
-            raise JiraIssueLinksServiceError(
-                f"Network error fetching issue links: {exc}") from exc
+                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}"
+                ) from exc
+            raise JiraIssueLinksServiceError(f"Network error fetching issue links: {exc}") from exc
         fields = data.get("fields") or {}
         return fields.get("issuelinks") or []
 
@@ -83,18 +80,18 @@ class JiraIssueLinksService:
             )
         except ExternalServiceError as exc:
             if exc.status_code == 401:
-                raise JiraIssueLinksServiceError(
-                    "Unauthorized (401). Check Jira PAT.") from exc
+                raise JiraIssueLinksServiceError("Unauthorized (401). Check Jira PAT.") from exc
             if exc.status_code == 403:
-                raise JiraIssueLinksServiceError(
-                    "Forbidden (403). PAT lacks permission.") from exc
+                raise JiraIssueLinksServiceError("Forbidden (403). PAT lacks permission.") from exc
             if exc.status_code == 404:
                 raise JiraIssueLinksServiceError("Inward issue not found (404).") from exc
             if exc.status_code is not None:
                 raise JiraIssueLinksServiceError(
-                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}") from exc
+                    f"Jira error {exc.status_code}: {(exc.response_snippet or '')[:200]}"
+                ) from exc
             raise JiraIssueLinksServiceError(
-                f"Network error fetching inward issue details: {exc}") from exc
+                f"Network error fetching inward issue details: {exc}"
+            ) from exc
 
     @staticmethod
     def _is_relates_type(t: dict) -> bool:
@@ -117,17 +114,17 @@ class JiraIssueLinksService:
         return ik.startswith(mk + "-") or (mk in ik)
 
     @staticmethod
-    def _labels_match_app(labels: List[str], app_id: str) -> bool:
+    def _labels_match_app(labels: list[str], app_id: str) -> bool:
         if not labels:
             return False
         aid = (app_id or "").strip().lower()
         if not aid:
             return False
         for lab in labels:
-            l = (lab or "").strip().lower()
-            if l == aid:
+            normalized_label = (lab or "").strip().lower()
+            if normalized_label == aid:
                 return True
-            if l == f"appid:{aid}":
+            if normalized_label == f"appid:{aid}":
                 return True
         return False
 
@@ -141,7 +138,7 @@ class JiraIssueLinksService:
 
         issuelinks = self.fetch_issue_links(feature_key, pat)
 
-        matches: List[Dict[str, Any]] = []
+        matches: list[dict[str, Any]] = []
 
         for link in issuelinks:
             t = link.get("type") or {}

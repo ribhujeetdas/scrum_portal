@@ -29,9 +29,7 @@ def _flush_loggers():
 def _read_json_lines(path):
     _flush_loggers()
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -53,6 +51,7 @@ def test_unhandled_server_error_logs_stacktrace(tmp_path):
     errors = [record for record in records if record.get("event") == "error.unhandled"]
 
     assert errors
-    assert errors[-1]["request_id"] == "boom-123"
+    assert errors[-1]["request_id"] == response.headers["X-Request-ID"]
+    assert errors[-1]["client_request_id"] == "boom-123"
     assert "boom failure" in errors[-1]["exception"]
     assert "Traceback" in errors[-1]["exception"]

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db, login_manager
 
@@ -19,8 +20,7 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
 
     # Jira profile fields
-    eid = db.Column(db.String(64), unique=True,
-                    nullable=False)  # response["name"]
+    eid = db.Column(db.String(64), unique=True, nullable=False)  # response["name"]
     jira_key = db.Column(db.String(64), nullable=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
     display_name = db.Column(db.String(255), nullable=False)
@@ -112,8 +112,7 @@ class UserBoard(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    project_id = db.Column(db.Integer, db.ForeignKey(
-        "user_projects.id"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("user_projects.id"), nullable=False)
 
     board_id = db.Column(db.Integer, nullable=False)
     board_name = db.Column(db.String(255), nullable=False)
@@ -131,8 +130,7 @@ class UserBoard(db.Model):
 class UserBoardSprint(db.Model):
     __tablename__ = "user_board_sprints"
     __table_args__ = (
-        db.UniqueConstraint("user_id", "board_id",
-                            "sprint_id", name="uq_user_board_sprint"),
+        db.UniqueConstraint("user_id", "board_id", "sprint_id", name="uq_user_board_sprint"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -146,10 +144,10 @@ class UserBoardSprint(db.Model):
     sprint_state = db.Column(db.String(32), nullable=False)
     sprint_url = db.Column(db.String(1024), nullable=True)
 
-    start_date = db.Column(db.String(64), nullable=True)
-    end_date = db.Column(db.String(64), nullable=True)
-    complete_date = db.Column(db.String(64), nullable=True)
-    activated_date = db.Column(db.String(64), nullable=True)
+    start_date = db.Column(db.DateTime(timezone=True), nullable=True)
+    end_date = db.Column(db.DateTime(timezone=True), nullable=True)
+    complete_date = db.Column(db.DateTime(timezone=True), nullable=True)
+    activated_date = db.Column(db.DateTime(timezone=True), nullable=True)
     origin_board_id = db.Column(db.Integer, nullable=True)
     goal = db.Column(db.Text, nullable=True)
     synced = db.Column(db.Boolean, nullable=True)
@@ -164,8 +162,7 @@ class UserBoardSprint(db.Model):
 class UserTableauCustomView(db.Model):
     __tablename__ = "user_tableau_custom_views"
     __table_args__ = (
-        UniqueConstraint("user_id", "custom_view_id",
-                         name="uq_user_custom_view"),
+        UniqueConstraint("user_id", "custom_view_id", name="uq_user_custom_view"),
         db.Index("ix_user_tableau_custom_views_user_updated", "user_id", "updated_at"),
     )
 

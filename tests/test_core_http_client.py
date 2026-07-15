@@ -18,10 +18,11 @@ class ListHandler(logging.Handler):
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if isinstance(self._payload, Exception):
@@ -50,9 +51,7 @@ class FakeSession:
 
 def test_http_client_get_json_joins_url_and_uses_timeout():
     session = FakeSession(response=FakeResponse(payload={"accountId": "abc"}))
-    client = ExternalHttpClient(
-        "jira", "https://jira.example", session=session, timeout_seconds=7
-    )
+    client = ExternalHttpClient("jira", "https://jira.example", session=session, timeout_seconds=7)
 
     payload = client.get_json(
         "/rest/api/2/myself", headers={"Authorization": "Bearer secret-token"}
@@ -63,7 +62,11 @@ def test_http_client_get_json_joins_url_and_uses_timeout():
         (
             "GET",
             "https://jira.example/rest/api/2/myself",
-            {"headers": {"Authorization": "Bearer secret-token"}, "timeout": 7},
+            {
+                "headers": {"Authorization": "Bearer secret-token"},
+                "timeout": 7,
+                "allow_redirects": False,
+            },
         )
     ]
 
@@ -124,13 +127,13 @@ def test_http_client_logs_external_api_failure_metadata():
         logger.removeHandler(handler)
         logger.setLevel(old_level)
 
-    record = next(
-        record for record in handler.records if record.event == "tableau.request.failed"
-    )
+    record = next(record for record in handler.records if record.event == "tableau.request.failed")
     assert record.external_service == "tableau"
     assert record.external_operation == "GET /sites/site-1/customviews"
     assert record.external_endpoint == "/sites/site-1/customviews"
     assert record.external_status_code == 503
+    assert record.category == "http_error"
+    assert record.retryable is True
     assert "super-secret" not in record.external_response_snippet
     assert "<redacted>" in record.external_response_snippet
 
@@ -149,3 +152,69 @@ def test_http_client_retry_policy_is_configurable():
     assert retry.total == 5
     assert retry.backoff_factor == 0.25
     assert retry.status_forcelist == (500, 503)
+
+
+def test_http_client_rejects_cross_origin_absolute_url_before_sending_credentials():
+    session = FakeSession(response=FakeResponse(payload={"ok": True}))
+    client = ExternalHttpClient("jira", "https://jira.example", session=session)
+
+    with pytest.raises(ExternalServiceError) as raised:
+        client.get_json(
+            "https://attacker.example/collect",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+    assert raised.value.category == "unsafe_url"
+    assert session.calls == []
+
+
+def test_http_client_allows_same_origin_absolute_url():
+    session = FakeSession(response=FakeResponse(payload={"ok": True}))
+    client = ExternalHttpClient("jira", "https://jira.example", session=session)
+
+    assert client.get_json("https://jira.example/rest/api/2/issue/ABC-1") == {"ok": True}
+    assert session.calls[0][1] == "https://jira.example/rest/api/2/issue/ABC-1"
+
+
+def test_http_client_rejects_redirect_instead_of_forwarding_credentials():
+    session = FakeSession(
+        response=FakeResponse(
+            status_code=302,
+            headers={"Location": "https://attacker.example/collect"},
+        )
+    )
+    client = ExternalHttpClient("jira", "https://jira.example", session=session)
+
+    with pytest.raises(ExternalServiceError) as raised:
+        client.get_json("/redirect", headers={"Authorization": "Bearer secret-token"})
+
+    assert raised.value.category == "redirect_rejected"
+
+
+def test_http_client_default_retries_are_idempotent_only():
+    client = ExternalHttpClient("jira", "https://jira.example")
+    retry = client._session.get_adapter("https://").max_retries
+
+    assert set(retry.allowed_methods) == {"GET", "HEAD", "OPTIONS"}
+
+
+def test_http_client_opens_circuit_after_repeated_retryable_failures():
+    session = FakeSession(response=FakeResponse(status_code=503, text="unavailable"))
+    client = ExternalHttpClient(
+        "circuit-test",
+        "https://circuit.example",
+        session=session,
+        circuit_failure_threshold=2,
+        circuit_reset_seconds=60,
+    )
+
+    for _ in range(2):
+        with pytest.raises(ExternalServiceError) as raised:
+            client.get_json("/unavailable")
+        assert raised.value.category == "http_error"
+
+    with pytest.raises(ExternalServiceError) as raised:
+        client.get_json("/unavailable")
+
+    assert raised.value.category == "circuit_open"
+    assert len(session.calls) == 2

@@ -10,6 +10,8 @@ from flask_login import current_user
 from ....core.api import json_error, json_ok, safe_error_message
 from ....core.dependencies import crypto_service, jira_issue_links_service, tableau_service
 from ....core.error_logging import log_handled_exception
+from ....core.rate_limit import enforce_limit
+from ....logging_conf import audit_event
 from ....models import UserTableauCustomView
 from ....services.jira_issue_links_service import JiraIssueLinksServiceError
 from ....services.tableau_service import TableauServiceError
@@ -31,7 +33,7 @@ def _parse_date_tolerant(value: str):
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d-%b-%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(value, fmt).date()
-        except Exception:
+        except ValueError:
             continue
     return None
 
@@ -46,16 +48,14 @@ def parse_csv_preview(csv_bytes: bytes, max_rows: int = 200) -> dict:
         try:
             text = csv_bytes.decode(encoding)
             break
-        except Exception:
+        except UnicodeError:
             continue
     if text is None:
         text = csv_bytes.decode("latin-1", errors="replace")
 
     sample = text[:2000]
     dialect = (
-        csv.excel_tab
-        if "\t" in sample and sample.count("\t") >= sample.count(",")
-        else csv.excel
+        csv.excel_tab if "\t" in sample and sample.count("\t") >= sample.count(",") else csv.excel
     )
     reader = csv.reader(io.StringIO(text), dialect)
 
@@ -148,6 +148,8 @@ def parse_csv_preview(csv_bytes: bytes, max_rows: int = 200) -> dict:
 
 
 def custom_views_page():
+    if request.method == "POST":
+        enforce_limit("reports.tci.export", subject=str(current_user.id), expensive=True)
     if not getattr(current_user, "tableau_pat_name", None) or not getattr(
         current_user, "tableau_pat_secret_enc", None
     ):
@@ -222,6 +224,13 @@ def custom_views_page():
                 return redirect(url_for("aliases.reports_tci"))
 
             if "download_csv" in request.form:
+                audit_event(
+                    "reports.tci.csv_downloaded",
+                    "TCI report CSV downloaded",
+                    resource_type="tableau_custom_view",
+                    resource_id=selected_id,
+                    result="success",
+                )
                 return Response(
                     csv_bytes,
                     mimetype="text/csv",
@@ -240,6 +249,7 @@ def custom_views_page():
 
 
 def custom_view_link_details():
+    enforce_limit("reports.tci.link_details", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
     custom_view_id = (payload.get("custom_view_id") or "").strip()
     feature_key = (payload.get("feature_key") or "").strip()
@@ -258,8 +268,8 @@ def custom_view_link_details():
         return json_error("Custom view mapping not found for this user.", status_code=404)
 
     mapped_key = (
-        getattr(row, "epic_key", None) or getattr(row, "project_key", None) or ""
-    ).strip().upper()
+        (getattr(row, "epic_key", None) or getattr(row, "project_key", None) or "").strip().upper()
+    )
     if not mapped_key:
         return json_error(
             "No mapped key (epic_key/project_key) saved for this Custom View. Please map it in Settings.",

@@ -1,9 +1,13 @@
 # app/services/jira_projects_service.py
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
+from typing import Any
 
-from app.core.http_client import ExternalHttpClient, ExternalServiceError
+from app.core.http_client import (
+    ExternalHttpClient,
+    ExternalOperationBudget,
+    ExternalServiceError,
+)
 
 
 class JiraProjectsServiceError(Exception):
@@ -58,22 +62,23 @@ class JiraProjectsService:
         except ExternalServiceError as exc:
             if exc.status_code == 401:
                 raise JiraProjectsServiceError(
-                    "Unauthorized (401) while checking permissions. Check PAT.") from exc
+                    "Unauthorized (401) while checking permissions. Check PAT."
+                ) from exc
             if exc.status_code == 403:
                 raise JiraProjectsServiceError(
-                    "Forbidden (403) while checking permissions.") from exc
+                    "Forbidden (403) while checking permissions."
+                ) from exc
             if exc.status_code == 404:
                 raise JiraProjectsServiceError(
-                    "Project not found (404). Check project key.") from exc
+                    "Project not found (404). Check project key."
+                ) from exc
             if exc.message == "Invalid JSON response":
-                raise JiraProjectsServiceError(
-                    "Invalid JSON returned by mypermissions.") from exc
+                raise JiraProjectsServiceError("Invalid JSON returned by mypermissions.") from exc
             if exc.status_code is not None:
                 raise JiraProjectsServiceError(
                     f"Error checking permissions: {exc.status_code} {(exc.response_snippet or '')[:200]}"
                 ) from exc
-            raise JiraProjectsServiceError(
-                f"Network error calling mypermissions: {exc}") from exc
+            raise JiraProjectsServiceError(f"Network error calling mypermissions: {exc}") from exc
 
         perms = data.get("permissions") or {}
         admin = perms.get("ADMINISTER_PROJECTS") or {}
@@ -89,6 +94,7 @@ class JiraProjectsService:
         all_boards: list[dict] = []
         start_at = 0
         max_results = 50
+        budget = ExternalOperationBudget("jira", "list project boards")
 
         while True:
             params = {
@@ -97,6 +103,7 @@ class JiraProjectsService:
                 "maxResults": max_results,
             }
             try:
+                budget.next_page()
                 data = self._client.get_json(
                     "/rest/agile/1.0/board",
                     headers=self._headers(pat),
@@ -105,19 +112,17 @@ class JiraProjectsService:
             except ExternalServiceError as exc:
                 if exc.status_code == 401:
                     raise JiraProjectsServiceError(
-                        "Unauthorized (401) while listing boards. Check PAT.") from exc
+                        "Unauthorized (401) while listing boards. Check PAT."
+                    ) from exc
                 if exc.status_code == 403:
-                    raise JiraProjectsServiceError(
-                        "Forbidden (403) while listing boards.") from exc
+                    raise JiraProjectsServiceError("Forbidden (403) while listing boards.") from exc
                 if exc.message == "Invalid JSON response":
-                    raise JiraProjectsServiceError(
-                        "Invalid JSON returned by board API.") from exc
+                    raise JiraProjectsServiceError("Invalid JSON returned by board API.") from exc
                 if exc.status_code is not None:
                     raise JiraProjectsServiceError(
                         f"Error listing boards: {exc.status_code} {(exc.response_snippet or '')[:200]}"
                     ) from exc
-                raise JiraProjectsServiceError(
-                    f"Network error listing boards: {exc}") from exc
+                raise JiraProjectsServiceError(f"Network error listing boards: {exc}") from exc
 
             values = data.get("values") or []
             for b in values:
@@ -149,20 +154,22 @@ class JiraProjectsService:
     # NEW: Board -> Projects (to find Product Area project key)
     # ---------------------------------------------------------------------
 
-    def list_projects_for_board(self, board_id: int, pat: str) -> List[Dict[str, Any]]:
+    def list_projects_for_board(self, board_id: int, pat: str) -> list[dict[str, Any]]:
         """
         Calls:
           GET /rest/agile/1.0/board/{boardId}/project
         Returns: list of project objects in "values".
         This endpoint returns projects statically associated with the board. [1](https://docs.atlassian.com/software/jira/docs/api/REST/9.13.0/)[3](https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/)
         """
-        all_projects: List[Dict[str, Any]] = []
+        all_projects: list[dict[str, Any]] = []
         start_at = 0
         max_results = 50
+        budget = ExternalOperationBudget("jira", "list board projects")
 
         while True:
             params = {"startAt": start_at, "maxResults": max_results}
             try:
+                budget.next_page()
                 data = self._client.get_json(
                     f"/rest/agile/1.0/board/{int(board_id)}/project",
                     headers=self._headers(pat),
@@ -171,19 +178,23 @@ class JiraProjectsService:
             except ExternalServiceError as exc:
                 if exc.status_code == 401:
                     raise JiraProjectsServiceError(
-                        "Unauthorized (401) while listing board projects. Check PAT.") from exc
+                        "Unauthorized (401) while listing board projects. Check PAT."
+                    ) from exc
                 if exc.status_code == 403:
                     raise JiraProjectsServiceError(
-                        "Forbidden (403) while listing board projects.") from exc
+                        "Forbidden (403) while listing board projects."
+                    ) from exc
                 if exc.message == "Invalid JSON response":
                     raise JiraProjectsServiceError(
-                        "Invalid JSON returned by board projects API.") from exc
+                        "Invalid JSON returned by board projects API."
+                    ) from exc
                 if exc.status_code is not None:
                     raise JiraProjectsServiceError(
                         f"Error listing board projects: {exc.status_code} {(exc.response_snippet or '')[:200]}"
                     ) from exc
                 raise JiraProjectsServiceError(
-                    f"Network error listing board projects: {exc}") from exc
+                    f"Network error listing board projects: {exc}"
+                ) from exc
 
             values = data.get("values") or []
             all_projects.extend(values)
@@ -204,7 +215,7 @@ class JiraProjectsService:
         return all_projects
 
     @staticmethod
-    def extract_product_area_project_key(projects: List[Dict[str, Any]]) -> Optional[str]:
+    def extract_product_area_project_key(projects: list[dict[str, Any]]) -> str | None:
         """
         From list of board-associated projects, return the project key where:
            projectCategory.name == "Product Area"
@@ -218,7 +229,7 @@ class JiraProjectsService:
                 return key or None
         return None
 
-    def get_product_area_project_key_for_board(self, board_id: int, pat: str) -> Optional[str]:
+    def get_product_area_project_key_for_board(self, board_id: int, pat: str) -> str | None:
         """
         Convenience:
           list_projects_for_board(board_id) -> extract_product_area_project_key(...)

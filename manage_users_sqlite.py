@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from typing import Any, Dict, List, Tuple, Set, Optional
+from typing import Any
 
 try:
     # Optional: for password hashing if you have password_hash column
@@ -44,18 +44,18 @@ def table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return cur.fetchone() is not None
 
 
-def list_tables(conn: sqlite3.Connection) -> List[str]:
+def list_tables(conn: sqlite3.Connection) -> list[str]:
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
     )
     return [r["name"] for r in cur.fetchall()]
 
 
-def table_info(conn: sqlite3.Connection, table: str) -> List[sqlite3.Row]:
+def table_info(conn: sqlite3.Connection, table: str) -> list[sqlite3.Row]:
     return conn.execute(f"PRAGMA table_info({quote_ident(table)})").fetchall()
 
 
-def pk_column(conn: sqlite3.Connection, table: str) -> Optional[str]:
+def pk_column(conn: sqlite3.Connection, table: str) -> str | None:
     """
     Returns single-column PK name if present, else None.
     """
@@ -67,7 +67,7 @@ def pk_column(conn: sqlite3.Connection, table: str) -> Optional[str]:
     return None
 
 
-def foreign_keys(conn: sqlite3.Connection, table: str) -> List[sqlite3.Row]:
+def foreign_keys(conn: sqlite3.Connection, table: str) -> list[sqlite3.Row]:
     """
     PRAGMA foreign_key_list(table) includes:
       id, seq, table, from, to, on_update, on_delete, match
@@ -80,8 +80,8 @@ def quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def parse_kv_pairs(pairs: List[str]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
     for p in pairs:
         if "=" not in p:
             raise ValueError(f"Invalid pair '{p}'. Expected key=value.")
@@ -137,7 +137,9 @@ def list_users(conn: sqlite3.Connection, users_table: str, limit: int = 50) -> N
         print(" | ".join(str(r[c]) for c in show_cols))
 
 
-def create_user(conn: sqlite3.Connection, users_table: str, data: Dict[str, Any], set_password: Optional[str]) -> None:
+def create_user(
+    conn: sqlite3.Connection, users_table: str, data: dict[str, Any], set_password: str | None
+) -> None:
     if not table_exists(conn, users_table):
         raise RuntimeError(f"Users table '{users_table}' not found.")
 
@@ -147,18 +149,19 @@ def create_user(conn: sqlite3.Connection, users_table: str, data: Dict[str, Any]
     if set_password is not None:
         if "password_hash" not in cols:
             raise RuntimeError(
-                f"--set-password provided but '{users_table}.password_hash' column not found.")
+                f"--set-password provided but '{users_table}.password_hash' column not found."
+            )
         if generate_password_hash is None:
             raise RuntimeError(
-                "werkzeug is not available to hash passwords. Install it or provide password_hash=... manually.")
+                "werkzeug is not available to hash passwords. Install it or provide password_hash=... manually."
+            )
         data["password_hash"] = generate_password_hash(set_password)
 
     # Filter only valid columns
     filtered = {k: v for k, v in data.items() if k in cols}
     invalid = [k for k in data.keys() if k not in cols]
     if invalid:
-        raise RuntimeError(
-            f"Invalid column(s) for {users_table}: {', '.join(invalid)}")
+        raise RuntimeError(f"Invalid column(s) for {users_table}: {', '.join(invalid)}")
 
     if not filtered:
         raise RuntimeError("No valid user columns supplied.")
@@ -166,42 +169,49 @@ def create_user(conn: sqlite3.Connection, users_table: str, data: Dict[str, Any]
     keys = list(filtered.keys())
     values = [filtered[k] for k in keys]
 
-    sql = f"INSERT INTO {quote_ident(users_table)} ({', '.join(quote_ident(k) for k in keys)}) VALUES ({', '.join(['?']*len(keys))})"
+    sql = f"INSERT INTO {quote_ident(users_table)} ({', '.join(quote_ident(k) for k in keys)}) VALUES ({', '.join(['?'] * len(keys))})"
     cur = conn.execute(sql, values)
     conn.commit()
     print(f"✅ Created user row. New id = {cur.lastrowid}")
 
 
-def update_user(conn: sqlite3.Connection, users_table: str, user_id: int, data: Dict[str, Any], set_password: Optional[str]) -> None:
+def update_user(
+    conn: sqlite3.Connection,
+    users_table: str,
+    user_id: int,
+    data: dict[str, Any],
+    set_password: str | None,
+) -> None:
     if not table_exists(conn, users_table):
         raise RuntimeError(f"Users table '{users_table}' not found.")
 
     cols = [r["name"] for r in table_info(conn, users_table)]
     if "id" not in cols:
         raise RuntimeError(
-            f"'{users_table}' does not have an 'id' column. Provide a different key strategy.")
+            f"'{users_table}' does not have an 'id' column. Provide a different key strategy."
+        )
 
     if set_password is not None:
         if "password_hash" not in cols:
             raise RuntimeError(
-                f"--set-password provided but '{users_table}.password_hash' column not found.")
+                f"--set-password provided but '{users_table}.password_hash' column not found."
+            )
         if generate_password_hash is None:
             raise RuntimeError(
-                "werkzeug is not available to hash passwords. Install it or provide password_hash=... manually.")
+                "werkzeug is not available to hash passwords. Install it or provide password_hash=... manually."
+            )
         data["password_hash"] = generate_password_hash(set_password)
 
     filtered = {k: v for k, v in data.items() if k in cols and k != "id"}
     invalid = [k for k in data.keys() if k not in cols]
     if invalid:
-        raise RuntimeError(
-            f"Invalid column(s) for {users_table}: {', '.join(invalid)}")
+        raise RuntimeError(f"Invalid column(s) for {users_table}: {', '.join(invalid)}")
 
     if not filtered:
         raise RuntimeError("No valid update columns supplied (excluding id).")
 
     # Ensure user exists
-    cur = conn.execute(
-        f"SELECT 1 FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
+    cur = conn.execute(f"SELECT 1 FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
     if cur.fetchone() is None:
         raise RuntimeError(f"User id={user_id} not found in '{users_table}'.")
 
@@ -216,20 +226,19 @@ def update_user(conn: sqlite3.Connection, users_table: str, user_id: int, data: 
 # ----------------------------
 # Cascade delete logic (FK introspection)
 # ----------------------------
-def build_fk_index(conn: sqlite3.Connection) -> Dict[str, List[Tuple[str, str, str]]]:
+def build_fk_index(conn: sqlite3.Connection) -> dict[str, list[tuple[str, str, str]]]:
     """
     Returns a map:
       parent_table -> list of (child_table, child_fk_column, parent_pk_column)
     based on PRAGMA foreign_key_list for all tables.
     """
-    index: Dict[str, List[Tuple[str, str, str]]] = {}
+    index: dict[str, list[tuple[str, str, str]]] = {}
     for t in list_tables(conn):
         for fk in foreign_keys(conn, t):
             parent = fk["table"]
             child_fk_col = fk["from"]
             parent_pk_col = fk["to"]
-            index.setdefault(parent, []).append(
-                (t, child_fk_col, parent_pk_col))
+            index.setdefault(parent, []).append((t, child_fk_col, parent_pk_col))
     return index
 
 
@@ -237,7 +246,7 @@ def collect_delete_plan(
     conn: sqlite3.Connection,
     users_table: str,
     user_id: int,
-) -> List[Tuple[int, str, str, List[Any]]]:
+) -> list[tuple[int, str, str, list[Any]]]:
     """
     Collect a deletion plan from deepest to shallowest:
     Returns list of (depth, table, pk_col, ids_to_delete)
@@ -246,16 +255,16 @@ def collect_delete_plan(
     fk_index = build_fk_index(conn)
 
     # We'll track ids_to_delete per table by PK value if possible
-    to_delete: Dict[str, Set[Any]] = {}
-    depth_map: Dict[str, int] = {}
+    to_delete: dict[str, set[Any]] = {}
+    depth_map: dict[str, int] = {}
 
     # Seed with the user row
     to_delete[users_table] = {user_id}
     depth_map[users_table] = 0
 
     # BFS propagation
-    queue: List[str] = [users_table]
-    visited: Set[Tuple[str, str]] = set()  # (parent, child) edges processed
+    queue: list[str] = [users_table]
+    visited: set[tuple[str, str]] = set()  # (parent, child) edges processed
 
     while queue:
         parent = queue.pop(0)
@@ -278,7 +287,7 @@ def collect_delete_plan(
                 # Fetch parent_pk_col values for these parent rows
                 # Example: child references parent.some_other_key
                 cur = conn.execute(
-                    f"SELECT {quote_ident(parent_pk_col)} AS k FROM {quote_ident(parent)} WHERE id IN ({','.join(['?']*len(parent_ids))})",
+                    f"SELECT {quote_ident(parent_pk_col)} AS k FROM {quote_ident(parent)} WHERE id IN ({','.join(['?'] * len(parent_ids))})",
                     parent_ids,
                 )
                 ids_for_join = [row["k"] for row in cur.fetchall()]
@@ -291,26 +300,26 @@ def collect_delete_plan(
             if child_pk:
                 cur = conn.execute(
                     f"SELECT {quote_ident(child_pk)} AS pkv FROM {quote_ident(child_table)} "
-                    f"WHERE {quote_ident(child_fk_col)} IN ({','.join(['?']*len(ids_for_join))})",
+                    f"WHERE {quote_ident(child_fk_col)} IN ({','.join(['?'] * len(ids_for_join))})",
                     ids_for_join,
                 )
                 found = [row["pkv"] for row in cur.fetchall()]
                 if found:
                     to_delete.setdefault(child_table, set()).update(found)
-                    depth_map[child_table] = max(depth_map.get(
-                        child_table, 0), depth_map[parent] + 1)
+                    depth_map[child_table] = max(
+                        depth_map.get(child_table, 0), depth_map[parent] + 1
+                    )
                     queue.append(child_table)
             else:
                 # No PK; fallback: mark with a special sentinel list later using FK condition only
                 # We store the FK values directly for deletion condition
                 # WARNING: this can over-delete if FK values overlap; but for user_id style FKs it's ok
                 to_delete.setdefault(child_table, set()).update(ids_for_join)
-                depth_map[child_table] = max(depth_map.get(
-                    child_table, 0), depth_map[parent] + 1)
+                depth_map[child_table] = max(depth_map.get(child_table, 0), depth_map[parent] + 1)
                 queue.append(child_table)
 
     # Build plan excluding users_table, deepest first, then delete users last
-    plan: List[Tuple[int, str, str, List[Any]]] = []
+    plan: list[tuple[int, str, str, list[Any]]] = []
     for table, ids in to_delete.items():
         if table == users_table:
             continue
@@ -325,7 +334,9 @@ def collect_delete_plan(
     return plan
 
 
-def execute_delete_plan(conn: sqlite3.Connection, plan: List[Tuple[int, str, str, List[Any]]], dry_run: bool) -> None:
+def execute_delete_plan(
+    conn: sqlite3.Connection, plan: list[tuple[int, str, str, list[Any]]], dry_run: bool
+) -> None:
     print("\nDelete plan (deepest first):")
     for depth, table, pk, ids in plan:
         print(f"  depth={depth:02d}  table={table}  key={pk}  rows={len(ids)}")
@@ -336,7 +347,7 @@ def execute_delete_plan(conn: sqlite3.Connection, plan: List[Tuple[int, str, str
 
     try:
         conn.execute("BEGIN;")
-        for depth, table, pk, ids in plan:
+        for _depth, table, pk, ids in plan:
             if not ids:
                 continue
 
@@ -351,36 +362,35 @@ def execute_delete_plan(conn: sqlite3.Connection, plan: List[Tuple[int, str, str
                         f"Cannot safely delete from '{table}' (no PK and no user_id column). "
                         f"Please add PK or provide explicit cleanup for this table."
                     )
-                sql = f"DELETE FROM {quote_ident(table)} WHERE {quote_ident(fk_col)} IN ({','.join(['?']*len(ids))})"
+                sql = f"DELETE FROM {quote_ident(table)} WHERE {quote_ident(fk_col)} IN ({','.join(['?'] * len(ids))})"
                 conn.execute(sql, ids)
             else:
-                sql = f"DELETE FROM {quote_ident(table)} WHERE {quote_ident(pk)} IN ({','.join(['?']*len(ids))})"
+                sql = f"DELETE FROM {quote_ident(table)} WHERE {quote_ident(pk)} IN ({','.join(['?'] * len(ids))})"
                 conn.execute(sql, ids)
 
         conn.commit()
         print("\n✅ Delete completed successfully.")
-    except Exception as exc:
+    except Exception:
         conn.rollback()
         print("\n❌ Delete failed. Rolled back.")
         raise
 
 
-def delete_user(conn: sqlite3.Connection, users_table: str, user_id: int, cascade: bool, dry_run: bool) -> None:
+def delete_user(
+    conn: sqlite3.Connection, users_table: str, user_id: int, cascade: bool, dry_run: bool
+) -> None:
     if not table_exists(conn, users_table):
         raise RuntimeError(f"Users table '{users_table}' not found.")
 
-    cur = conn.execute(
-        f"SELECT 1 FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
+    cur = conn.execute(f"SELECT 1 FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
     if cur.fetchone() is None:
         raise RuntimeError(f"User id={user_id} not found in '{users_table}'.")
 
     if not cascade:
         if dry_run:
-            print(
-                f"🟡 DRY RUN: would delete user id={user_id} from {users_table}")
+            print(f"🟡 DRY RUN: would delete user id={user_id} from {users_table}")
             return
-        conn.execute(
-            f"DELETE FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
+        conn.execute(f"DELETE FROM {quote_ident(users_table)} WHERE id=?", (user_id,))
         conn.commit()
         print(f"✅ Deleted user id={user_id}")
         return
@@ -394,11 +404,10 @@ def delete_user(conn: sqlite3.Connection, users_table: str, user_id: int, cascad
 # ----------------------------
 def main():
     ap = argparse.ArgumentParser(
-        description="Manage users in a local SQLite DB with cascade delete.")
-    ap.add_argument("--db", required=True,
-                    help="Path to SQLite DB (e.g., instance/app.db)")
-    ap.add_argument("--users-table", default="users",
-                    help="Users table name (default: users)")
+        description="Manage users in a local SQLite DB with cascade delete."
+    )
+    ap.add_argument("--db", required=True, help="Path to SQLite DB (e.g., instance/app.db)")
+    ap.add_argument("--users-table", default="users", help="Users table name (default: users)")
 
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -406,24 +415,30 @@ def main():
     p_list.add_argument("--limit", type=int, default=50)
 
     p_create = sub.add_parser("create", help="Create a user")
-    p_create.add_argument("fields", nargs="*",
-                          help="key=value pairs (columns in users table)")
-    p_create.add_argument("--set-password", default=None,
-                          help="Hash and store password into password_hash (if present)")
+    p_create.add_argument("fields", nargs="*", help="key=value pairs (columns in users table)")
+    p_create.add_argument(
+        "--set-password",
+        default=None,
+        help="Hash and store password into password_hash (if present)",
+    )
 
     p_update = sub.add_parser("update", help="Update a user by id")
     p_update.add_argument("--id", type=int, required=True)
-    p_update.add_argument("fields", nargs="*",
-                          help="key=value pairs to update")
-    p_update.add_argument("--set-password", default=None,
-                          help="Hash and store password into password_hash (if present)")
+    p_update.add_argument("fields", nargs="*", help="key=value pairs to update")
+    p_update.add_argument(
+        "--set-password",
+        default=None,
+        help="Hash and store password into password_hash (if present)",
+    )
 
     p_delete = sub.add_parser("delete", help="Delete a user")
     p_delete.add_argument("--id", type=int, required=True)
-    p_delete.add_argument("--cascade", action="store_true",
-                          help="Cascade delete related rows across tables")
-    p_delete.add_argument("--dry-run", action="store_true",
-                          help="Show what would be deleted without deleting")
+    p_delete.add_argument(
+        "--cascade", action="store_true", help="Cascade delete related rows across tables"
+    )
+    p_delete.add_argument(
+        "--dry-run", action="store_true", help="Show what would be deleted without deleting"
+    )
 
     args = ap.parse_args()
 
@@ -433,20 +448,15 @@ def main():
             list_users(conn, args.users_table, limit=args.limit)
 
         elif args.cmd == "create":
-            data = {k: coerce_value(v)
-                    for k, v in parse_kv_pairs(args.fields).items()}
-            create_user(conn, args.users_table, data,
-                        set_password=args.set_password)
+            data = {k: coerce_value(v) for k, v in parse_kv_pairs(args.fields).items()}
+            create_user(conn, args.users_table, data, set_password=args.set_password)
 
         elif args.cmd == "update":
-            data = {k: coerce_value(v)
-                    for k, v in parse_kv_pairs(args.fields).items()}
-            update_user(conn, args.users_table, args.id,
-                        data, set_password=args.set_password)
+            data = {k: coerce_value(v) for k, v in parse_kv_pairs(args.fields).items()}
+            update_user(conn, args.users_table, args.id, data, set_password=args.set_password)
 
         elif args.cmd == "delete":
-            delete_user(conn, args.users_table, args.id,
-                        cascade=args.cascade, dry_run=args.dry_run)
+            delete_user(conn, args.users_table, args.id, cascade=args.cascade, dry_run=args.dry_run)
 
     finally:
         conn.close()

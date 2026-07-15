@@ -1,3 +1,5 @@
+from flask import Flask
+
 from app.services.sprint_viewer_service import SprintViewerService
 
 
@@ -114,7 +116,13 @@ def test_historical_field_reconstruction_uses_value_at_sprint_end():
                     "created": "2026-01-12T10:00:00.000+0000",
                     "items": [
                         {"field": "status", "fromString": "To Do", "toString": "In Progress"},
-                        {"field": "assignee", "fromString": "Old Assignee", "toString": "New Assignee", "from": "E1", "to": "E2"},
+                        {
+                            "field": "assignee",
+                            "fromString": "Old Assignee",
+                            "toString": "New Assignee",
+                            "from": "E1",
+                            "to": "E2",
+                        },
                         {"field": "Story Points", "fromString": "5", "toString": "8"},
                     ],
                 }
@@ -130,3 +138,35 @@ def test_historical_field_reconstruction_uses_value_at_sprint_end():
     assert extracted["assignee_eid"] == "E1"
     assert extracted["story_points"] == 5.0
     assert extracted["historical_fallback"] is False
+
+
+def test_metric_worker_clients_keep_resilience_configuration_without_app_context():
+    app = Flask(__name__)
+    app.config.update(
+        EXTERNAL_HTTP_CONNECT_TIMEOUT_SECONDS=9,
+        EXTERNAL_HTTP_RETRY_TOTAL=4,
+        EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS=0.75,
+        EXTERNAL_HTTP_RETRY_STATUS_CODES="429,502",
+        EXTERNAL_HTTP_MAX_CONCURRENT=7,
+        EXTERNAL_HTTP_BULKHEAD_WAIT_SECONDS=2.5,
+        EXTERNAL_HTTP_CIRCUIT_FAILURE_THRESHOLD=6,
+        EXTERNAL_HTTP_CIRCUIT_RESET_SECONDS=45,
+        EXTERNAL_OPERATION_MAX_PAGES=33,
+        EXTERNAL_OPERATION_DEADLINE_SECONDS=88,
+    )
+    with app.app_context():
+        service = SprintViewerService("https://jira.example", timeout_seconds=19)
+
+    worker_client = service._new_client()
+
+    assert worker_client.timeout_seconds == 19
+    assert worker_client.connect_timeout_seconds == 9
+    assert worker_client.retry_total == 4
+    assert worker_client.retry_backoff_factor == 0.75
+    assert worker_client.retry_status_forcelist == (429, 502)
+    assert worker_client.max_concurrent == 7
+    assert worker_client.bulkhead_wait_seconds == 2.5
+    assert worker_client.circuit_failure_threshold == 6
+    assert worker_client.circuit_reset_seconds == 45
+    assert service._operation_max_pages == 33
+    assert service._operation_deadline_seconds == 88

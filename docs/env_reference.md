@@ -1,46 +1,33 @@
 # Environment Reference
 
-Use `.env.example` as the source of truth for local configuration.
+`.env.example` is the complete, versioned template. `.env` is untracked and must be backed up through the installation's secret-management procedure, separately from SQLite backups.
 
-Required for normal application use:
-- `SECRET_KEY`
-- `DATABASE_URL`
-- `FERNET_KEY`
-- `JIRA_BASE_URL`
-- `JIRA_AUTOMATION_ACTOR_ACCOUNT_ID`
-- `JIRA_PAT_VALIDATION_CACHE_SECONDS`
-- `EXTERNAL_HTTP_TIMEOUT_SECONDS`
-- `EXTERNAL_HTTP_RETRY_TOTAL`
-- `EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS`
-- `EXTERNAL_HTTP_RETRY_STATUS_CODES`
-- `TABLEAU_BASE_URL`
+## Required production identity
 
-Security:
-- `SESSION_COOKIE_SECURE`
-- `REMEMBER_COOKIE_SECURE`
-- `SESSION_COOKIE_SAMESITE`
-- `SESSION_TIMEOUT_MINUTES`
-- `SESSION_WARNING_THRESHOLD_RATIO`
-- `LEGACY_ROUTE_DEPRECATION_HEADERS`
-- `LEGACY_ROUTE_SUNSET`
+- `APP_ENV=production` enables fail-closed validation.
+- `APPLICATION_VERSION` identifies the manually deployed release in logs and health responses.
+- `SECRET_KEY` must be a non-placeholder value of at least 32 bytes.
+- `FERNET_KEY` must be a valid Fernet key and must remain stable or stored PATs cannot be decrypted.
+- `DATABASE_URL` must be a file-backed `sqlite:///...` URL.
+- `JIRA_BASE_URL` and `TABLEAU_BASE_URL` must be absolute HTTP(S) origins without embedded credentials.
 
-Logging:
-- `LOG_LEVEL`
-- `LOG_DIR`
-- `LOG_FILE`
-- `LOG_BACKUPS`
-- `LOG_TO_CONSOLE`
-- `LOG_TIMEZONE`
-- `LOG_FORMAT`
-- `LOG_WERKZEUG_LEVEL`
-- `LOG_URLLIB3_LEVEL`
-- `LOG_SQLALCHEMY_LEVEL`
+## SQLite and capacity
 
-Diagnostics:
-- `TRACE_SPRINT_VIEWER`
-- `TRACE_JIRA_JQL`
-- `TRACE_SPRINT_VIEWER_API`
-- `TRACE_SPRINT_VIEWER_UI`
-- `SPRINT_METRICS_MAX_WORKERS`
+- `SQLITE_JOURNAL_MODE=DELETE` is the cross-platform safe default. WAL is accepted only on explicitly fixed SQLite versions.
+- `SQLITE_SYNCHRONOUS=FULL`, busy timeout, write retry, backup retention, and minimum free disk settings protect durability and predictable failure behavior.
+- `DATABASE_INSTANCE_LOCK=true` enforces the supported one-process topology.
+- Waitress thread and connection limits bound concurrent work. Sprint workers, outbound bulkheads, operation page/deadline budgets, circuit thresholds, and rate limits prevent one integration or user from exhausting the process.
 
-Keep tracing disabled in production unless you are actively investigating a problem.
+## Sessions
+
+`SESSION_TIMEOUT_MINUTES` is the renewable idle window. `SESSION_ABSOLUTE_MAX_MINUTES` cannot be extended. Cookies are HTTP-only and SameSite-protected. Set the two `*_COOKIE_SECURE` values to `true` only if the deployed endpoint actually uses HTTPS; secure cookies are not sent over plain HTTP.
+
+## Logs
+
+`LOG_FILE` contains structured application/request events. `AUDIT_LOG_FILE` separately records successful authentication, credential, configuration, automation, report export, backup, restore, and migration actions. Both rotate by day and retain the configured number of files.
+
+Client-supplied trace IDs are stored as `client_request_id`; the server always generates the authoritative `request_id`.
+
+## Diagnostics
+
+Keep all `TRACE_*` values false normally. Enable only the smallest relevant trace for a time-boxed investigation, then disable it. Trace logging never authorizes logging PATs, passwords, CSRF values, or full response bodies.

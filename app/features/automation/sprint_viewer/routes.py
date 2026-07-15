@@ -6,9 +6,12 @@ from flask import current_app, flash, redirect, render_template, request, url_fo
 from flask_login import current_user
 
 from ....core.api import json_error, json_ok, safe_error_message
+from ....core.database import execute_write
+from ....core.datetime_utils import parse_external_datetime, to_iso8601
 from ....core.dependencies import crypto_service, jira_service, sprint_viewer_service
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
+from ....core.rate_limit import enforce_limit
 from ....extensions import db
 from ....models import UserBoard, UserBoardSprint, UserProject
 from ....services.jira_service import JiraServiceError
@@ -26,9 +29,7 @@ def _trace_api(msg: str, *args) -> None:
 
 def _get_user_pat() -> str:
     if not current_user.jira_pat_enc:
-        raise ValueError(
-            "Enterprise Agile Jira PAT is not set. Please set it in Profile."
-        )
+        raise ValueError("Enterprise Agile Jira PAT is not set. Please set it in Profile.")
     return crypto_service().decrypt(current_user.jira_pat_enc)
 
 
@@ -76,12 +77,7 @@ def sprint_viewer_page():
 
     boards_by_project: dict[str, list[dict]] = {}
     for project in projects:
-        boards = (
-            UserBoard.query.join(UserProject, UserBoard.project_id == UserProject.id)
-            .filter(UserProject.user_id == current_user.id, UserProject.id == project.id)
-            .order_by(UserBoard.board_name.asc())
-            .all()
-        )
+        boards = sorted(project.boards, key=lambda board: board.board_name.lower())
         boards_by_project[project.project_key] = [
             {
                 "board_id": board.board_id,
@@ -102,6 +98,7 @@ def sprint_viewer_page():
 
 
 def sprint_viewer_get_sprints():
+    enforce_limit("automation.sprint_viewer.sprints", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
     project_key = str(payload.get("project_key") or "").strip().upper()
     board_id = payload.get("board_id")
@@ -152,13 +149,13 @@ def sprint_viewer_get_sprints():
 
     if refresh:
         try:
-            UserBoardSprint.query.filter_by(
-                user_id=current_user.id, board_id=board_id_int
-            ).delete()
-            db.session.commit()
+            execute_write(
+                lambda: UserBoardSprint.query.filter_by(
+                    user_id=current_user.id, board_id=board_id_int
+                ).delete(synchronize_session=False)
+            )
             existing = []
         except Exception as exc:
-            db.session.rollback()
             log_handled_exception(
                 "Failed to clear Sprint Viewer cache",
                 exc,
@@ -193,32 +190,34 @@ def sprint_viewer_get_sprints():
         return json_error(safe_error_message("load sprints"), status_code=400)
 
     try:
-        for sprint in sprints:
-            db.session.add(
-                UserBoardSprint(
-                    user_id=current_user.id,
-                    board_id=board_id_int,
-                    sprint_id=int(sprint.get("id")),
-                    sprint_name=(sprint.get("name") or "").strip(),
-                    sprint_state=(sprint.get("state") or "").strip(),
-                    sprint_url=(sprint.get("self") or "").strip(),
-                    start_date=sprint.get("startDate"),
-                    end_date=sprint.get("endDate"),
-                    complete_date=sprint.get("completeDate"),
-                    activated_date=sprint.get("activatedDate"),
-                    origin_board_id=sprint.get("originBoardId"),
-                    goal=sprint.get("goal"),
-                    synced=bool(sprint.get("synced"))
-                    if sprint.get("synced") is not None
-                    else None,
-                    auto_start_stop=bool(sprint.get("autoStartStop"))
-                    if sprint.get("autoStartStop") is not None
-                    else None,
+
+        def _save_sprints() -> None:
+            for sprint in sprints:
+                db.session.add(
+                    UserBoardSprint(
+                        user_id=current_user.id,
+                        board_id=board_id_int,
+                        sprint_id=int(sprint.get("id")),
+                        sprint_name=(sprint.get("name") or "").strip(),
+                        sprint_state=(sprint.get("state") or "").strip(),
+                        sprint_url=(sprint.get("self") or "").strip(),
+                        start_date=parse_external_datetime(sprint.get("startDate")),
+                        end_date=parse_external_datetime(sprint.get("endDate")),
+                        complete_date=parse_external_datetime(sprint.get("completeDate")),
+                        activated_date=parse_external_datetime(sprint.get("activatedDate")),
+                        origin_board_id=sprint.get("originBoardId"),
+                        goal=sprint.get("goal"),
+                        synced=bool(sprint.get("synced"))
+                        if sprint.get("synced") is not None
+                        else None,
+                        auto_start_stop=bool(sprint.get("autoStartStop"))
+                        if sprint.get("autoStartStop") is not None
+                        else None,
+                    )
                 )
-            )
-        db.session.commit()
+
+        execute_write(_save_sprints, retries=0)
     except Exception as exc:
-        db.session.rollback()
         log_handled_exception(
             "Failed to save Sprint Viewer sprints",
             exc,
@@ -246,13 +245,13 @@ def sprint_viewer_get_sprints():
     return json_ok(
         source="jira",
         sprints=[
-            {"id": s.sprint_id, "name": s.sprint_name, "state": s.sprint_state}
-            for s in saved
+            {"id": s.sprint_id, "name": s.sprint_name, "state": s.sprint_state} for s in saved
         ],
     )
 
 
 def sprint_viewer_fetch_issues():
+    enforce_limit("automation.sprint_viewer.issues", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
     board_id = payload.get("board_id")
     sprint_id = payload.get("sprint_id")
@@ -303,18 +302,16 @@ def sprint_viewer_fetch_issues():
             "id": sprint_id_int,
             "name": sprint_row.sprint_name if sprint_row else "",
             "state": sprint_row.sprint_state if sprint_row else "",
-            "start_date": sprint_row.start_date if sprint_row else None,
-            "end_date": sprint_row.end_date if sprint_row else None,
-            "activated_date": sprint_row.activated_date if sprint_row else None,
-            "complete_date": sprint_row.complete_date if sprint_row else None,
+            "start_date": to_iso8601(sprint_row.start_date) if sprint_row else None,
+            "end_date": to_iso8601(sprint_row.end_date) if sprint_row else None,
+            "activated_date": to_iso8601(sprint_row.activated_date) if sprint_row else None,
+            "complete_date": to_iso8601(sprint_row.complete_date) if sprint_row else None,
             "goal": sprint_row.goal if sprint_row else None,
         }
         sprint_complete_date = sprint_meta["complete_date"]
 
         extracted = [
-            _sprint_service().extract_issue_fields(
-                issue, sprint_complete_date=sprint_complete_date
-            )
+            _sprint_service().extract_issue_fields(issue, sprint_complete_date=sprint_complete_date)
             for issue in issues_raw
         ]
         _sprint_service().apply_relevant_comment_counts(
@@ -366,6 +363,7 @@ def sprint_viewer_fetch_issues():
 
 
 def sprint_viewer_fetch_metrics():
+    enforce_limit("automation.sprint_viewer.metrics", subject=str(current_user.id), expensive=True)
     payload = request.get_json(silent=True) or {}
     board_id = payload.get("board_id")
     sprint_id = payload.get("sprint_id")

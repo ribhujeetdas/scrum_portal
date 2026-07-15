@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Jira Data Center L2 Updater (PAT / Bearer)
@@ -30,15 +29,21 @@ Run:
 """
 
 from __future__ import annotations
+
 import argparse
-import os
-import sys
-import time
 import json
+import os
 import re
-from typing import Any, Dict, Optional, List
-import requests
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 # ---------- Configurable constants ----------
 TEAM_BY_PROJECT = {
@@ -75,57 +80,45 @@ class JiraClient:
         self.auth = auth
         self.dry_run = dry_run
 
-        self.session = requests.Session()
-        self.session.headers.update({
+        self.headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {auth.pat}",
-        })
+        }
         self.api_base = f"{auth.base_url.rstrip('/')}/rest/api/2"
-
-    # ---------------- Utilities ----------------
-    def _url(self, path: str) -> str:
-        return f"{self.api_base}{path}"
-
-    def _req(self, method: str, path: str, **kwargs) -> requests.Response:
-        url = self._url(path)
-        for attempt in range(5):
-            resp = self.session.request(method, url, timeout=30, **kwargs)
-            if resp.status_code in (429, 502, 503, 504):
-                wait = min(2 ** attempt, 16)
-                print(
-                    f"[JiraClient] {method} {url} -> {resp.status_code}; retry in {wait}s")
-                time.sleep(wait)
-                continue
-            return resp
-        return resp
+        self.http = ExternalHttpClient(
+            "jira_tci_updater",
+            self.api_base,
+            timeout_seconds=30,
+            retry_total=4,
+        )
 
     # ---------------- Core API -----------------
-    def get_issue(self, issue_id_or_key: str, fields: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get_issue(self, issue_id_or_key: str, fields: list[str] | None = None) -> dict[str, Any]:
         query = ""
         if fields:
             query = "?fields=" + ",".join(fields)
-        resp = self._req("GET", f"/issue/{issue_id_or_key}{query}")
-        if resp.status_code == 404:
-            raise RuntimeError(f"Issue not found: {issue_id_or_key}")
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            return self.http.get_json(f"/issue/{issue_id_or_key}{query}", headers=self.headers)
+        except ExternalServiceError as exc:
+            if exc.status_code == 404:
+                raise RuntimeError(f"Issue not found: {issue_id_or_key}") from exc
+            raise RuntimeError(f"Unable to load Jira issue {issue_id_or_key}") from exc
 
-    def update_issue_fields(self, issue_key: str, fields: Dict[str, Any]) -> None:
+    def update_issue_fields(self, issue_key: str, fields: dict[str, Any]) -> None:
         payload = {"fields": fields}
         if self.dry_run:
             print(
-                f"[DRY-RUN] PUT /issue/{issue_key} -> {json.dumps(payload, indent=2, ensure_ascii=False)}")
+                f"[DRY-RUN] PUT /issue/{issue_key} -> {json.dumps(payload, indent=2, ensure_ascii=False)}"
+            )
             return
-        resp = self._req("PUT", f"/issue/{issue_key}", json=payload)
-        if resp.status_code not in (200, 204):
-            raise RuntimeError(
-                f"Failed to update {issue_key}: {resp.status_code} {resp.text}")
+        try:
+            self.http.request("PUT", f"/issue/{issue_key}", headers=self.headers, json=payload)
+        except ExternalServiceError as exc:
+            raise RuntimeError(f"Failed to update {issue_key}") from exc
 
-    def get_link_types(self) -> List[Dict[str, Any]]:
-        resp = self._req("GET", "/issueLinkType")
-        resp.raise_for_status()
-        data = resp.json()
+    def get_link_types(self) -> list[dict[str, Any]]:
+        data = self.http.get_json("/issueLinkType", headers=self.headers)
         return data.get("issueLinkTypes", data.get("linkTypes", []))
 
     def create_issue_link(self, inward_key: str, outward_key: str, link_type_name: str) -> None:
@@ -136,18 +129,18 @@ class JiraClient:
         }
         if self.dry_run:
             print(
-                f"[DRY-RUN] POST /issueLink -> {json.dumps(payload, indent=2, ensure_ascii=False)}")
+                f"[DRY-RUN] POST /issueLink -> {json.dumps(payload, indent=2, ensure_ascii=False)}"
+            )
             return
-        resp = self._req("POST", "/issueLink", json=payload)
-        if resp.status_code in (200, 201, 204):
-            return
-        # 400 when the link already exists or validation issue
-        if resp.status_code == 400 and "already exists" in resp.text.lower():
-            print(
-                f"[INFO] Link already exists: {inward_key} <-> {outward_key} ({link_type_name})")
-            return
-        raise RuntimeError(
-            f"Failed to create issue link: {resp.status_code} {resp.text}")
+        try:
+            self.http.request("POST", "/issueLink", headers=self.headers, json=payload)
+        except ExternalServiceError as exc:
+            if exc.status_code == 400 and "already exists" in (exc.response_snippet or "").lower():
+                print(
+                    f"[INFO] Link already exists: {inward_key} <-> {outward_key} ({link_type_name})"
+                )
+                return
+            raise RuntimeError("Failed to create issue link") from exc
 
     def set_assignee(self, issue_key: str, username: str) -> None:
         """
@@ -157,15 +150,21 @@ class JiraClient:
         if self.dry_run:
             print(f"[DRY-RUN] PUT /issue/{issue_key}/assignee -> {payload}")
             return
-        resp = self._req("PUT", f"/issue/{issue_key}/assignee", json=payload)
-        if resp.status_code not in (204, 200):
-            raise RuntimeError(
-                f"Failed to set assignee on {issue_key} to '{username}': {resp.status_code} {resp.text}")
+        try:
+            self.http.request(
+                "PUT",
+                f"/issue/{issue_key}/assignee",
+                headers=self.headers,
+                json=payload,
+            )
+        except ExternalServiceError as exc:
+            raise RuntimeError(f"Failed to set assignee on {issue_key} to '{username}'") from exc
 
 
 # --------------- Business Logic ----------------
 
-def detect_rule_from_components(components: List[Dict[str, Any]]) -> str:
+
+def detect_rule_from_components(components: list[dict[str, Any]]) -> str:
     """
     Evaluate component names (case-insensitive) and return one of:
     'migration', 'ctb', 'rtb', 'none'
@@ -191,11 +190,10 @@ def ensure_summary_format(existing_summary: str, pbcfb_key: str, team_name: str)
 
     # Strip leading "TCI | " if already present
     if ex.lower().startswith("tci | "):
-        ex = ex[len("TCI | "):]
+        ex = ex[len("TCI | ") :]
 
     # Strip trailing " | PBCFB-<digits> | <TeamName>"
-    tail = re.compile(
-        r"\s*\|\s*PBCFB-\d+\s*\|\s*(CheckMates|Captors)\s*$", re.IGNORECASE)
+    tail = re.compile(r"\s*\|\s*PBCFB-\d+\s*\|\s*(CheckMates|Captors)\s*$", re.IGNORECASE)
     ex = tail.sub("", ex).strip()
 
     return " | ".join([SUMMARY_PREFIX, ex, pbcfb_key.upper(), team_name])
@@ -226,13 +224,15 @@ def choose_relates_link_name(client: JiraClient) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Update L2 Jira issue (Data Center) based on PBCFB components/title.")
-    parser.add_argument("--pbcfb", required=True,
-                        help="PBCFB issue id or key (e.g., PBCFB-123 or 100123)")
-    parser.add_argument("--l2", required=True,
-                        help="L2 issue key or id (e.g., PKLGX-456)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print actions without making changes.")
+        description="Update L2 Jira issue (Data Center) based on PBCFB components/title."
+    )
+    parser.add_argument(
+        "--pbcfb", required=True, help="PBCFB issue id or key (e.g., PBCFB-123 or 100123)"
+    )
+    parser.add_argument("--l2", required=True, help="L2 issue key or id (e.g., PKLGX-456)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print actions without making changes."
+    )
     args = parser.parse_args()
 
     base_url = os.getenv("JIRA_BASE_URL")
@@ -245,8 +245,7 @@ def main():
         print("ERROR: Set JIRA_PAT environment variable (Data Center PAT).")
         sys.exit(1)
 
-    client = JiraClient(
-        JiraAuth(base_url=base_url, pat=pat), dry_run=args.dry_run)
+    client = JiraClient(JiraAuth(base_url=base_url, pat=pat), dry_run=args.dry_run)
 
     # Resolve canonical keys
     pbcfb_key = resolve_issue_key(client, args.pbcfb)
@@ -257,18 +256,21 @@ def main():
     components = pbcfb_issue.get("fields", {}).get("components", []) or []
     rule = detect_rule_from_components(components)
     print(
-        f"[INFO] PBCFB {pbcfb_key} components: {[c.get('name') for c in components]} -> rule='{rule}'")
+        f"[INFO] PBCFB {pbcfb_key} components: {[c.get('name') for c in components]} -> rule='{rule}'"
+    )
 
     # Fetch L2 summary & project
     l2_issue = client.get_issue(l2_key, fields=["summary", "project"])
     existing_summary = l2_issue.get("fields", {}).get("summary", "")
-    project_key = (l2_issue.get("fields", {}).get("project", {})
-                   or {}).get("key") or parse_project_key(l2_key)
+    project_key = (l2_issue.get("fields", {}).get("project", {}) or {}).get(
+        "key"
+    ) or parse_project_key(l2_key)
     project_key = project_key.upper()
 
     if project_key not in TEAM_BY_PROJECT:
         raise RuntimeError(
-            f"Unsupported L2 project '{project_key}'. Expected one of: {list(TEAM_BY_PROJECT.keys())}")
+            f"Unsupported L2 project '{project_key}'. Expected one of: {list(TEAM_BY_PROJECT.keys())}"
+        )
 
     team_name = TEAM_BY_PROJECT[project_key]
     assignee_username = ASSIGNEE_BY_PROJECT[project_key]
@@ -277,7 +279,7 @@ def main():
     new_summary = ensure_summary_format(existing_summary, pbcfb_key, team_name)
 
     # Prepare field updates
-    fields_update: Dict[str, Any] = {"summary": new_summary}
+    fields_update: dict[str, Any] = {"summary": new_summary}
 
     if rule == "migration":
         fields_update[FIELD_OUTPUT_ID] = MIG_OUTPUT_VALUE
@@ -289,20 +291,18 @@ def main():
         # no changes to these two fields
         pass
     else:
-        print(
-            "[INFO] No recognized keywords in components -> leaving custom fields unchanged.")
+        print("[INFO] No recognized keywords in components -> leaving custom fields unchanged.")
 
     # Update fields
     client.update_issue_fields(l2_key, fields_update)
     print(
-        f"[INFO] Updated {l2_key} fields: {json.dumps(fields_update, indent=2, ensure_ascii=False)}")
+        f"[INFO] Updated {l2_key} fields: {json.dumps(fields_update, indent=2, ensure_ascii=False)}"
+    )
 
     # Link issues with "Relates"
     link_name = choose_relates_link_name(client)
-    client.create_issue_link(
-        inward_key=l2_key, outward_key=pbcfb_key, link_type_name=link_name)
-    print(
-        f"[INFO] Ensured link '{link_name}' between {l2_key} and {pbcfb_key}")
+    client.create_issue_link(inward_key=l2_key, outward_key=pbcfb_key, link_type_name=link_name)
+    print(f"[INFO] Ensured link '{link_name}' between {l2_key} and {pbcfb_key}")
 
     # Assign L2 by username
     client.set_assignee(l2_key, assignee_username)

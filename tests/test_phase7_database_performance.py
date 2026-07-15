@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from app import models
-
 from tests.test_phase6_feature_routes_and_failures import (
     add_project,
     create_phase6_app,
@@ -11,15 +10,12 @@ from tests.test_phase6_feature_routes_and_failures import (
     set_user_tokens,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "migrations" / "versions"
 
 
 def _migration_text() -> str:
-    return "\n".join(
-        path.read_text(encoding="utf-8") for path in sorted(MIGRATIONS.glob("*.py"))
-    )
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(MIGRATIONS.glob("*.py")))
 
 
 def _index_names(table) -> set[str]:
@@ -34,9 +30,7 @@ def test_model_timestamps_use_timezone_aware_callable():
 
 def test_common_lookup_indexes_are_declared_on_models():
     assert "ix_user_boards_board_id" in _index_names(models.UserBoard)
-    assert "ix_user_tableau_custom_views_user_updated" in _index_names(
-        models.UserTableauCustomView
-    )
+    assert "ix_user_tableau_custom_views_user_updated" in _index_names(models.UserTableauCustomView)
     assert "ix_user_projects_project_id" in _index_names(models.UserProject)
 
 

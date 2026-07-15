@@ -11,7 +11,6 @@ from app.services.jira_projects_service import JiraProjectsServiceError
 from app.services.sprint_viewer_service import SprintViewerServiceError
 from app.services.tableau_service import TableauServiceError
 
-
 FERNET_KEY = Fernet.generate_key().decode("ascii")
 
 
@@ -156,9 +155,10 @@ def test_canonical_api_validation_errors_include_request_id(tmp_path):
     data = response.get_json()
 
     assert response.status_code == 400
-    assert response.headers["X-Request-ID"] == "phase6-api-123"
+    assert response.headers["X-Request-ID"] != "phase6-api-123"
+    assert response.headers["X-Client-Request-ID"] == "phase6-api-123"
     assert data["ok"] is False
-    assert data["request_id"] == "phase6-api-123"
+    assert data["request_id"] == response.headers["X-Request-ID"]
     assert data["error"]["message"] == "Board ID and Rule ID must be numeric."
 
 
@@ -213,9 +213,7 @@ def test_projects_route_handles_mocked_jira_project_failure(tmp_path, monkeypatc
     assert "portal-toast" in html
 
 
-def test_tableau_custom_view_route_handles_mocked_tableau_failure(
-    tmp_path, monkeypatch
-):
+def test_tableau_custom_view_route_handles_mocked_tableau_failure(tmp_path, monkeypatch):
     app = create_phase6_app(tmp_path)
     with app.app_context():
         set_user_tokens(tableau_pat=True)
@@ -284,9 +282,7 @@ def test_tci_preview_route_handles_mocked_tableau_csv_failure(tmp_path, monkeypa
     assert "portal-toast" in html
 
 
-def test_canonical_sprint_sprints_api_handles_mocked_jira_failure(
-    tmp_path, monkeypatch
-):
+def test_canonical_sprint_sprints_api_handles_mocked_jira_failure(tmp_path, monkeypatch):
     app = create_phase6_app(tmp_path)
     with app.app_context():
         set_user_tokens()

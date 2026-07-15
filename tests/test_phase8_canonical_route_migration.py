@@ -10,7 +10,6 @@ from tests.test_phase6_feature_routes_and_failures import (
     set_user_tokens,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

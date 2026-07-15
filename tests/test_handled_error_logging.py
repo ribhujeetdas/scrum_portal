@@ -9,8 +9,7 @@ from app import create_app
 from app.config import Config
 from app.core.error_logging import log_handled_exception
 from app.extensions import db
-from app.models import User, UserBoard, UserProject
-from app.models import UserTableauCustomView
+from app.models import User, UserBoard, UserProject, UserTableauCustomView
 from app.services.jira_issue_links_service import JiraIssueLinksServiceError
 from app.services.sprint_viewer_service import SprintViewerServiceError
 
@@ -41,9 +40,7 @@ def _flush_loggers():
 def _read_json_lines(path):
     _flush_loggers()
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -98,16 +95,15 @@ def test_log_handled_exception_writes_stacktrace_and_sanitized_context(tmp_path)
             )
             return "handled", 400
 
-    response = app.test_client().get(
-        "/handled-error", headers={"X-Request-ID": "handled-123"}
-    )
+    response = app.test_client().get("/handled-error", headers={"X-Request-ID": "handled-123"})
 
     assert response.status_code == 400
 
     records = _read_json_lines(tmp_path / "test-app.log")
     record = next(r for r in records if r.get("event") == "test.handled.failure")
 
-    assert record["request_id"] == "handled-123"
+    assert record["request_id"] == response.headers["X-Request-ID"]
+    assert record["client_request_id"] == "handled-123"
     assert record["feature"] == "test_feature"
     assert record["operation"] == "exercise_logger"
     assert record["error_type"] == "RuntimeError"
@@ -149,11 +145,10 @@ def test_sprint_viewer_service_error_is_logged_with_stacktrace(tmp_path, monkeyp
     assert "request ID" in data["error"]["message"]
 
     records = _read_json_lines(tmp_path / "test-app.log")
-    record = next(
-        r for r in records if r.get("event") == "automation.sprint_viewer.issues_failed"
-    )
+    record = next(r for r in records if r.get("event") == "automation.sprint_viewer.issues_failed")
 
-    assert record["request_id"] == "sprint-err-123"
+    assert record["request_id"] == response.headers["X-Request-ID"]
+    assert record["client_request_id"] == "sprint-err-123"
     assert record["feature"] == "sprint_viewer"
     assert record["operation"] == "fetch_issues"
     assert record["error_type"] == "SprintViewerServiceError"
@@ -178,9 +173,7 @@ def _add_user_tableau_custom_view():
     db.session.commit()
 
 
-def test_tci_link_details_service_error_is_logged_with_stacktrace(
-    tmp_path, monkeypatch
-):
+def test_tci_link_details_service_error_is_logged_with_stacktrace(tmp_path, monkeypatch):
     app = _create_test_app(tmp_path)
     with app.app_context():
         db.create_all()
@@ -190,9 +183,7 @@ def test_tci_link_details_service_error_is_logged_with_stacktrace(
     import app.features.reports.tci.routes as tci_routes
 
     monkeypatch.setattr(tci_routes, "_get_user_jira_pat", lambda: "pat")
-    monkeypatch.setattr(
-        tci_routes, "jira_issue_links_service", lambda: FailingIssueLinksService()
-    )
+    monkeypatch.setattr(tci_routes, "jira_issue_links_service", lambda: FailingIssueLinksService())
 
     client = app.test_client()
     _login(client)
@@ -210,11 +201,10 @@ def test_tci_link_details_service_error_is_logged_with_stacktrace(
     assert response.status_code == 400
 
     records = _read_json_lines(tmp_path / "test-app.log")
-    record = next(
-        r for r in records if r.get("event") == "reports.tci.link_details_failed"
-    )
+    record = next(r for r in records if r.get("event") == "reports.tci.link_details_failed")
 
-    assert record["request_id"] == "tci-link-123"
+    assert record["request_id"] == response.headers["X-Request-ID"]
+    assert record["client_request_id"] == "tci-link-123"
     assert record["feature"] == "tci_reports"
     assert record["operation"] == "link_details"
     assert record["error_type"] == "JiraIssueLinksServiceError"

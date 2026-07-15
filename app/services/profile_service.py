@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from ..core.database import execute_write
 from ..extensions import db
-from ..models import UserProject, UserBoard, UserBoardSprint
+from ..models import UserBoard, UserBoardSprint, UserProject
 from ..utils.log import log
 
 
@@ -47,42 +48,40 @@ class ProfileService:
         if not project_key:
             raise ProfileServiceError("Project key is required.")
 
-        proj = (
-            UserProject.query
-            .filter_by(user_id=req.user_id, project_key=project_key)
-            .first()
-        )
-        if not proj:
-            raise ProfileServiceError("Project not found for your account.")
-
-        board_ids = [b.board_id for b in (proj.boards or [])]
-        boards_removed = len(board_ids)
-
         try:
-            if board_ids:
-                UserBoardSprint.query.filter(
-                    UserBoardSprint.user_id == req.user_id,
-                    UserBoardSprint.board_id.in_(board_ids),
-                ).delete(synchronize_session=False)
 
-            # cascades to boards due to relationship config
-            db.session.delete(proj)
-            db.session.commit()
+            def _delete() -> int:
+                project = UserProject.query.filter_by(
+                    user_id=req.user_id, project_key=project_key
+                ).first()
+                if not project:
+                    raise ProfileServiceError("Project not found for your account.")
+
+                board_ids = [board.board_id for board in (project.boards or [])]
+                if board_ids:
+                    UserBoardSprint.query.filter(
+                        UserBoardSprint.user_id == req.user_id,
+                        UserBoardSprint.board_id.in_(board_ids),
+                    ).delete(synchronize_session=False)
+                # Relationship cascades remove the project's boards.
+                db.session.delete(project)
+                return len(board_ids)
+
+            boards_removed = execute_write(_delete, retries=0)
 
             log.info(
                 "Project deleted user_id=%s project=%s boards_removed=%s",
-                req.user_id, project_key, boards_removed
+                req.user_id,
+                project_key,
+                boards_removed,
             )
             return boards_removed
 
         except SQLAlchemyError as exc:
-            db.session.rollback()
             log.exception(
-                "Delete project failed user_id=%s project=%s err=%s",
-                req.user_id, project_key, exc
+                "Delete project failed user_id=%s project=%s err=%s", req.user_id, project_key, exc
             )
-            raise ProfileServiceError(
-                "Failed to delete project due to a database error.") from exc
+            raise ProfileServiceError("Failed to delete project due to a database error.") from exc
 
     def delete_board(self, req: DeleteBoardRequest) -> bool:
         """
@@ -98,50 +97,52 @@ class ProfileService:
         if req.board_id <= 0:
             raise ProfileServiceError("Board ID must be a positive integer.")
 
-        proj = (
-            UserProject.query
-            .filter_by(user_id=req.user_id, project_key=project_key)
-            .first()
-        )
-        if not proj:
-            raise ProfileServiceError("Project not found for your account.")
-
-        board = (
-            UserBoard.query
-            .filter_by(project_id=proj.id, board_id=req.board_id)
-            .first()
-        )
-        if not board:
-            raise ProfileServiceError("Board not found for this project.")
-
         try:
-            remaining_boards = [
-                b for b in (proj.boards or []) if int(b.board_id) != int(req.board_id)
-            ]
 
-            UserBoardSprint.query.filter_by(
-                user_id=req.user_id, board_id=req.board_id
-            ).delete(synchronize_session=False)
+            def _delete() -> bool:
+                project = UserProject.query.filter_by(
+                    user_id=req.user_id, project_key=project_key
+                ).first()
+                if not project:
+                    raise ProfileServiceError("Project not found for your account.")
 
-            if remaining_boards:
-                db.session.delete(board)
-                project_deleted = False
-            else:
-                db.session.delete(proj)
-                project_deleted = True
-            db.session.commit()
+                board = UserBoard.query.filter_by(
+                    project_id=project.id, board_id=req.board_id
+                ).first()
+                if not board:
+                    raise ProfileServiceError("Board not found for this project.")
+
+                remaining_boards = [
+                    item
+                    for item in (project.boards or [])
+                    if int(item.board_id) != int(req.board_id)
+                ]
+                UserBoardSprint.query.filter_by(user_id=req.user_id, board_id=req.board_id).delete(
+                    synchronize_session=False
+                )
+                if remaining_boards:
+                    db.session.delete(board)
+                    return False
+                db.session.delete(project)
+                return True
+
+            project_deleted = execute_write(_delete, retries=0)
 
             log.info(
                 "Board deleted user_id=%s project=%s board_id=%s project_deleted=%s",
-                req.user_id, project_key, req.board_id, project_deleted
+                req.user_id,
+                project_key,
+                req.board_id,
+                project_deleted,
             )
             return project_deleted
 
         except SQLAlchemyError as exc:
-            db.session.rollback()
             log.exception(
                 "Delete board failed user_id=%s project=%s board_id=%s err=%s",
-                req.user_id, project_key, req.board_id, exc
+                req.user_id,
+                project_key,
+                req.board_id,
+                exc,
             )
-            raise ProfileServiceError(
-                "Failed to delete board due to a database error.") from exc
+            raise ProfileServiceError("Failed to delete board due to a database error.") from exc

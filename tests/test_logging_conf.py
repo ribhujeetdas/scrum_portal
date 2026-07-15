@@ -34,9 +34,7 @@ def _flush_loggers():
 def _read_json_lines(path):
     _flush_loggers()
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -49,29 +47,26 @@ def test_request_id_is_returned_on_response(tmp_path):
     assert response.headers["X-Request-ID"]
 
 
-def test_incoming_request_id_is_reused(tmp_path):
+def test_incoming_request_id_is_preserved_separately_from_server_id(tmp_path):
     app = _create_test_app(tmp_path)
 
-    response = app.test_client().get(
-        "/login", headers={"X-Request-ID": "ui-flow-123"}
-    )
+    response = app.test_client().get("/login", headers={"X-Request-ID": "ui-flow-123"})
 
-    assert response.headers["X-Request-ID"] == "ui-flow-123"
+    assert response.headers["X-Request-ID"] != "ui-flow-123"
+    assert response.headers["X-Client-Request-ID"] == "ui-flow-123"
 
 
 def test_request_completion_log_contains_correlation_fields(tmp_path):
     app = _create_test_app(tmp_path)
 
-    app.test_client().get("/login", headers={"X-Request-ID": "audit-456"})
+    response = app.test_client().get("/login", headers={"X-Request-ID": "audit-456"})
 
     records = _read_json_lines(tmp_path / "test-app.log")
-    completion = next(
-        record for record in records if record.get("event") == "request.complete"
-    )
-    assert completion["request_id"] == "audit-456"
+    completion = next(record for record in records if record.get("event") == "request.complete")
+    assert completion["request_id"] == response.headers["X-Request-ID"]
+    assert completion["client_request_id"] == "audit-456"
     assert completion["method"] == "GET"
     assert completion["path"] == "/login"
     assert completion["endpoint"] == "auth.login"
     assert completion["status_code"] == 200
     assert isinstance(completion["duration_ms"], int)
-

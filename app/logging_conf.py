@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import logging
@@ -7,11 +8,12 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from flask import Flask, g, has_request_context, request
+
+from .core.redaction import redact
 
 try:
     from concurrent_log_handler import ConcurrentTimedRotatingFileHandler
@@ -24,25 +26,12 @@ except Exception:  # pragma: no cover
     ZoneInfo = None  # type: ignore
 
 
-_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "request_id", default="-"
+_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+_client_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "client_request_id", default="-"
 )
 
 _SAFE_REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]")
-_SECRET_PATTERNS = (
-    (re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE), r"\1<redacted>"),
-    (re.compile(r"(\bpat[_ -]?(?:secret|token)?\b\s*[=:]\s*)\S+", re.IGNORECASE), r"\1<redacted>"),
-    (re.compile(r"(\bpassword\b\s*[=:]\s*)\S+", re.IGNORECASE), r"\1<redacted>"),
-    (re.compile(r"(\bcsrf[_ -]?token\b\s*[=:]\s*)\S+", re.IGNORECASE), r"\1<redacted>"),
-)
-_SECRET_KEY_FRAGMENTS = (
-    "authorization",
-    "csrf",
-    "password",
-    "pat",
-    "secret",
-    "token",
-)
 
 
 def set_request_id(value: str) -> None:
@@ -53,26 +42,11 @@ def get_request_id() -> str:
     return _request_id_ctx.get()
 
 
-def _redact(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, Mapping):
-        redacted = {}
-        for key, item in value.items():
-            key_text = str(key).lower()
-            if any(fragment in key_text for fragment in _SECRET_KEY_FRAGMENTS):
-                redacted[key] = "<redacted>"
-            else:
-                redacted[key] = _redact(item)
-        return redacted
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_redact(item) for item in value]
-    if not isinstance(value, str):
-        return value
-    out = value
-    for pattern, replacement in _SECRET_PATTERNS:
-        out = pattern.sub(replacement, out)
-    return out
+def audit_event(event: str, message: str, **context: Any) -> None:
+    logging.getLogger("audit").info(
+        message,
+        extra={"event": event, **context},
+    )
 
 
 def _clean_request_id(value: str | None) -> str:
@@ -102,21 +76,26 @@ class RequestContextFilter(logging.Filter):
             record.user_id = None
         if not hasattr(record, "eid"):
             record.eid = None
+        if not hasattr(record, "client_request_id"):
+            record.client_request_id = _client_request_id_ctx.get()
 
         if has_request_context():
-            record.request_id = getattr(g, "request_id", None) or record.request_id
+            record.request_id = (  # type: ignore[attr-defined]
+                getattr(g, "request_id", None) or getattr(record, "request_id", "-")
+            )
+            record.client_request_id = (  # type: ignore[attr-defined]
+                getattr(g, "client_request_id", None) or getattr(record, "client_request_id", "-")
+            )
             record.method = request.method
             record.path = request.path
             record.endpoint = request.endpoint
 
-            try:
+            with contextlib.suppress(Exception):
                 from flask_login import current_user
 
                 if current_user.is_authenticated:
                     record.user_id = getattr(current_user, "id", None)
                     record.eid = getattr(current_user, "eid", None)
-            except Exception:
-                pass
         return True
 
 
@@ -125,7 +104,7 @@ class JsonFormatter(logging.Formatter):
         super().__init__()
         self._tz_name = tz_name
 
-    def formatTime(self, record: logging.LogRecord, datefmt: Optional[str] = None) -> str:
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         tz = None
         if ZoneInfo is not None:
             try:
@@ -145,9 +124,10 @@ class JsonFormatter(logging.Formatter):
             "ts": self.formatTime(record),
             "level": record.levelname,
             "logger": record.name,
-            "message": _redact(record.getMessage()),
+            "message": redact(record.getMessage()),
             "event": getattr(record, "event", None),
             "request_id": getattr(record, "request_id", "-"),
+            "client_request_id": getattr(record, "client_request_id", None),
             "method": getattr(record, "method", None),
             "path": getattr(record, "path", None),
             "endpoint": getattr(record, "endpoint", None),
@@ -175,12 +155,22 @@ class JsonFormatter(logging.Formatter):
             "feature",
             "operation",
             "remote_addr",
+            "result",
+            "resource_id",
+            "resource_type",
+            "identifier_hash",
+            "application_version",
+            "database_path",
+            "category",
+            "retryable",
+            "retry_after",
+            "scope",
         ):
             if hasattr(record, key):
-                payload[key] = _redact(getattr(record, key))
+                payload[key] = redact(getattr(record, key))
 
         if exc_text:
-            payload["exception"] = _redact(exc_text)
+            payload["exception"] = redact(exc_text)
 
         return json.dumps(
             {k: v for k, v in payload.items() if v is not None},
@@ -191,14 +181,11 @@ class JsonFormatter(logging.Formatter):
 
 class TextFormatter(logging.Formatter):
     def __init__(self, tz_name: str):
-        fmt = (
-            "%(asctime)s %(levelname)s %(name)s "
-            "[req=%(request_id)s user=%(user_id)s] %(message)s"
-        )
+        fmt = "%(asctime)s %(levelname)s %(name)s [req=%(request_id)s user=%(user_id)s] %(message)s"
         super().__init__(fmt=fmt, datefmt="%Y-%m-%d %H:%M:%S")
         self._tz_name = tz_name
 
-    def formatTime(self, record: logging.LogRecord, datefmt: Optional[str] = None) -> str:
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         tz = None
         if ZoneInfo is not None:
             try:
@@ -210,7 +197,7 @@ class TextFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         rendered = super().format(record)
-        return str(_redact(rendered))
+        return str(redact(rendered))
 
 
 def _config_bool(app: Flask, primary: str, legacy: str, default: bool) -> bool:
@@ -257,24 +244,29 @@ def _remove_owned_handlers(logger: logging.Logger) -> None:
     for handler in list(logger.handlers):
         if getattr(handler, "_scrum_portal_handler", False):
             logger.removeHandler(handler)
-            try:
+            with contextlib.suppress(Exception):
                 handler.close()
-            except Exception:
-                pass
 
 
 def init_request_correlation(app: Flask) -> None:
     @app.before_request
     def _before_request_set_request_id():
-        rid = _clean_request_id(request.headers.get("X-Request-ID"))
+        incoming_request_id = request.headers.get("X-Request-ID")
+        client_rid = _clean_request_id(incoming_request_id) if incoming_request_id else None
+        rid = uuid.uuid4().hex
         g.request_id = rid
+        g.client_request_id = client_rid
         g.request_started_at = time.perf_counter()
         set_request_id(rid)
+        _client_request_id_ctx.set(client_rid or "-")
 
     @app.after_request
     def _after_request_log_response(response):
         rid = getattr(g, "request_id", None) or get_request_id()
         response.headers["X-Request-ID"] = rid
+        client_rid = getattr(g, "client_request_id", None)
+        if client_rid:
+            response.headers["X-Client-Request-ID"] = client_rid
 
         started = getattr(g, "request_started_at", None)
         duration_ms = None
@@ -288,7 +280,8 @@ def init_request_correlation(app: Flask) -> None:
                 "request_id": rid,
                 "status_code": response.status_code,
                 "duration_ms": duration_ms,
-                "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr),
+                "remote_addr": request.remote_addr,
+                "application_version": app.config.get("APPLICATION_VERSION", "dev"),
             },
         )
         return response
@@ -319,6 +312,8 @@ def configure_logging(app: Flask) -> None:
     enable_console = _config_bool(app, "LOG_TO_CONSOLE", "LOG_CONSOLE", False)
     backups = int(_config_value(app, "LOG_BACKUPS", "LOG_BACKUP_DAYS", 14))
     log_file = str(_config_value(app, "LOG_FILE", "LOG_FILE_NAME", "app.log"))
+    audit_file = str(app.config.get("AUDIT_LOG_FILE", "audit.log"))
+    audit_backups = int(app.config.get("AUDIT_LOG_BACKUPS", 30))
 
     logs_dir = _absolute_log_dir(app, str(app.config.get("LOG_DIR", "logs")))
     os.makedirs(logs_dir, exist_ok=True)
@@ -341,10 +336,8 @@ def configure_logging(app: Flask) -> None:
     app_logger = logging.getLogger("app")
     for handler in list(app_logger.handlers):
         app_logger.removeHandler(handler)
-        try:
+        with contextlib.suppress(Exception):
             handler.close()
-        except Exception:
-            pass
     app_logger.setLevel(level_num)
     app_logger.propagate = False
 
@@ -354,6 +347,17 @@ def configure_logging(app: Flask) -> None:
     file_handler.setFormatter(formatter)
     file_handler.addFilter(context_filter)
     app_logger.addHandler(file_handler)
+
+    audit_logger = logging.getLogger("audit")
+    _remove_owned_handlers(audit_logger)
+    audit_logger.setLevel(level_num)
+    audit_logger.propagate = False
+    audit_handler = _build_file_handler(os.path.join(logs_dir, audit_file), audit_backups)
+    audit_handler._scrum_portal_handler = True  # type: ignore[attr-defined]
+    audit_handler.setLevel(level_num)
+    audit_handler.setFormatter(formatter)
+    audit_handler.addFilter(context_filter)
+    audit_logger.addHandler(audit_handler)
 
     if enable_console:
         console_handler = logging.StreamHandler()
