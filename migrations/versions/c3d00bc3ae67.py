@@ -1,4 +1,4 @@
-"""add epic_key to user_projects
+"""Add epic_key to user_projects.
 
 Revision ID: c3d00bc3ae67
 Revises:

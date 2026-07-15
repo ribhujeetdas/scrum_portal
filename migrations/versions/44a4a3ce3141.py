@@ -1,4 +1,4 @@
-"""add epic_key to user_tableau_custom_views
+"""Add epic_key to user_tableau_custom_views.
 
 Revision ID: 44a4a3ce3141
 Revises: f8954404f3b1

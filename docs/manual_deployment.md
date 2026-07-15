@@ -5,10 +5,20 @@ This project is deployed manually and has no GitHub Actions or hosted pipeline. 
 ## 1. Prepare the release
 
 1. Confirm the intended branch and cleanly review `git status` and `git diff`.
-2. Create or activate a Python 3.12 virtual environment.
-3. Install runtime dependencies with `python -m pip install --require-hashes -r requirements.txt`. Use `requirements-dev.txt` on the verification machine.
-4. Preserve the existing `.env`; compare it with `.env.example` and add new settings explicitly.
-5. Run `python scripts/verify.py`. Keep `artifacts/verification/latest.json` with the release record, but do not commit it.
+2. Build a source-only release archive from the reviewed commit:
+
+   ```text
+   git archive --format=zip --output scrum-portal-release.zip HEAD
+   ```
+
+   Extract it into a short installation path such as `C:\scrum_portal` or
+   `/opt/scrum_portal`. Do not copy `.git`, `.venv`, `.worktrees`, Python
+   caches, logs, backups, or local database files. Recreate the virtual
+   environment on the target operating system.
+3. Create or activate a Python 3.12 virtual environment.
+4. Install runtime dependencies with `python -m pip install --require-hashes -r requirements.txt`. Use `requirements-dev.txt` on the verification machine.
+5. Preserve the existing `.env`; compare it with `.env.example` and add new settings explicitly.
+6. Run `python scripts/verify.py`. Keep `artifacts/verification/latest.json` with the release record, but do not commit it.
 
 ## 2. Stop and protect data
 

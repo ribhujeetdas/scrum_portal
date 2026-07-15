@@ -1,4 +1,4 @@
-"""normalize sprint timestamp columns
+"""Normalize sprint timestamp columns.
 
 Revision ID: b6f3a9c2d410
 Revises: 9c2a1f7b6d10

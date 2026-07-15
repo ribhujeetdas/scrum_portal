@@ -1,4 +1,4 @@
-"""add project_key to user_tableau_custom_views
+"""Add project_key to user_tableau_custom_views.
 
 Revision ID: f8954404f3b1
 Revises: c3d00bc3ae67
