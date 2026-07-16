@@ -159,6 +159,61 @@ class UserBoardSprint(db.Model):
     )
 
 
+class UserSprintMetricRun(db.Model):
+    __tablename__ = "user_sprint_metric_runs"
+    __table_args__ = (
+        db.CheckConstraint(
+            "status IN ('queued','running','partial','succeeded','failed','interrupted')",
+            name="ck_metric_runs_status",
+        ),
+        db.CheckConstraint("generation >= 1", name="ck_metric_runs_generation"),
+        db.CheckConstraint("attempt_count >= 0", name="ck_metric_runs_attempts"),
+        db.CheckConstraint("total_sp >= 0", name="ck_metric_runs_total_sp"),
+        db.CheckConstraint("total_count >= 0", name="ck_metric_runs_total_count"),
+        db.Index(
+            "ix_metric_runs_user_sprint",
+            "user_id",
+            "board_id",
+            "sprint_id",
+            "metrics_version",
+            "created_at",
+        ),
+        db.Index("ix_metric_runs_status_updated", "status", "updated_at"),
+        db.Index(
+            "ix_metric_runs_cache",
+            "user_id",
+            "board_id",
+            "sprint_id",
+            "cache_expires_at",
+        ),
+    )
+
+    # Random, non-sequential identifier safe to expose to the owning user.
+    id = db.Column(db.String(32), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    board_id = db.Column(db.Integer, nullable=False)
+    sprint_id = db.Column(db.Integer, nullable=False)
+    metrics_version = db.Column(db.String(32), nullable=False)
+    generation = db.Column(db.Integer, nullable=False, default=1)
+    status = db.Column(db.String(16), nullable=False, default="queued")
+
+    total_sp = db.Column(db.Float, nullable=False, default=0.0)
+    total_count = db.Column(db.Integer, nullable=False, default=0)
+    progress_json = db.Column(db.JSON, nullable=False, default=dict)
+    result_json = db.Column(db.JSON, nullable=False, default=dict)
+    error_code = db.Column(db.String(64), nullable=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    correlation_id = db.Column(db.String(64), nullable=False)
+
+    cache_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    started_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    finished_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class UserTableauCustomView(db.Model):
     __tablename__ = "user_tableau_custom_views"
     __table_args__ = (

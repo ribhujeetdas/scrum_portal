@@ -104,6 +104,9 @@ class ExternalHttpClient:
         timeout_seconds: int = 10,
         connect_timeout_seconds: int | None = None,
         retry_total: int | None = None,
+        retry_connect: int | None = None,
+        retry_read: int | None = None,
+        retry_status: int | None = None,
         retry_backoff_factor: float | None = None,
         retry_status_forcelist: tuple[int, ...] | None = None,
         retry_allowed_methods: tuple[str, ...] = ("GET", "HEAD", "OPTIONS"),
@@ -117,6 +120,9 @@ class ExternalHttpClient:
         self.timeout_seconds = timeout_seconds
         self.connect_timeout_seconds = connect_timeout_seconds
         self.retry_total = self._config_int("EXTERNAL_HTTP_RETRY_TOTAL", 3, retry_total)
+        self.retry_connect = self.retry_total if retry_connect is None else int(retry_connect)
+        self.retry_read = self.retry_total if retry_read is None else int(retry_read)
+        self.retry_status = self.retry_total if retry_status is None else int(retry_status)
         self.retry_backoff_factor = self._config_float(
             "EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", 0.5, retry_backoff_factor
         )
@@ -178,6 +184,10 @@ class ExternalHttpClient:
         session = requests.Session()
         retries = Retry(
             total=self.retry_total,
+            connect=self.retry_connect,
+            read=self.retry_read,
+            status=self.retry_status,
+            other=0,
             backoff_factor=self.retry_backoff_factor,
             status_forcelist=self.retry_status_forcelist,
             allowed_methods=self.retry_allowed_methods,

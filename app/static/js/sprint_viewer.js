@@ -17,10 +17,16 @@
   const sprintMetaBox = document.getElementById("sprintMetaBox");
   const statsBox = document.getElementById("statsBox");
   const metricsBox = document.getElementById("metricsBox");
+  const metricsStatus = document.getElementById("metricsStatus");
+  const metricsSpinner = document.getElementById("metricsSpinner");
+  const metricsRetryBtn = document.getElementById("metricsRetryBtn");
+  const metricsRefreshBtn = document.getElementById("metricsRefreshBtn");
   const workTypeMixBox = document.getElementById("workTypeMixBox");
   const assigneeAccordion = document.getElementById("assigneeAccordion");
   let currentReportData = null;
   let activeFetchToken = 0;
+  let metricsPollTimer = null;
+  let metricsPollFailures = 0;
 
   function $(id) {
     return document.getElementById(id);
@@ -38,6 +44,14 @@
   function setReportDownloadReady(ready) {
     if (!downloadSprintReportBtn) return;
     setDisabled(downloadSprintReportBtn, !ready);
+    if (!ready || !currentReportData) {
+      downloadSprintReportBtn.textContent = "Download Issues Report";
+      return;
+    }
+    const status = currentReportData.metricStatus;
+    if (status === "succeeded") downloadSprintReportBtn.textContent = "Download Full Report";
+    else if (status === "partial") downloadSprintReportBtn.textContent = "Download Partial Report";
+    else downloadSprintReportBtn.textContent = "Download Issues Report";
   }
 
   function setFetchButtonMode(mode) {
@@ -121,12 +135,30 @@
     return response.json();
   }
 
+  async function getJson(url) {
+    const response = await apiFetch(url, { method: "GET" });
+    return response.json();
+  }
+
+  function clearMetricsPoll() {
+    if (metricsPollTimer !== null) {
+      window.clearTimeout(metricsPollTimer);
+      metricsPollTimer = null;
+    }
+    metricsPollFailures = 0;
+  }
+
   function resetResults() {
+    clearMetricsPoll();
     currentReportData = null;
     setReportDownloadReady(false);
     resultsCard.classList.add("d-none");
     metricsBox.setAttribute("aria-busy", "false");
-    $("metricsStatus").classList.add("d-none");
+    metricsStatus.classList.add("d-none");
+    metricsStatus.removeAttribute("data-state");
+    $("metricsErrorText").classList.add("d-none");
+    metricsRetryBtn.classList.add("d-none");
+    metricsRefreshBtn.classList.add("d-none");
     metricsBox.classList.add("d-none");
     statsBox.classList.add("d-none");
     sprintMetaBox.classList.add("d-none");
@@ -226,6 +258,12 @@
     rows.push([]);
   }
 
+  function reportMetric(metrics, key) {
+    return Object.prototype.hasOwnProperty.call(metrics || {}, key)
+      ? metrics[key]
+      : "Unavailable";
+  }
+
   function buildSprintSummaryRows(report) {
     const issueData = report.issueData || {};
     const metrics = report.metrics || {};
@@ -254,6 +292,13 @@
       ["Total points", issueData.total_sp ?? 0],
     ]);
 
+    addKeyValueSection(rows, "Metric Calculation", [
+      ["Status", report.metricStatus || "issues only"],
+      ["Job ID", report.metricJobId || ""],
+      ["Last updated", report.metricUpdatedAt || ""],
+      ["Error", report.metricError || ""],
+    ]);
+
     addKeyValueSection(rows, "Quality Metrics", [
       ["Unestimated count", stats.unestimated_count ?? 0],
       ["Unestimated %", stats.unestimated_pct ?? 0],
@@ -270,16 +315,16 @@
     ]);
 
     rows.push(["Scrum Metrics", "Metric", "Count", "Points", "Percent", "Value"]);
-    rows.push(["Scrum Metrics", "Original Commitment", metrics.committed_count ?? 0, metrics.committed_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Completed from Commitment", metrics.completed_original_count ?? 0, metrics.completed_original_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Total Completed", metrics.delivered_count ?? 0, metrics.delivered_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Carryover", metrics.spillover_count ?? 0, metrics.spillover_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Added Scope", metrics.scope_added_count ?? 0, metrics.scope_added_sp ?? 0, metrics.scope_pct ?? 0, ""]);
-    rows.push(["Scrum Metrics", "Removed Scope", metrics.descope_count ?? 0, metrics.descope_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Net Scope Change", metrics.scope_net_count ?? 0, metrics.scope_net_sp ?? 0, "", ""]);
-    rows.push(["Scrum Metrics", "Commitment Predictability", "", "", metrics.predictability_pct ?? 0, ""]);
-    rows.push(["Scrum Metrics", "Total Delivery vs Commitment", "", "", metrics.total_delivery_vs_commitment_pct ?? 0, ""]);
-    rows.push(["Scrum Metrics", "Scope Change", "", "", metrics.scope_change_pct ?? 0, ""]);
+    rows.push(["Scrum Metrics", "Original Commitment", reportMetric(metrics, "committed_count"), reportMetric(metrics, "committed_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Completed from Commitment", reportMetric(metrics, "completed_original_count"), reportMetric(metrics, "completed_original_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Total Completed", reportMetric(metrics, "delivered_count"), reportMetric(metrics, "delivered_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Carryover", reportMetric(metrics, "spillover_count"), reportMetric(metrics, "spillover_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Added Scope", reportMetric(metrics, "scope_added_count"), reportMetric(metrics, "scope_added_sp"), reportMetric(metrics, "scope_pct"), ""]);
+    rows.push(["Scrum Metrics", "Removed Scope", reportMetric(metrics, "descope_count"), reportMetric(metrics, "descope_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Net Scope Change", reportMetric(metrics, "scope_net_count"), reportMetric(metrics, "scope_net_sp"), "", ""]);
+    rows.push(["Scrum Metrics", "Commitment Predictability", "", "", reportMetric(metrics, "predictability_pct"), ""]);
+    rows.push(["Scrum Metrics", "Total Delivery vs Commitment", "", "", reportMetric(metrics, "total_delivery_vs_commitment_pct"), ""]);
+    rows.push(["Scrum Metrics", "Scope Change", "", "", reportMetric(metrics, "scope_change_pct"), ""]);
     rows.push([]);
 
     rows.push(["Work Type Mix", "Issue Type", "Count", "Points", "", ""]);
@@ -301,7 +346,8 @@
 
   function buildTicketDetailRows(report) {
     const groups = (report.issueData && report.issueData.groups) || [];
-    const scopeKeys = new Set((report.metrics && report.metrics.scope_added_keys) || []);
+    const scopeKeysAvailable = Array.isArray(report.metrics && report.metrics.scope_added_keys);
+    const scopeKeys = new Set(scopeKeysAvailable ? report.metrics.scope_added_keys : []);
     const rows = [[
       "Developer",
       "Developer EID",
@@ -329,7 +375,7 @@
           issue.feature_key || "",
           issue.relevant_comment_count ?? 0,
           issue.historical_fallback ? "Current fallback" : "Sprint-end",
-          scopeKeys.has(issue.issue_key) ? "Yes" : "No",
+          scopeKeysAvailable ? (scopeKeys.has(issue.issue_key) ? "Yes" : "No") : "Unavailable",
         ]);
       });
     });
@@ -479,14 +525,17 @@
   }
 
   function downloadSprintReport() {
-    if (!currentReportData || !currentReportData.metrics) return;
+    if (!currentReportData) return;
     const workbook = buildSprintReportWorkbook(currentReportData);
     const blob = buildXlsxBlob(workbook);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const sprintPart = safeFileName(currentReportData.sprintName || currentReportData.sprintId);
     link.href = url;
-    link.download = `${sprintPart}-sprint-report.xlsx`;
+    const suffix = currentReportData.metricStatus === "succeeded"
+      ? "sprint-report"
+      : (currentReportData.metricStatus === "partial" ? "partial-sprint-report" : "issues-report");
+    link.download = `${sprintPart}-${suffix}.xlsx`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -698,42 +747,66 @@
     });
   }
 
-  function showMetricsLoading() {
+  function metricPair(metrics, countKey, pointsKey) {
+    if (!metrics || !Object.prototype.hasOwnProperty.call(metrics, countKey)
+        || !Object.prototype.hasOwnProperty.call(metrics, pointsKey)) {
+      return "Unavailable";
+    }
+    return fmtCountSp(metrics[countKey], metrics[pointsKey]);
+  }
+
+  function metricValue(metrics, key) {
+    return metrics && Object.prototype.hasOwnProperty.call(metrics, key)
+      ? metrics[key]
+      : "Unavailable";
+  }
+
+  function setMetricsStatus(state, text, progressText, errorText) {
     metricsBox.classList.remove("d-none");
-    metricsBox.setAttribute("aria-busy", "true");
-    $("metricsStatus").classList.remove("d-none");
-    [
-      "committedFmt", "deliveredFmt", "spilloverFmt", "scopeAddedFmt", "descopeFmt",
-      "completedOriginalFmt", "scopeNetFmt", "scopePct", "predictabilityPct",
-      "totalDeliveryPct", "scopeChangePct"
-    ].forEach((id) => {
-      $(id).textContent = "...";
-    });
-    $("scopePct").style.color = "";
+    metricsStatus.classList.remove("d-none");
+    metricsStatus.setAttribute("data-state", state || "running");
+    $("metricsStatusText").textContent = text;
+    $("metricsProgressText").textContent = progressText || "";
+    const error = $("metricsErrorText");
+    if (errorText) {
+      error.textContent = errorText;
+      error.classList.remove("d-none");
+    } else {
+      error.textContent = "";
+      error.classList.add("d-none");
+    }
+    const busy = state === "queued" || state === "running";
+    metricsBox.setAttribute("aria-busy", busy ? "true" : "false");
+    metricsSpinner.classList.toggle("d-none", !busy);
+  }
+
+  function showMetricsLoading() {
+    renderMetrics({});
+    setMetricsStatus(
+      "queued",
+      "Metrics queued",
+      "Commitment and scope values will appear as Jira completes each query.",
+      ""
+    );
+    metricsRetryBtn.classList.add("d-none");
+    metricsRefreshBtn.classList.add("d-none");
   }
 
   function renderMetrics(metrics) {
-    if (!metrics) {
-      metricsBox.setAttribute("aria-busy", "false");
-      $("metricsStatus").classList.add("d-none");
-      metricsBox.classList.add("d-none");
-      return;
-    }
+    const values = metrics || {};
     metricsBox.classList.remove("d-none");
-    metricsBox.setAttribute("aria-busy", "false");
-    $("metricsStatus").classList.add("d-none");
-    $("committedFmt").textContent = fmtCountSp(metrics.committed_count, metrics.committed_sp);
-    $("completedOriginalFmt").textContent = fmtCountSp(metrics.completed_original_count, metrics.completed_original_sp);
-    $("deliveredFmt").textContent = fmtCountSp(metrics.delivered_count, metrics.delivered_sp);
-    $("spilloverFmt").textContent = fmtCountSp(metrics.spillover_count, metrics.spillover_sp);
-    $("scopeAddedFmt").textContent = fmtCountSp(metrics.scope_added_count, metrics.scope_added_sp);
-    $("descopeFmt").textContent = fmtCountSp(metrics.descope_count, metrics.descope_sp);
-    $("scopeNetFmt").textContent = fmtCountSp(metrics.scope_net_count, metrics.scope_net_sp);
-    $("scopePct").textContent = metrics.scope_pct ?? 0;
-    $("predictabilityPct").textContent = metrics.predictability_pct ?? 0;
-    $("totalDeliveryPct").textContent = metrics.total_delivery_vs_commitment_pct ?? 0;
-    $("scopeChangePct").textContent = metrics.scope_change_pct ?? 0;
-    $("scopePct").style.color = metrics.scope_red ? "red" : "";
+    $("committedFmt").textContent = metricPair(values, "committed_count", "committed_sp");
+    $("completedOriginalFmt").textContent = metricPair(values, "completed_original_count", "completed_original_sp");
+    $("deliveredFmt").textContent = metricPair(values, "delivered_count", "delivered_sp");
+    $("spilloverFmt").textContent = metricPair(values, "spillover_count", "spillover_sp");
+    $("scopeAddedFmt").textContent = metricPair(values, "scope_added_count", "scope_added_sp");
+    $("descopeFmt").textContent = metricPair(values, "descope_count", "descope_sp");
+    $("scopeNetFmt").textContent = metricPair(values, "scope_net_count", "scope_net_sp");
+    $("scopePct").textContent = metricValue(values, "scope_pct");
+    $("predictabilityPct").textContent = metricValue(values, "predictability_pct");
+    $("totalDeliveryPct").textContent = metricValue(values, "total_delivery_vs_commitment_pct");
+    $("scopeChangePct").textContent = metricValue(values, "scope_change_pct");
+    $("scopePct").style.color = values.scope_red ? "red" : "";
   }
 
   function renderWorkTypeMix(workTypeMix) {
@@ -777,42 +850,191 @@
     });
   }
 
-  async function startMetricsRequest(bid, sid, totalSp, totalCount) {
+  async function startMetricsRequest(bid, sid, totalSp, totalCount, forceRefresh) {
     try {
       return await postJson("/api/automation/sprint-viewer/metrics", {
         board_id: bid,
         sprint_id: sid,
         total_sp: totalSp,
-        total_count: totalCount
+        total_count: totalCount,
+        force_refresh: Boolean(forceRefresh)
       });
     } catch (error) {
-      return { ok: false, error: "Network/Unexpected error while calculating metrics." };
+      return { ok: false, error: { message: "Network error while starting metric calculation." } };
     }
   }
 
-  function renderMetricsResult(data, bid, sid) {
-    if (!data || !data.ok) {
-      showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
-      metricsBox.setAttribute("aria-busy", "false");
-      $("metricsStatus").classList.add("d-none");
-      metricsBox.classList.add("d-none");
-      setReportDownloadReady(false);
+  function progressLabel(job) {
+    const progress = job.progress || {};
+    const complete = progress.completed ?? 0;
+    const total = progress.total ?? 5;
+    const cache = job.cached ? " · loaded from cache" : "";
+    return `${complete}/${total} queries complete${cache}`;
+  }
+
+  function scheduleMetricsPoll(jobId, bid, sid, fetchToken, delayOverride) {
+    if (metricsPollTimer !== null) window.clearTimeout(metricsPollTimer);
+    const delay = delayOverride ?? (document.hidden ? 8000 : 1500);
+    metricsPollTimer = window.setTimeout(() => {
+      pollMetricJob(jobId, bid, sid, fetchToken);
+    }, delay);
+  }
+
+  function renderMetricsJob(job, bid, sid, fetchToken) {
+    if (!job || !currentReportData) return false;
+    const metrics = job.metrics || {};
+    const status = job.status || "failed";
+    const errorText = job.error && job.error.message ? job.error.message : "";
+    currentReportData.metrics = metrics;
+    currentReportData.metricStatus = status;
+    currentReportData.metricJobId = job.id || "";
+    currentReportData.metricUpdatedAt = job.updated_at || "";
+    currentReportData.metricError = errorText;
+    renderMetrics(metrics);
+    if (Array.isArray(metrics.scope_added_keys)) applyScopeStars(metrics.scope_added_keys);
+    setReportDownloadReady(true);
+
+    metricsRetryBtn.classList.add("d-none");
+    metricsRefreshBtn.classList.add("d-none");
+    if (status === "queued" || status === "running") {
+      setMetricsStatus(
+        status,
+        status === "queued" ? "Metrics queued" : "Calculating metrics",
+        progressLabel(job),
+        ""
+      );
+      scheduleMetricsPoll(job.id, bid, sid, fetchToken);
       return false;
     }
-    renderMetrics(data.metrics);
-    applyScopeStars(data.metrics && data.metrics.scope_added_keys ? data.metrics.scope_added_keys : []);
-    if (currentReportData && currentReportData.boardId === bid && currentReportData.sprintId === sid) {
-      currentReportData.metrics = data.metrics || {};
-      setReportDownloadReady(true);
+    if (status === "succeeded") {
+      clearMetricsPoll();
+      setMetricsStatus(
+        "succeeded",
+        job.cached ? "Metrics ready from cache" : "Metrics ready",
+        progressLabel(job),
+        ""
+      );
+      metricsRefreshBtn.classList.remove("d-none");
+      showAlert("success", "Issues and metrics loaded successfully.");
+      return true;
     }
-    showAlert("success", "Issues and metrics loaded successfully.");
+    clearMetricsPoll();
+    const canRetry = (job.attempt_count ?? 0) < (job.max_attempts ?? 2);
+    setMetricsStatus(
+      status === "partial" ? "partial" : "failed",
+      status === "partial" ? "Some metrics are unavailable" : "Metrics could not be completed",
+      progressLabel(job),
+      errorText || "One or more Jira metric queries failed. Available values remain visible."
+    );
+    if (canRetry && job.id) metricsRetryBtn.classList.remove("d-none");
+    metricsRefreshBtn.classList.remove("d-none");
+    showAlert(
+      "warning",
+      status === "partial"
+        ? "Issues loaded. Some metrics are unavailable; completed values are preserved."
+        : "Issues loaded, but Jira metrics could not be completed."
+    );
     return true;
   }
 
-  async function loadMetricsInBackground(bid, sid, fetchToken, totalSp, totalCount) {
-    const metricsData = await startMetricsRequest(bid, sid, totalSp, totalCount);
+  function handleMetricsPayload(data, bid, sid, fetchToken) {
+    if (fetchToken !== activeFetchToken) return true;
+    if (!data || !data.ok) {
+      const message = errorMessage(data, "Metric calculation could not be started.");
+      if (currentReportData) {
+        currentReportData.metricStatus = "failed";
+        currentReportData.metricError = message;
+      }
+      renderMetrics(currentReportData && currentReportData.metrics ? currentReportData.metrics : {});
+      setMetricsStatus("failed", "Metrics could not be started", "", message);
+      metricsRetryBtn.classList.add("d-none");
+      metricsRefreshBtn.classList.remove("d-none");
+      setReportDownloadReady(true);
+      return true;
+    }
+    if (data.job) return renderMetricsJob(data.job, bid, sid, fetchToken);
+    return renderMetricsJob({
+      id: "",
+      status: data.status || "succeeded",
+      cached: Boolean(data.cached),
+      metrics: data.metrics || {},
+      progress: { completed: 5, total: 5 },
+      attempt_count: 1,
+      max_attempts: 1,
+    }, bid, sid, fetchToken);
+  }
+
+  async function pollMetricJob(jobId, bid, sid, fetchToken) {
+    if (!jobId || fetchToken !== activeFetchToken) return;
+    try {
+      const data = await getJson(`/api/automation/sprint-viewer/metrics/${encodeURIComponent(jobId)}`);
+      if (fetchToken !== activeFetchToken) return;
+      if (!data.ok) throw new Error(errorMessage(data, "Unable to check metric progress."));
+      metricsPollFailures = 0;
+      handleMetricsPayload(data, bid, sid, fetchToken);
+    } catch (error) {
+      if (fetchToken !== activeFetchToken) return;
+      metricsPollFailures += 1;
+      setMetricsStatus(
+        "running",
+        "Metrics are still running",
+        "Connection to the progress endpoint was interrupted; checking again.",
+        metricsPollFailures >= 3 ? "Unable to refresh progress right now. The server job continues in the background." : ""
+      );
+      scheduleMetricsPoll(jobId, bid, sid, fetchToken, metricsPollFailures >= 3 ? 10000 : 3000);
+    }
+  }
+
+  async function loadMetricsInBackground(bid, sid, fetchToken, totalSp, totalCount, forceRefresh) {
+    clearMetricsPoll();
+    const metricsData = await startMetricsRequest(
+      bid, sid, totalSp, totalCount, Boolean(forceRefresh)
+    );
     if (fetchToken !== activeFetchToken) return;
-    renderMetricsResult(metricsData, bid, sid);
+    handleMetricsPayload(metricsData, bid, sid, fetchToken);
+  }
+
+  async function retryCurrentMetrics() {
+    if (!currentReportData || !currentReportData.metricJobId) return;
+    const report = currentReportData;
+    const token = activeFetchToken;
+    setDisabled(metricsRetryBtn, true);
+    setMetricsStatus("queued", "Retrying failed metrics", "Successful values will be reused.", "");
+    try {
+      const data = await postJson(
+        `/api/automation/sprint-viewer/metrics/${encodeURIComponent(report.metricJobId)}/retry`,
+        {}
+      );
+      if (token !== activeFetchToken) return;
+      handleMetricsPayload(data, report.boardId, report.sprintId, token);
+    } catch (error) {
+      if (token !== activeFetchToken) return;
+      setMetricsStatus("failed", "Retry could not be started", "", "Please try again.");
+      metricsRetryBtn.classList.remove("d-none");
+    } finally {
+      setDisabled(metricsRetryBtn, false);
+    }
+  }
+
+  function refreshCurrentMetrics() {
+    if (!currentReportData) return;
+    const report = currentReportData;
+    report.metrics = {};
+    report.metricStatus = "queued";
+    report.metricJobId = "";
+    report.metricUpdatedAt = "";
+    report.metricError = "";
+    applyScopeStars([]);
+    setReportDownloadReady(true);
+    showMetricsLoading();
+    loadMetricsInBackground(
+      report.boardId,
+      report.sprintId,
+      activeFetchToken,
+      report.issueData.total_sp ?? 0,
+      report.issueData.standard_total ?? report.issueData.total ?? 0,
+      true
+    );
   }
 
   projectKey.addEventListener("change", () => {
@@ -876,9 +1098,13 @@
         sprintId: sid,
         sprintName: selectedText(sprintId),
         issueData: data,
-        metrics: null,
+        metrics: {},
+        metricStatus: "queued",
+        metricJobId: "",
+        metricUpdatedAt: "",
+        metricError: "",
       };
-      setReportDownloadReady(false);
+      setReportDownloadReady(true);
       setTotals(data.total, data.total_sp, data.standard_total);
       renderSprintMeta(data.sprint, data.historical_fallback_count);
       renderStats(data.stats);
@@ -912,4 +1138,6 @@
   if (downloadSprintReportBtn) {
     downloadSprintReportBtn.addEventListener("click", downloadSprintReport);
   }
+  metricsRetryBtn.addEventListener("click", retryCurrentMetrics);
+  metricsRefreshBtn.addEventListener("click", refreshCurrentMetrics);
 })();

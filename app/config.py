@@ -190,6 +190,33 @@ class Config:
         minimum=1,
         maximum=120,
     )
+    SPRINT_METRICS_MODE = _env_text("SPRINT_METRICS_MODE", "queued").lower()
+    SPRINT_METRICS_GLOBAL_WORKERS = _env_int(
+        "SPRINT_METRICS_GLOBAL_WORKERS", 2, minimum=1, maximum=2
+    )
+    SPRINT_METRICS_CONNECT_TIMEOUT_SECONDS = _env_int(
+        "SPRINT_METRICS_CONNECT_TIMEOUT_SECONDS", 5, minimum=1, maximum=30
+    )
+    SPRINT_METRICS_READ_TIMEOUT_SECONDS = _env_int(
+        "SPRINT_METRICS_READ_TIMEOUT_SECONDS", 45, minimum=5, maximum=120
+    )
+    SPRINT_METRICS_CONNECT_RETRIES = _env_int(
+        "SPRINT_METRICS_CONNECT_RETRIES", 1, minimum=0, maximum=2
+    )
+    SPRINT_METRICS_READ_RETRIES = _env_int("SPRINT_METRICS_READ_RETRIES", 0, minimum=0, maximum=1)
+    SPRINT_METRICS_STATUS_RETRIES = _env_int(
+        "SPRINT_METRICS_STATUS_RETRIES", 1, minimum=0, maximum=2
+    )
+    SPRINT_METRICS_JOB_DEADLINE_SECONDS = _env_int(
+        "SPRINT_METRICS_JOB_DEADLINE_SECONDS", 180, minimum=30, maximum=600
+    )
+    SPRINT_METRICS_CACHE_TTL_SECONDS = _env_int(
+        "SPRINT_METRICS_CACHE_TTL_SECONDS", 86400, minimum=60, maximum=604800
+    )
+    SPRINT_METRICS_RUN_RETENTION_DAYS = _env_int(
+        "SPRINT_METRICS_RUN_RETENTION_DAYS", 30, minimum=1, maximum=365
+    )
+    SPRINT_METRICS_MAX_ATTEMPTS = _env_int("SPRINT_METRICS_MAX_ATTEMPTS", 2, minimum=1, maximum=3)
 
     # Configurable bind-all is intentional for the approved local multi-user topology.
     WAITRESS_HOST = _env_text("WAITRESS_HOST", "0.0.0.0")  # nosec B104

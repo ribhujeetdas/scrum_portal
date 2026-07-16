@@ -115,7 +115,7 @@
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h5 class="mb-0">Results</h5>
       <button id="downloadSprintReportBtn" class="btn btn-success btn-sm" disabled>
-        Download Report
+        Download Issues Report
       </button>
     </div>
 
@@ -156,9 +156,19 @@
 
     <!-- UPDATED: metrics show count + pts and added more single-sprint metrics -->
     <div id="metricsBox" class="border rounded p-2 mb-3 d-none" aria-busy="false">
-      <div id="metricsStatus" class="small text-muted mb-2 d-none" role="status" aria-live="polite">
-        <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-        Calculating commitment and scope metrics&hellip;
+      <div id="metricsStatus" class="sv-metrics-status small mb-2 d-none" role="status" aria-live="polite">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <span id="metricsSpinner" class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+          <strong id="metricsStatusText">Calculating commitment and scope metrics&hellip;</strong>
+          <span id="metricsProgressText" class="text-muted"></span>
+          <button id="metricsRetryBtn" type="button" class="btn btn-outline-primary btn-sm d-none">
+            Retry failed metrics
+          </button>
+          <button id="metricsRefreshBtn" type="button" class="btn btn-outline-secondary btn-sm d-none">
+            Refresh from Jira
+          </button>
+        </div>
+        <div id="metricsErrorText" class="text-danger mt-1 d-none"></div>
       </div>
       <div class="row g-2">
         <div class="col-md-3"><strong>Original Commitment</strong><span class="metric-help" title="Original committed work = completed original + incomplete original + removed after sprint start, excluding added-after-start items.">?</span>: <span id="committedFmt">0</span></div>

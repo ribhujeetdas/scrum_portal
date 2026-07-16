@@ -78,3 +78,32 @@ def test_sprint_datetime_migration_preserves_legacy_values(tmp_path):
         assert column_types["start_date"] == "DATETIME"
         assert migration_status()["current"] is True
         assert sqlite_health()["foreign_keys"] is True
+
+
+def test_metric_run_migration_creates_table_and_lookup_indexes(tmp_path):
+    database = tmp_path / "metric-migration.sqlite3"
+
+    class TestConfig(MigrationTestConfig):
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database.as_posix()}"
+        LOG_DIR = str(tmp_path / "metric-logs")
+
+    app = create_app(TestConfig)
+    migrations_dir = str(Path(__file__).resolve().parents[1] / "migrations")
+
+    with app.app_context():
+        db.create_all()
+        db.session.execute(text("DROP TABLE user_sprint_metric_runs"))
+        db.session.commit()
+        stamp(directory=migrations_dir, revision="b6f3a9c2d410")
+
+        upgrade(directory=migrations_dir, revision="head")
+
+        inspector = inspect(db.engine)
+        indexes = {index["name"] for index in inspector.get_indexes("user_sprint_metric_runs")}
+        assert "user_sprint_metric_runs" in inspector.get_table_names()
+        assert {
+            "ix_metric_runs_user_sprint",
+            "ix_metric_runs_status_updated",
+            "ix_metric_runs_cache",
+        }.issubset(indexes)
+        assert migration_status()["current"] is True

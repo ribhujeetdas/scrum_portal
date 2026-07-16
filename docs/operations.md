@@ -29,3 +29,16 @@ External events use sanitized endpoint paths and fields such as `external_servic
 Before deployment and after dependency changes run `python scripts/verify.py`. Daily operational checks should include `python scripts/check_db.py`, readiness status, free disk, backup age, and application/audit log rotation. Run `python scripts/diagnose.py` when startup or readiness fails.
 
 Backups, restores, journal changes, and schema migrations are covered by [SQLite operations](sqlite_operations.md). Manual release steps are covered by [Manual deployment](manual_deployment.md).
+
+## Sprint metric jobs
+
+Sprint Viewer issue details render before commitment and scope metrics. Metric runs
+are stored in `user_sprint_metric_runs`; queued/running jobs are recovered after an
+application restart while successful query checkpoints are reused. A partial result
+is not a zero: the UI and workbook label missing metrics as unavailable.
+
+Use the request ID and metric job ID in the downloaded report to correlate
+`sprint_metrics.job.*`, `sprint_metrics.query.*`, and `sprint_metrics.cache.*` events.
+Logs contain safe query names and timings, never PATs, authorization headers, or JQL
+text. If Jira is slow, inspect per-query duration and error category before changing
+timeouts. Do not increase the global worker count above two.

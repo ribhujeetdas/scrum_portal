@@ -13,6 +13,7 @@ from waitress import serve
 from app import create_app
 from app.core.config_validation import validate_config_or_raise
 from app.core.database import application_database_lock, migration_status, sqlite_health
+from app.features.automation.sprint_viewer.metric_jobs import get_sprint_metric_coordinator
 from app.logging_conf import audit_event
 
 
@@ -39,6 +40,9 @@ def serve_app() -> None:
             )
 
     with application_database_lock(app):
+        with app.app_context():
+            metric_coordinator = get_sprint_metric_coordinator()
+            metric_coordinator.recover()
         audit_event(
             "application.start",
             "Application server starting",
@@ -58,17 +62,20 @@ def serve_app() -> None:
                 },
             },
         )
-        serve(
-            app,
-            host=app.config["WAITRESS_HOST"],
-            port=app.config["WAITRESS_PORT"],
-            threads=app.config["WAITRESS_THREADS"],
-            connection_limit=app.config["WAITRESS_CONNECTION_LIMIT"],
-            channel_timeout=app.config["WAITRESS_CHANNEL_TIMEOUT_SECONDS"],
-            max_request_body_size=app.config["MAX_CONTENT_LENGTH"],
-            expose_tracebacks=False,
-            clear_untrusted_proxy_headers=True,
-        )
+        try:
+            serve(
+                app,
+                host=app.config["WAITRESS_HOST"],
+                port=app.config["WAITRESS_PORT"],
+                threads=app.config["WAITRESS_THREADS"],
+                connection_limit=app.config["WAITRESS_CONNECTION_LIMIT"],
+                channel_timeout=app.config["WAITRESS_CHANNEL_TIMEOUT_SECONDS"],
+                max_request_body_size=app.config["MAX_CONTENT_LENGTH"],
+                expose_tracebacks=False,
+                clear_untrusted_proxy_headers=True,
+            )
+        finally:
+            metric_coordinator.shutdown(wait=True)
 
 
 def main() -> int:

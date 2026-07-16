@@ -22,6 +22,8 @@
 - `/api/automation/sprint-viewer/sprints`
 - `/api/automation/sprint-viewer/issues`
 - `/api/automation/sprint-viewer/metrics`
+- `/api/automation/sprint-viewer/metrics/<job_id>`
+- `/api/automation/sprint-viewer/metrics/<job_id>/retry`
 - `/api/reports/tci/link-details`
 - `/api/session/status`
 - `/api/session/extend`

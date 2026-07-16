@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import logging
+import re
 
-from flask import current_app, flash, redirect, render_template, request, url_for
+from flask import (
+    after_this_request,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user
 
 from ....core.api import json_error, json_ok, safe_error_message
@@ -16,6 +26,16 @@ from ....extensions import db
 from ....models import UserBoard, UserBoardSprint, UserProject
 from ....services.jira_service import JiraServiceError
 from ....services.sprint_viewer_service import SprintViewerService, SprintViewerServiceError
+from .metric_jobs import get_sprint_metric_coordinator, serialize_metric_run
+
+_METRIC_JOB_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _disable_metric_response_cache() -> None:
+    @after_this_request
+    def add_no_store(response):
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 def _sprint_service() -> SprintViewerService:
@@ -362,31 +382,7 @@ def sprint_viewer_fetch_issues():
         return json_error("Unexpected error occurred.", status_code=500)
 
 
-def sprint_viewer_fetch_metrics():
-    enforce_limit("automation.sprint_viewer.metrics", subject=str(current_user.id), expensive=True)
-    payload = request.get_json(silent=True) or {}
-    board_id = payload.get("board_id")
-    sprint_id = payload.get("sprint_id")
-    total_sp = payload.get("total_sp")
-    total_count = payload.get("total_count")
-
-    try:
-        board_id_int = int(board_id)
-        sprint_id_int = int(sprint_id)
-        total_sp_val = float(total_sp) if total_sp is not None else 0.0
-        total_count_val = int(total_count) if total_count is not None else 0
-    except Exception:
-        return json_error(
-            "Board ID and Sprint ID must be numeric; total_sp and total_count must be numeric.",
-            status_code=400,
-        )
-
-    if not _board_belongs_to_user(current_user.id, board_id_int):
-        return json_error(
-            "Selected board does not belong to your saved projects.",
-            status_code=403,
-        )
-
+def _legacy_metrics_response(board_id: int, sprint_id: int, total_sp: float, total_count: int):
     try:
         pat = _get_user_pat()
         _validate_pat_belongs_to_user(pat)
@@ -405,30 +401,32 @@ def sprint_viewer_fetch_metrics():
     _trace_api(
         "SprintViewer/metrics request user=%s board=%s sprint=%s total_sp=%.2f total_count=%s",
         current_user.eid,
-        board_id_int,
-        sprint_id_int,
-        total_sp_val,
-        total_count_val,
+        board_id,
+        sprint_id,
+        total_sp,
+        total_count,
     )
 
     try:
         metrics = _sprint_service().compute_sprint_metrics_parallel(
-            board_id=board_id_int,
-            sprint_id=sprint_id_int,
+            board_id=board_id,
+            sprint_id=sprint_id,
             pat=pat,
-            total_sp=total_sp_val,
-            total_count=total_count_val,
+            total_sp=total_sp,
+            total_count=total_count,
         )
 
         _trace_api(
             "SprintViewer/metrics done user=%s board=%s sprint=%s keys=%s",
             current_user.eid,
-            board_id_int,
-            sprint_id_int,
+            board_id,
+            sprint_id,
             len(metrics.get("scope_added_keys") or []),
         )
 
-        return json_ok(metrics=metrics)
+        response = json_ok(metrics=metrics, status="succeeded", cached=False)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     except SprintViewerServiceError as exc:
         log_handled_exception(
             "Sprint Viewer failed to fetch metrics",
@@ -436,9 +434,122 @@ def sprint_viewer_fetch_metrics():
             event="automation.sprint_viewer.metrics_failed",
             feature="sprint_viewer",
             operation="fetch_metrics",
-            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+            context={"board_id": board_id, "sprint_id": sprint_id},
         )
         return json_error(safe_error_message("calculate sprint metrics"), status_code=400)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in sprint_viewer_fetch_metrics: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)
+
+
+def _metric_run_response(run, *, cached: bool = False, status_code: int | None = None):
+    job = serialize_metric_run(run, cached=cached)
+    response = json_ok(
+        job=job,
+        metrics=job.get("metrics"),
+        status=job["status"],
+        cached=job["cached"],
+    )
+    response.headers["Cache-Control"] = "no-store"
+    selected_status = (
+        status_code
+        if status_code is not None
+        else (202 if job["status"] in {"queued", "running"} else 200)
+    )
+    return response, selected_status
+
+
+def sprint_viewer_fetch_metrics():
+    _disable_metric_response_cache()
+    enforce_limit("automation.sprint_viewer.metrics", subject=str(current_user.id), expensive=True)
+    payload = request.get_json(silent=True) or {}
+    board_id = payload.get("board_id")
+    sprint_id = payload.get("sprint_id")
+    total_sp = payload.get("total_sp")
+    total_count = payload.get("total_count")
+
+    try:
+        board_id_int = int(board_id)
+        sprint_id_int = int(sprint_id)
+        total_sp_val = float(total_sp) if total_sp is not None else 0.0
+        total_count_val = int(total_count) if total_count is not None else 0
+    except Exception:
+        return json_error(
+            "Board ID and Sprint ID must be numeric; total_sp and total_count must be numeric.",
+            status_code=400,
+        )
+    if board_id_int <= 0 or sprint_id_int <= 0 or total_sp_val < 0 or total_count_val < 0:
+        return json_error(
+            "Board ID and Sprint ID must be positive; totals cannot be negative.",
+            status_code=400,
+        )
+    if not _board_belongs_to_user(current_user.id, board_id_int):
+        return json_error(
+            "Selected board does not belong to your saved projects.",
+            status_code=403,
+        )
+
+    if str(current_app.config.get("SPRINT_METRICS_MODE", "queued")).lower() == "legacy":
+        return _legacy_metrics_response(board_id_int, sprint_id_int, total_sp_val, total_count_val)
+
+    coordinator = get_sprint_metric_coordinator()
+    run, cached, _created = coordinator.start_or_reuse(
+        user_id=current_user.id,
+        board_id=board_id_int,
+        sprint_id=sprint_id_int,
+        total_sp=total_sp_val,
+        total_count=total_count_val,
+        correlation_id=getattr(g, "request_id", ""),
+        force_refresh=payload.get("force_refresh") is True,
+    )
+    return _metric_run_response(run, cached=cached)
+
+
+def sprint_viewer_metric_status(job_id: str):
+    _disable_metric_response_cache()
+    enforce_limit(
+        "automation.sprint_viewer.metrics.status",
+        subject=str(current_user.id),
+        limit=240,
+        window_seconds=60,
+    )
+    if not _METRIC_JOB_ID.fullmatch(str(job_id or "")):
+        return json_error("Metric job was not found.", status_code=404)
+    coordinator = get_sprint_metric_coordinator()
+    coordinator.recover()
+    run = coordinator.repository.get_owned(job_id, current_user.id)
+    if run is None:
+        return json_error("Metric job was not found.", status_code=404)
+    if not _board_belongs_to_user(current_user.id, run.board_id):
+        return json_error("Metric job is no longer authorized.", status_code=403)
+    coordinator.ensure_enqueued(run)
+    return _metric_run_response(run)
+
+
+def sprint_viewer_retry_metrics(job_id: str):
+    _disable_metric_response_cache()
+    enforce_limit(
+        "automation.sprint_viewer.metrics.retry",
+        subject=str(current_user.id),
+        expensive=True,
+    )
+    if not _METRIC_JOB_ID.fullmatch(str(job_id or "")):
+        return json_error("Metric job was not found.", status_code=404)
+    coordinator = get_sprint_metric_coordinator()
+    run = coordinator.repository.get_owned(job_id, current_user.id)
+    if run is None:
+        return json_error("Metric job was not found.", status_code=404)
+    if not _board_belongs_to_user(current_user.id, run.board_id):
+        return json_error("Metric job is no longer authorized.", status_code=403)
+    if run.status not in {"partial", "failed", "interrupted"}:
+        return json_error("Only a failed or partial metric job can be retried.", status_code=409)
+    if int(run.attempt_count or 0) >= coordinator.max_attempts:
+        return json_error(
+            "This metric job reached its retry limit. Refresh from Jira to start a new run.",
+            status_code=409,
+            code="retry_limit_reached",
+        )
+    retried = coordinator.retry(job_id, current_user.id)
+    if retried is None:
+        return json_error("Metric job was not found.", status_code=404)
+    return _metric_run_response(retried, status_code=202)

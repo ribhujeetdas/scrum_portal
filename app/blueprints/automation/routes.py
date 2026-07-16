@@ -48,3 +48,15 @@ def sprint_viewer_fetch_issues():
 @login_required
 def sprint_viewer_fetch_metrics():
     return sprint_viewer_feature.sprint_viewer_fetch_metrics()
+
+
+@automation_bp.route("/sprint-viewer/metrics/<job_id>", methods=["GET"])
+@login_required
+def sprint_viewer_metric_status(job_id: str):
+    return sprint_viewer_feature.sprint_viewer_metric_status(job_id)
+
+
+@automation_bp.route("/sprint-viewer/metrics/<job_id>/retry", methods=["POST"])
+@login_required
+def sprint_viewer_retry_metrics(job_id: str):
+    return sprint_viewer_feature.sprint_viewer_retry_metrics(job_id)

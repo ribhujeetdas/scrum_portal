@@ -55,11 +55,21 @@ Schema changes use Alembic. `scripts/migrate_db.py` initializes fresh schemas or
 
 ## Performance notes
 
-Sprint lists are cached in `user_board_sprints` per user and board. Sprint issue and metric calls still execute on demand because they depend on current Jira sprint state; do not persist those results without a freshness policy. If issue/metric latency becomes high, add a background job table keyed by `user_id`, `board_id`, `sprint_id`, and an explicit `refreshed_at`, then have the UI poll a canonical `/api/...` job endpoint.
+Sprint lists are cached in `user_board_sprints` per user and board. Sprint issues
+remain request-driven so the fast Jira details render first. ScriptRunner metrics
+run through the process-local coordinator in
+`app/features/automation/sprint_viewer/metric_jobs.py`; query checkpoints, partial
+results, and per-user cache expiry are stored in `user_sprint_metric_runs`. The UI
+polls canonical status endpoints, so slow Jira work never occupies a Waitress
+request thread.
 
 Jira PAT ownership validation is cached for `JIRA_PAT_VALIDATION_CACHE_SECONDS` within the user session. Keep this short-lived; it avoids repeated `/myself` calls during multi-step UI flows while still revalidating after token/user/session changes.
 
-The Sprint page uses eager-loaded boards to avoid per-project queries. Metrics use a small bounded worker pool rather than matching the Waitress thread count. External pagination has page and elapsed-time limits, and repeated retryable failures open a short-lived circuit to preserve local capacity.
+The Sprint page uses eager-loaded boards to avoid per-project queries. Metrics use
+two process-wide workers rather than matching the Waitress thread count. The
+ScriptRunner circuit is isolated from normal Jira issue/profile calls, read timeouts
+are not automatically retried, and each job has a bounded deadline. External
+pagination retains page and elapsed-time limits.
 
 ## Migration rule
 

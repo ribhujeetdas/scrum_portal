@@ -18,6 +18,19 @@
 - `DATABASE_INSTANCE_LOCK=true` enforces the supported one-process topology.
 - Waitress thread and connection limits bound concurrent work. Sprint workers, outbound bulkheads, operation page/deadline budgets, circuit thresholds, and rate limits prevent one integration or user from exhausting the process.
 
+## Sprint metrics
+
+`SPRINT_METRICS_MODE=queued` is the supported mode. A maximum of two process-wide
+workers execute ScriptRunner queries and checkpoint each result in SQLite; HTTP
+request threads only create jobs and return status. Read timeouts are not retried
+automatically, avoiding timeout-and-retry amplification. Successful closed-sprint
+results are cached per user because Jira PAT permissions can differ.
+
+`SPRINT_METRICS_MODE=legacy` is a temporary rollback option. It restores the old
+synchronous, per-request calculation and should only be used while diagnosing a
+queued-mode regression. The `SPRINT_METRICS_MAX_WORKERS` and
+`SPRINT_METRICS_HTTP_TIMEOUT_SECONDS` settings apply to that legacy path.
+
 ## Sessions
 
 `SESSION_TIMEOUT_MINUTES` is the renewable idle window. `SESSION_ABSOLUTE_MAX_MINUTES` cannot be extended. Cookies are HTTP-only and SameSite-protected. Set the two `*_COOKIE_SECURE` values to `true` only if the deployed endpoint actually uses HTTPS; secure cookies are not sent over plain HTTP.

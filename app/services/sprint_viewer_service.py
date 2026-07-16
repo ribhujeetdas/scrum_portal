@@ -67,6 +67,40 @@ class SprintViewerService:
                 "EXTERNAL_HTTP_CIRCUIT_RESET_SECONDS", 30
             ),
         }
+        self._metrics_client_options = {
+            "connect_timeout_seconds": ExternalHttpClient._config_int(
+                "SPRINT_METRICS_CONNECT_TIMEOUT_SECONDS", 5
+            ),
+            # The total remains a final cap. Read retries are intentionally zero
+            # because repeating an already-expensive ScriptRunner query amplifies load.
+            "retry_total": max(
+                ExternalHttpClient._config_int("SPRINT_METRICS_CONNECT_RETRIES", 1),
+                ExternalHttpClient._config_int("SPRINT_METRICS_STATUS_RETRIES", 1),
+                ExternalHttpClient._config_int("SPRINT_METRICS_READ_RETRIES", 0),
+            ),
+            "retry_connect": ExternalHttpClient._config_int("SPRINT_METRICS_CONNECT_RETRIES", 1),
+            "retry_read": ExternalHttpClient._config_int("SPRINT_METRICS_READ_RETRIES", 0),
+            "retry_status": ExternalHttpClient._config_int("SPRINT_METRICS_STATUS_RETRIES", 1),
+            "retry_backoff_factor": ExternalHttpClient._config_float(
+                "EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", 0.5
+            ),
+            "retry_status_forcelist": ExternalHttpClient._config_status_codes(
+                "EXTERNAL_HTTP_RETRY_STATUS_CODES", (429, 500, 502, 503, 504)
+            ),
+            "max_concurrent": ExternalHttpClient._config_int("EXTERNAL_HTTP_MAX_CONCURRENT", 12),
+            "bulkhead_wait_seconds": ExternalHttpClient._config_float(
+                "EXTERNAL_HTTP_BULKHEAD_WAIT_SECONDS", 1.0
+            ),
+            "circuit_failure_threshold": ExternalHttpClient._config_int(
+                "EXTERNAL_HTTP_CIRCUIT_FAILURE_THRESHOLD", 5
+            ),
+            "circuit_reset_seconds": ExternalHttpClient._config_int(
+                "EXTERNAL_HTTP_CIRCUIT_RESET_SECONDS", 30
+            ),
+        }
+        self._metrics_read_timeout = ExternalHttpClient._config_int(
+            "SPRINT_METRICS_READ_TIMEOUT_SECONDS", 45
+        )
         self._operation_max_pages = ExternalHttpClient._config_int(
             "EXTERNAL_OPERATION_MAX_PAGES", 100
         )
@@ -101,6 +135,16 @@ class SprintViewerService:
             self.base_url,
             timeout_seconds=self.timeout,
             **self._client_options,
+        )
+
+    def _new_metrics_client(self, *, read_timeout_seconds: int | None = None) -> ExternalHttpClient:
+        return ExternalHttpClient(
+            # Keep slow ScriptRunner failures from opening the circuit used by
+            # the fast issue-details and profile Jira calls.
+            "jira_sprint_metrics",
+            self.base_url,
+            timeout_seconds=max(1, int(read_timeout_seconds or self._metrics_read_timeout)),
+            **self._metrics_client_options,
         )
 
     def _headers(self, pat: str) -> dict:
@@ -681,6 +725,9 @@ class SprintViewerService:
         jql: str,
         pat: str,
         capture_keys: bool = False,
+        *,
+        metric_name: str = "metric",
+        deadline_seconds: float | None = None,
     ) -> dict:
         start_at = 0
         max_results = 200
@@ -692,16 +739,20 @@ class SprintViewerService:
             "jira",
             "aggregate JQL search",
             max_pages=self._operation_max_pages,
-            deadline_seconds=self._operation_deadline_seconds,
+            deadline_seconds=(
+                min(self._operation_deadline_seconds, deadline_seconds)
+                if deadline_seconds is not None
+                else self._operation_deadline_seconds
+            ),
         )
-
-        jql_short = jql.replace("\n", " ").strip()
-        if len(jql_short) > 180:
-            jql_short = jql_short[:180] + "..."
 
         self._trace_jql(
-            "JQLAgg start startAt=%s maxResults=%s jql=%s", start_at, max_results, jql_short
+            "JQLAgg start metric=%s startAt=%s maxResults=%s",
+            metric_name,
+            start_at,
+            max_results,
         )
+        page_total = 0
 
         while True:
             params = {
@@ -713,6 +764,7 @@ class SprintViewerService:
 
             try:
                 budget.next_page()
+                page_total += 1
                 data = client.get_json(
                     "/rest/api/2/search",
                     headers=self._headers(pat),
@@ -749,31 +801,37 @@ class SprintViewerService:
 
             is_last = data.get("isLast")
             self._trace_jql(
-                "JQLAgg page startAt=%s got=%s isLast=%s count_so_far=%s sp_so_far=%.2f jql=%s",
+                "JQLAgg page metric=%s startAt=%s got=%s isLast=%s count_so_far=%s sp_so_far=%.2f",
+                metric_name,
                 start_at,
                 page_count,
                 is_last,
                 total_count,
                 total_sp,
-                jql_short,
             )
 
             if is_last is True:
-                self._trace_jql("JQLAgg stop reason=isLast jql=%s", jql_short)
+                self._trace_jql("JQLAgg stop metric=%s reason=isLast", metric_name)
                 break
             if page_count == 0:
-                self._trace_jql("JQLAgg stop reason=page_count=0 jql=%s", jql_short)
+                self._trace_jql("JQLAgg stop metric=%s reason=page_count=0", metric_name)
                 break
             if page_count < max_results:
-                self._trace_jql("JQLAgg stop reason=page_count<maxResults jql=%s", jql_short)
+                self._trace_jql("JQLAgg stop metric=%s reason=page_count<maxResults", metric_name)
                 break
 
             start_at += page_count
 
-        out = {"sp": float(total_sp), "count": int(total_count)}
+        out = {"sp": float(total_sp), "count": int(total_count), "pages": page_total}
         if capture_keys:
             out["keys"] = sorted(keys)
-        self._trace_jql("JQLAgg done sp=%.2f count=%s jql=%s", out["sp"], out["count"], jql_short)
+        self._trace_jql(
+            "JQLAgg done metric=%s sp=%.2f count=%s pages=%s",
+            metric_name,
+            out["sp"],
+            out["count"],
+            out["pages"],
+        )
         return out
 
     # ---------------------------
@@ -783,14 +841,25 @@ class SprintViewerService:
     def build_scrum_metrics(results: dict[str, dict]) -> dict:
         return build_scrum_metrics(results)
 
-    def compute_sprint_metrics_parallel(
-        self, board_id: int, sprint_id: int, pat: str, total_sp: float, total_count: int
-    ) -> dict:
-        # ScriptRunner JQLs already used in our app
-        completed_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issuetype IN standardIssueTypes()"
-        completed_original_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
-        added_scope_jql = f"issueFunction in addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
-        removed_scope_jql = f"issueFunction in removedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
+    @staticmethod
+    def metric_query_specs(board_id: int, sprint_id: int) -> dict[str, dict[str, Any]]:
+        completed_jql = (
+            f"issueFunction in completeInSprint({board_id}, {sprint_id}) "
+            "AND issuetype IN standardIssueTypes()"
+        )
+        completed_original_jql = (
+            f"issueFunction in completeInSprint({board_id}, {sprint_id}) "
+            f"AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) "
+            "AND issuetype IN standardIssueTypes()"
+        )
+        added_scope_jql = (
+            f"issueFunction in addedAfterSprintStart({board_id},{sprint_id}) "
+            "AND issuetype IN standardIssueTypes()"
+        )
+        removed_scope_jql = (
+            f"issueFunction in removedAfterSprintStart({board_id},{sprint_id}) "
+            "AND issuetype IN standardIssueTypes()"
+        )
         original_commitment_jql = (
             f"(issueFunction in completeInSprint({board_id}, {sprint_id}) "
             f"OR issueFunction in incompleteInSprint({board_id},{sprint_id}) "
@@ -798,14 +867,49 @@ class SprintViewerService:
             f"AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) "
             "AND issuetype IN standardIssueTypes()"
         )
-
-        jobs = {
-            "original_commitment": {"jql": original_commitment_jql, "capture_keys": False},
-            "completed_original": {"jql": completed_original_jql, "capture_keys": False},
+        return {
+            "original_commitment": {
+                "jql": original_commitment_jql,
+                "capture_keys": False,
+            },
+            "completed_original": {
+                "jql": completed_original_jql,
+                "capture_keys": False,
+            },
             "total_completed": {"jql": completed_jql, "capture_keys": False},
             "added_scope": {"jql": added_scope_jql, "capture_keys": True},
             "removed_scope": {"jql": removed_scope_jql, "capture_keys": False},
         }
+
+    def collect_metric_query(
+        self,
+        *,
+        metric_name: str,
+        spec: dict[str, Any],
+        pat: str,
+        deadline_seconds: float,
+    ) -> dict:
+        connect_timeout = int(self._metrics_client_options["connect_timeout_seconds"])
+        read_timeout = max(
+            1,
+            min(
+                self._metrics_read_timeout,
+                max(1, int(deadline_seconds) - connect_timeout),
+            ),
+        )
+        return self._aggregate_by_jql_with_client(
+            client=self._new_metrics_client(read_timeout_seconds=read_timeout),
+            jql=str(spec["jql"]),
+            pat=pat,
+            capture_keys=bool(spec.get("capture_keys", False)),
+            metric_name=metric_name,
+            deadline_seconds=deadline_seconds,
+        )
+
+    def compute_sprint_metrics_parallel(
+        self, board_id: int, sprint_id: int, pat: str, total_sp: float, total_count: int
+    ) -> dict:
+        jobs = self.metric_query_specs(board_id, sprint_id)
 
         self._trace(
             "Metrics start board_id=%s sprint_id=%s total_sp=%.2f total_count=%s",
@@ -818,11 +922,11 @@ class SprintViewerService:
         results: dict[str, dict] = {k: {"sp": 0.0, "count": 0} for k in jobs.keys()}
 
         def run_one(name: str, spec: dict) -> tuple[str, dict]:
-            agg = self._aggregate_by_jql_with_client(
-                client=self._new_client(),
-                jql=spec["jql"],
+            agg = self.collect_metric_query(
+                metric_name=name,
+                spec=spec,
                 pat=pat,
-                capture_keys=bool(spec.get("capture_keys", False)),
+                deadline_seconds=self._operation_deadline_seconds,
             )
             return name, agg
 

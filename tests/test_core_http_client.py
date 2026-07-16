@@ -154,6 +154,24 @@ def test_http_client_retry_policy_is_configurable():
     assert retry.status_forcelist == (500, 503)
 
 
+def test_http_client_can_disable_read_retries_for_expensive_queries():
+    client = ExternalHttpClient(
+        "jira",
+        "https://jira.example",
+        retry_total=1,
+        retry_connect=1,
+        retry_read=0,
+        retry_status=1,
+    )
+
+    retry = client._session.get_adapter("https://").max_retries
+
+    assert retry.total == 1
+    assert retry.connect == 1
+    assert retry.read == 0
+    assert retry.status == 1
+
+
 def test_http_client_rejects_cross_origin_absolute_url_before_sending_credentials():
     session = FakeSession(response=FakeResponse(payload={"ok": True}))
     client = ExternalHttpClient("jira", "https://jira.example", session=session)

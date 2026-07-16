@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+METRIC_QUERY_NAMES = (
+    "original_commitment",
+    "completed_original",
+    "total_completed",
+    "added_scope",
+    "removed_scope",
+)
+
 
 def _number(value: Any, kind: type[float] | type[int]):
     try:
@@ -82,3 +90,59 @@ def build_scrum_metrics(results: dict[str, dict]) -> dict:
         }
     )
     return output
+
+
+_METRIC_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "original_commitment_sp": frozenset({"original_commitment"}),
+    "original_commitment_count": frozenset({"original_commitment"}),
+    "committed_sp": frozenset({"original_commitment"}),
+    "committed_count": frozenset({"original_commitment"}),
+    "completed_original_sp": frozenset({"completed_original"}),
+    "completed_original_count": frozenset({"completed_original"}),
+    "total_completed_sp": frozenset({"total_completed"}),
+    "total_completed_count": frozenset({"total_completed"}),
+    "delivered_sp": frozenset({"total_completed"}),
+    "delivered_count": frozenset({"total_completed"}),
+    "added_scope_sp": frozenset({"added_scope"}),
+    "added_scope_count": frozenset({"added_scope"}),
+    "scope_added_sp": frozenset({"added_scope"}),
+    "scope_added_count": frozenset({"added_scope"}),
+    "scope_added_keys": frozenset({"added_scope"}),
+    "removed_scope_sp": frozenset({"removed_scope"}),
+    "removed_scope_count": frozenset({"removed_scope"}),
+    "descope_sp": frozenset({"removed_scope"}),
+    "descope_count": frozenset({"removed_scope"}),
+    "completed_added_sp": frozenset({"total_completed", "completed_original"}),
+    "completed_added_count": frozenset({"total_completed", "completed_original"}),
+    "carryover_sp": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "carryover_count": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "spillover_sp": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "spillover_count": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "spill_pct": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "spill_red": frozenset({"original_commitment", "completed_original", "removed_scope"}),
+    "scope_net_sp": frozenset({"added_scope", "removed_scope"}),
+    "scope_net_count": frozenset({"added_scope", "removed_scope"}),
+    "commitment_predictability_pct": frozenset({"original_commitment", "completed_original"}),
+    "predictability_pct": frozenset({"original_commitment", "completed_original"}),
+    "total_delivery_vs_commitment_pct": frozenset({"original_commitment", "total_completed"}),
+    "added_scope_pct": frozenset({"original_commitment", "added_scope"}),
+    "scope_pct": frozenset({"original_commitment", "added_scope"}),
+    "scope_red": frozenset({"original_commitment", "added_scope"}),
+    "removed_scope_pct": frozenset({"original_commitment", "removed_scope"}),
+    "scope_change_pct": frozenset({"original_commitment", "added_scope", "removed_scope"}),
+}
+
+
+def build_available_scrum_metrics(results: dict[str, dict]) -> dict:
+    """Return only metrics whose upstream queries completed successfully.
+
+    Omitting unavailable values prevents a timed-out query from being represented
+    as a real zero in the UI or exported report.
+    """
+    available = {name for name in METRIC_QUERY_NAMES if name in results}
+    full = build_scrum_metrics(results)
+    return {
+        name: value
+        for name, value in full.items()
+        if _METRIC_DEPENDENCIES.get(name, frozenset(METRIC_QUERY_NAMES)).issubset(available)
+    }

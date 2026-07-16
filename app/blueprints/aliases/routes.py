@@ -14,6 +14,8 @@ from ..automation.routes import (
     sprint_viewer_fetch_issues,
     sprint_viewer_fetch_metrics,
     sprint_viewer_get_sprints,
+    sprint_viewer_metric_status,
+    sprint_viewer_retry_metrics,
 )
 from ..config.routes import custom_views, integrations, projects
 from ..main.routes import client_log, extend_session, home, session_status
@@ -97,6 +99,18 @@ aliases_bp.add_url_rule(
     "/api/automation/sprint-viewer/metrics",
     "api_sprint_viewer_metrics",
     sprint_viewer_fetch_metrics,
+    methods=["POST"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/metrics/<job_id>",
+    "api_sprint_viewer_metric_status",
+    sprint_viewer_metric_status,
+    methods=["GET"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/metrics/<job_id>/retry",
+    "api_sprint_viewer_metrics_retry",
+    sprint_viewer_retry_metrics,
     methods=["POST"],
 )
 aliases_bp.add_url_rule(

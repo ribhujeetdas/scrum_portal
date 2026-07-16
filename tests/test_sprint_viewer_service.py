@@ -1,5 +1,6 @@
 from flask import Flask
 
+from app.features.automation.sprint_viewer.metrics import build_available_scrum_metrics
 from app.services.sprint_viewer_service import SprintViewerService
 
 
@@ -62,6 +63,23 @@ def test_scrum_metrics_use_completed_original_for_predictability():
     assert metrics["carryover_sp"] == 4.0
     assert metrics["scope_net_sp"] == 8.0
     assert metrics["scope_added_keys"] == ["ABC-9"]
+
+
+def test_partial_scrum_metrics_omit_values_with_missing_dependencies():
+    metrics = build_available_scrum_metrics(
+        {
+            "original_commitment": {"sp": 40, "count": 10},
+            "completed_original": {"sp": 32, "count": 8},
+            "added_scope": {"sp": 12, "count": 3, "keys": ["ABC-9"]},
+        }
+    )
+
+    assert metrics["committed_sp"] == 40
+    assert metrics["predictability_pct"] == 80.0
+    assert metrics["scope_added_keys"] == ["ABC-9"]
+    assert "delivered_sp" not in metrics
+    assert "spillover_sp" not in metrics
+    assert "scope_net_sp" not in metrics
 
 
 def test_relevant_comments_count_assignee_or_sprint_team_before_sprint_end():
@@ -153,6 +171,11 @@ def test_metric_worker_clients_keep_resilience_configuration_without_app_context
         EXTERNAL_HTTP_CIRCUIT_RESET_SECONDS=45,
         EXTERNAL_OPERATION_MAX_PAGES=33,
         EXTERNAL_OPERATION_DEADLINE_SECONDS=88,
+        SPRINT_METRICS_CONNECT_TIMEOUT_SECONDS=5,
+        SPRINT_METRICS_CONNECT_RETRIES=1,
+        SPRINT_METRICS_READ_RETRIES=0,
+        SPRINT_METRICS_STATUS_RETRIES=1,
+        SPRINT_METRICS_READ_TIMEOUT_SECONDS=45,
     )
     with app.app_context():
         service = SprintViewerService("https://jira.example", timeout_seconds=19)
@@ -170,3 +193,12 @@ def test_metric_worker_clients_keep_resilience_configuration_without_app_context
     assert worker_client.circuit_reset_seconds == 45
     assert service._operation_max_pages == 33
     assert service._operation_deadline_seconds == 88
+
+    metric_client = service._new_metrics_client()
+    metric_retry = metric_client._session.get_adapter("https://").max_retries
+    assert metric_client.service == "jira_sprint_metrics"
+    assert metric_client.timeout_seconds == 45
+    assert metric_client.connect_timeout_seconds == 5
+    assert metric_retry.connect == 1
+    assert metric_retry.read == 0
+    assert metric_retry.status == 1

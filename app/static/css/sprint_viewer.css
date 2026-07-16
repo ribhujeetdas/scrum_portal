@@ -88,3 +88,18 @@
 .sv-stat {
   color: #444;
 }
+
+.sv-metrics-status {
+  min-height: 2rem;
+}
+
+.sv-metrics-status[data-state="partial"],
+.sv-metrics-status[data-state="failed"] {
+  border-left: 3px solid #dc3545;
+  padding-left: 0.75rem;
+}
+
+.sv-metrics-status[data-state="succeeded"] {
+  border-left: 3px solid #198754;
+  padding-left: 0.75rem;
+}

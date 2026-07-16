@@ -68,7 +68,7 @@ def test_phase4_feature_fetches_use_canonical_api_routes():
         assert f"`{legacy_path}" not in combined
 
 
-def test_sprint_viewer_report_download_waits_for_metrics():
+def test_sprint_viewer_report_download_supports_issues_partial_and_full_results():
     template = read("app/templates/automation/sprint_viewer.html")
     script = read("app/static/js/sprint_viewer.js")
 
@@ -77,25 +77,31 @@ def test_sprint_viewer_report_download_waits_for_metrics():
     assert "Actual Start" in template
     assert "Completed:" not in template
     assert 'id="downloadSprintReportBtn"' in template
-    assert "Download Report" in template
+    assert "Download Issues Report" in template
     assert "downloadSprintReportBtn" in script
     assert "confirmStartOver" in script
     assert "buildSprintReportWorkbook" in script
     assert "buildXlsxBlob" in script
     assert ".xlsx" in script
     assert "startMetricsRequest" in script
-    assert "setReportDownloadReady(false)" in script
     assert "setReportDownloadReady(true)" in script
+    assert "Download Partial Report" in script
+    assert 'return "Unavailable"' in script
+    assert 'currentReportData.metricStatus === "succeeded"' in script
 
 
 def test_sprint_viewer_renders_issues_before_loading_metrics_in_background():
     template = read("app/templates/automation/sprint_viewer.html")
     script = read("app/static/js/sprint_viewer.js")
-    click_handler = script[script.index('fetchIssuesBtn.addEventListener("click"'):]
+    click_handler = script[script.index('fetchIssuesBtn.addEventListener("click"') :]
 
     assert 'id="metricsStatus"' in template
     assert 'aria-live="polite"' in template
+    assert 'id="metricsRetryBtn"' in template
+    assert 'id="metricsRefreshBtn"' in template
     assert "loadMetricsInBackground" in script
+    assert "pollMetricJob" in script
+    assert "document.hidden ? 8000 : 1500" in script
     assert "const metricsPromise" not in click_handler
     assert "await metricsPromise" not in click_handler
     assert click_handler.index("renderGroupedAccordion") < click_handler.index("unlockUi();")
@@ -109,7 +115,9 @@ def test_sprint_viewer_renders_issues_before_loading_metrics_in_background():
 def test_sprint_viewer_assignee_details_have_native_expand_collapse_behavior():
     script = read("app/static/js/sprint_viewer.js")
     accordion_renderer = script[
-        script.index("function setAssigneeDetailsExpanded") : script.index("function showMetricsLoading")
+        script.index("function setAssigneeDetailsExpanded") : script.index(
+            "function showMetricsLoading"
+        )
     ]
 
     assert "function toggleAssigneeDetails" in accordion_renderer

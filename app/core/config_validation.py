@@ -94,6 +94,10 @@ def collect_config_errors(app: Flask) -> list[str]:
     except ValueError:
         errors.append("EXTERNAL_HTTP_RETRY_STATUS_CODES must contain HTTP 4xx/5xx codes.")
 
+    metrics_mode = str(app.config.get("SPRINT_METRICS_MODE", "queued") or "").lower()
+    if metrics_mode not in {"queued", "legacy"}:
+        errors.append("SPRINT_METRICS_MODE must be queued or legacy.")
+
     journal_mode = str(app.config.get("SQLITE_JOURNAL_MODE", "DELETE") or "").upper()
     if journal_mode not in {"DELETE", "WAL"}:
         errors.append("SQLITE_JOURNAL_MODE must be DELETE or WAL.")
@@ -155,6 +159,10 @@ def collect_config_warnings(app: Flask) -> list[str]:
     for key in REQUIRED_INTEGRATION_SETTINGS:
         if not str(app.config.get(key, "") or "").strip():
             warnings.append(f"{key} is missing.")
+    if str(app.config.get("SPRINT_METRICS_MODE", "queued") or "").lower() == "legacy":
+        warnings.append(
+            "SPRINT_METRICS_MODE=legacy is deprecated; use queued mode after diagnosis."
+        )
     return warnings
 
 

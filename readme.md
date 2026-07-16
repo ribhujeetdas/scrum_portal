@@ -73,6 +73,7 @@ Before continuing, edit `.env` and replace at least these example values:
 | `TABLEAU_BASE_URL` | Tableau origin, for example `https://tableau.company.example`. |
 | `JIRA_AUTOMATION_ACTOR_ACCOUNT_ID` | Jira automation actor account ID used by rule-copy workflows. |
 | `APPLICATION_VERSION` | Local release identifier shown in health checks and logs. |
+| `SPRINT_METRICS_MODE` | Keep `queued` so slow Jira calculations run outside HTTP request threads. |
 
 Keep `APP_ENV=production`, `SQLITE_JOURNAL_MODE=DELETE`,
 `SQLITE_SYNCHRONOUS=FULL`, and `DATABASE_INSTANCE_LOCK=true` for the supported
@@ -136,6 +137,12 @@ submitted email.
 
 Stop the server with `Ctrl+C`. Application and audit events are written to
 `logs/app.log` and `logs/audit.log` unless `.env` changes those paths.
+
+Sprint Viewer displays Jira issue details first. Commitment and scope metrics
+then update from a two-worker, SQLite-backed queue. A partial Jira failure keeps
+completed values visible and enables retry; closed-sprint results are cached per
+user. Keep the documented Sprint metric defaults unless timing evidence shows a
+specific need to change them.
 
 ## Existing installation or manual release copy
 

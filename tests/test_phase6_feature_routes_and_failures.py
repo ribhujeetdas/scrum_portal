@@ -5,7 +5,14 @@ from cryptography.fernet import Fernet
 from app import create_app
 from app.config import Config
 from app.extensions import db
-from app.models import User, UserBoard, UserProject, UserTableauCustomView
+from app.models import (
+    User,
+    UserBoard,
+    UserProject,
+    UserSprintMetricRun,
+    UserTableauCustomView,
+    utc_now,
+)
 from app.services.crypto_service import CryptoService
 from app.services.jira_projects_service import JiraProjectsServiceError
 from app.services.sprint_viewer_service import SprintViewerServiceError
@@ -180,6 +187,73 @@ def test_canonical_sprint_api_rejects_board_outside_user_projects(tmp_path):
     assert response.status_code == 403
     assert data["ok"] is False
     assert "Selected board does not belong" in data["error"]["message"]
+
+
+def test_queued_metric_api_returns_immediately_without_jira_pat_validation(tmp_path, monkeypatch):
+    app = create_phase6_app(tmp_path)
+    with app.app_context():
+        add_project(board_ids=(101,))
+
+    class FakeCoordinator:
+        max_attempts = 2
+
+        def start_or_reuse(self, **kwargs):
+            now = utc_now()
+            return (
+                UserSprintMetricRun(
+                    id="b" * 32,
+                    user_id=kwargs["user_id"],
+                    board_id=kwargs["board_id"],
+                    sprint_id=kwargs["sprint_id"],
+                    metrics_version="scrum-v1",
+                    generation=1,
+                    status="queued",
+                    total_sp=kwargs["total_sp"],
+                    total_count=kwargs["total_count"],
+                    progress_json={"total": 5, "completed": 0, "queries": {}},
+                    result_json={"aggregates": {}, "metrics": {}},
+                    attempt_count=0,
+                    correlation_id=kwargs["correlation_id"],
+                    created_at=now,
+                    updated_at=now,
+                ),
+                False,
+                True,
+            )
+
+    import app.features.automation.sprint_viewer.routes as sprint_routes
+
+    monkeypatch.setattr(sprint_routes, "get_sprint_metric_coordinator", lambda: FakeCoordinator())
+    monkeypatch.setattr(
+        sprint_routes,
+        "_validate_pat_belongs_to_user",
+        lambda _pat: (_ for _ in ()).throw(AssertionError("PAT validation must be asynchronous")),
+    )
+
+    client = app.test_client()
+    login(client)
+    response = client.post(
+        "/api/automation/sprint-viewer/metrics",
+        json={"board_id": 101, "sprint_id": 202, "total_sp": 44, "total_count": 11},
+    )
+    data = response.get_json()
+
+    assert response.status_code == 202
+    assert response.headers["Cache-Control"] == "no-store"
+    assert data["ok"] is True
+    assert data["job"]["status"] == "queued"
+    assert data["job"]["id"] == "b" * 32
+
+
+def test_metric_status_validation_errors_are_not_cacheable(tmp_path):
+    app = create_phase6_app(tmp_path)
+    client = app.test_client()
+    login(client)
+
+    response = client.get("/api/automation/sprint-viewer/metrics/not-a-job")
+
+    assert response.status_code == 404
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_projects_route_handles_mocked_jira_project_failure(tmp_path, monkeypatch):
