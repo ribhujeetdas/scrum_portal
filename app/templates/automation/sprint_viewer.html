@@ -155,7 +155,11 @@
     </div>
 
     <!-- UPDATED: metrics show count + pts and added more single-sprint metrics -->
-    <div id="metricsBox" class="border rounded p-2 mb-3 d-none">
+    <div id="metricsBox" class="border rounded p-2 mb-3 d-none" aria-busy="false">
+      <div id="metricsStatus" class="small text-muted mb-2 d-none" role="status" aria-live="polite">
+        <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+        Calculating commitment and scope metrics&hellip;
+      </div>
       <div class="row g-2">
         <div class="col-md-3"><strong>Original Commitment</strong><span class="metric-help" title="Original committed work = completed original + incomplete original + removed after sprint start, excluding added-after-start items.">?</span>: <span id="committedFmt">0</span></div>
         <div class="col-md-3"><strong>Completed from Commitment</strong><span class="metric-help" title="Completed original committed pts / original committed pts. This excludes mid-sprint added scope.">?</span>: <span id="completedOriginalFmt">0</span></div>

@@ -125,6 +125,8 @@
     currentReportData = null;
     setReportDownloadReady(false);
     resultsCard.classList.add("d-none");
+    metricsBox.setAttribute("aria-busy", "false");
+    $("metricsStatus").classList.add("d-none");
     metricsBox.classList.add("d-none");
     statsBox.classList.add("d-none");
     sprintMetaBox.classList.add("d-none");
@@ -132,9 +134,13 @@
     clear(msgBox);
   }
 
-  function resetPageState() {
+  function invalidateCurrentReport() {
     activeFetchToken += 1;
     resetResults();
+  }
+
+  function resetPageState() {
+    invalidateCurrentReport();
     setFetchButtonMode("fetch");
     projectKey.value = "";
     boardId.replaceChildren(makeOption("", "-- Select Board --"));
@@ -586,6 +592,27 @@
     return link;
   }
 
+  function setAssigneeDetailsExpanded(button, collapse, expanded) {
+    button.classList.toggle("collapsed", !expanded);
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    collapse.classList.toggle("show", expanded);
+    collapse.hidden = !expanded;
+  }
+
+  function toggleAssigneeDetails(button, collapse) {
+    const shouldExpand = !collapse.classList.contains("show");
+    if (shouldExpand) {
+      Array.from(assigneeAccordion.children).forEach((item) => {
+        const otherButton = item.querySelector(".accordion-button");
+        const otherCollapse = item.querySelector(".accordion-collapse");
+        if (otherButton && otherCollapse && otherCollapse !== collapse) {
+          setAssigneeDetailsExpanded(otherButton, otherCollapse, false);
+        }
+      });
+    }
+    setAssigneeDetailsExpanded(button, collapse, shouldExpand);
+  }
+
   function renderGroupedAccordion(groups) {
     assigneeAccordion.replaceChildren();
     (groups || []).forEach((group, idx) => {
@@ -600,7 +627,6 @@
       const button = document.createElement("button");
       button.className = "accordion-button collapsed";
       button.type = "button";
-      button.setAttribute("data-bs-toggle", "collapse");
       button.setAttribute("data-bs-target", `#${collapseId}`);
       button.setAttribute("aria-expanded", "false");
       button.setAttribute("aria-controls", collapseId);
@@ -612,8 +638,9 @@
       const collapse = document.createElement("div");
       collapse.id = collapseId;
       collapse.className = "accordion-collapse collapse";
+      collapse.hidden = true;
       collapse.setAttribute("aria-labelledby", headerId);
-      collapse.setAttribute("data-bs-parent", "#assigneeAccordion");
+      button.addEventListener("click", () => toggleAssigneeDetails(button, collapse));
       const body = document.createElement("div");
       body.className = "accordion-body";
       const eid = document.createElement("div");
@@ -673,6 +700,8 @@
 
   function showMetricsLoading() {
     metricsBox.classList.remove("d-none");
+    metricsBox.setAttribute("aria-busy", "true");
+    $("metricsStatus").classList.remove("d-none");
     [
       "committedFmt", "deliveredFmt", "spilloverFmt", "scopeAddedFmt", "descopeFmt",
       "completedOriginalFmt", "scopeNetFmt", "scopePct", "predictabilityPct",
@@ -685,10 +714,14 @@
 
   function renderMetrics(metrics) {
     if (!metrics) {
+      metricsBox.setAttribute("aria-busy", "false");
+      $("metricsStatus").classList.add("d-none");
       metricsBox.classList.add("d-none");
       return;
     }
     metricsBox.classList.remove("d-none");
+    metricsBox.setAttribute("aria-busy", "false");
+    $("metricsStatus").classList.add("d-none");
     $("committedFmt").textContent = fmtCountSp(metrics.committed_count, metrics.committed_sp);
     $("completedOriginalFmt").textContent = fmtCountSp(metrics.completed_original_count, metrics.completed_original_sp);
     $("deliveredFmt").textContent = fmtCountSp(metrics.delivered_count, metrics.delivered_sp);
@@ -744,13 +777,13 @@
     });
   }
 
-  async function startMetricsRequest(bid, sid) {
+  async function startMetricsRequest(bid, sid, totalSp, totalCount) {
     try {
       return await postJson("/api/automation/sprint-viewer/metrics", {
         board_id: bid,
         sprint_id: sid,
-        total_sp: 0,
-        total_count: 0
+        total_sp: totalSp,
+        total_count: totalCount
       });
     } catch (error) {
       return { ok: false, error: "Network/Unexpected error while calculating metrics." };
@@ -760,6 +793,8 @@
   function renderMetricsResult(data, bid, sid) {
     if (!data || !data.ok) {
       showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
+      metricsBox.setAttribute("aria-busy", "false");
+      $("metricsStatus").classList.add("d-none");
       metricsBox.classList.add("d-none");
       setReportDownloadReady(false);
       return false;
@@ -770,13 +805,20 @@
       currentReportData.metrics = data.metrics || {};
       setReportDownloadReady(true);
     }
+    showAlert("success", "Issues and metrics loaded successfully.");
     return true;
+  }
+
+  async function loadMetricsInBackground(bid, sid, fetchToken, totalSp, totalCount) {
+    const metricsData = await startMetricsRequest(bid, sid, totalSp, totalCount);
+    if (fetchToken !== activeFetchToken) return;
+    renderMetricsResult(metricsData, bid, sid);
   }
 
   projectKey.addEventListener("change", () => {
     const selectedProject = (projectKey.value || "").trim().toUpperCase();
     projectKey.value = selectedProject;
-    resetResults();
+    invalidateCurrentReport();
     setFetchButtonMode("fetch");
     populateBoards(selectedProject);
     sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
@@ -784,7 +826,7 @@
   });
 
   boardId.addEventListener("change", () => {
-    resetResults();
+    invalidateCurrentReport();
     if (!boardId.value) {
       updateControlAvailability();
       return;
@@ -794,12 +836,12 @@
   });
 
   refreshSprintsBtn.addEventListener("click", () => {
-    resetResults();
+    invalidateCurrentReport();
     loadSprints(true);
   });
 
   sprintId.addEventListener("change", () => {
-    resetResults();
+    invalidateCurrentReport();
     updateControlAvailability();
   });
 
@@ -815,7 +857,7 @@
     resetResults();
     setFetchButtonMode("start-over");
     lockUi();
-    const metricsPromise = startMetricsRequest(bid, sid);
+    let metricsContext = null;
     try {
       const data = await postJson("/api/automation/sprint-viewer/issues", {
         board_id: bid,
@@ -845,14 +887,25 @@
       resultsCard.classList.remove("d-none");
       showAlert("success", "Issues fetched successfully. Metrics are calculating...");
       showMetricsLoading();
-      const metricsData = await metricsPromise;
-      if (fetchToken !== activeFetchToken) return;
-      renderMetricsResult(metricsData, bid, sid);
+      metricsContext = {
+        totalSp: data.total_sp ?? 0,
+        totalCount: data.standard_total ?? data.total ?? 0
+      };
     } catch (error) {
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
       setFetchButtonMode("fetch");
     } finally {
       unlockUi();
+      updateControlAvailability();
+    }
+    if (metricsContext && fetchToken === activeFetchToken) {
+      loadMetricsInBackground(
+        bid,
+        sid,
+        fetchToken,
+        metricsContext.totalSp,
+        metricsContext.totalCount
+      );
     }
   });
 

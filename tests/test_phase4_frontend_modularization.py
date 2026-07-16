@@ -86,3 +86,35 @@ def test_sprint_viewer_report_download_waits_for_metrics():
     assert "startMetricsRequest" in script
     assert "setReportDownloadReady(false)" in script
     assert "setReportDownloadReady(true)" in script
+
+
+def test_sprint_viewer_renders_issues_before_loading_metrics_in_background():
+    template = read("app/templates/automation/sprint_viewer.html")
+    script = read("app/static/js/sprint_viewer.js")
+    click_handler = script[script.index('fetchIssuesBtn.addEventListener("click"'):]
+
+    assert 'id="metricsStatus"' in template
+    assert 'aria-live="polite"' in template
+    assert "loadMetricsInBackground" in script
+    assert "const metricsPromise" not in click_handler
+    assert "await metricsPromise" not in click_handler
+    assert click_handler.index("renderGroupedAccordion") < click_handler.index("unlockUi();")
+    assert click_handler.index("unlockUi();") < click_handler.index("loadMetricsInBackground(")
+    assert "invalidateCurrentReport" in script
+    assert "if (fetchToken !== activeFetchToken) return;" in script
+    assert "totalSp: data.total_sp ?? 0" in click_handler
+    assert "totalCount: data.standard_total ?? data.total ?? 0" in click_handler
+
+
+def test_sprint_viewer_assignee_details_have_native_expand_collapse_behavior():
+    script = read("app/static/js/sprint_viewer.js")
+    accordion_renderer = script[
+        script.index("function setAssigneeDetailsExpanded") : script.index("function showMetricsLoading")
+    ]
+
+    assert "function toggleAssigneeDetails" in accordion_renderer
+    assert 'button.addEventListener("click"' in accordion_renderer
+    assert 'button.setAttribute("aria-expanded"' in accordion_renderer
+    assert 'collapse.classList.toggle("show", expanded)' in accordion_renderer
+    assert "collapse.hidden = !expanded" in accordion_renderer
+    assert "data-bs-toggle" not in accordion_renderer
