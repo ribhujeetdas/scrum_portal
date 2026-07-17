@@ -48,7 +48,6 @@
 
 <div id="sprintViewerPage"
      data-feature-script-src="{{ url_for('static', filename='js/sprint_viewer.js') }}"
-     data-boards="{{ boards_by_project|tojson|forceescape }}"
      data-jira-base-url="{{ jira_base_url|default('', true) }}">
 <div id="loadingOverlay" class="loading-overlay" aria-hidden="true">
   <div class="text-center">
@@ -75,34 +74,42 @@
     <input type="hidden" id="csrfToken" value="{{ csrf_token() }}">
 
     <div class="row g-3 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label">Project Key</label>
-        <select id="projectKey" class="form-select">
-          <option value="">-- Select Project --</option>
+      <form id="projectForm" class="col-md-3" novalidate>
+        <label class="form-label" for="projectKey">Project Key</label>
+        <div class="input-group">
+          <input id="projectKey" class="form-control" type="text" list="projectSuggestions"
+                 maxlength="32" autocomplete="off" placeholder="e.g. ABC" aria-describedby="projectStatus">
+          <button id="validateProjectBtn" class="btn btn-outline-primary" type="submit">Load Boards</button>
+        </div>
+        <datalist id="projectSuggestions">
           {% for pk in projects %}
-          <option value="{{ pk }}">{{ pk }}</option>
+          <option value="{{ pk }}"></option>
           {% endfor %}
-        </select>
-      </div>
+        </datalist>
+        <div id="projectStatus" class="form-text" aria-live="polite"></div>
+      </form>
 
-      <div class="col-md-4">
-        <label class="form-label">Board</label>
-        <select id="boardId" class="form-select" disabled>
+      <div class="col-md-3">
+        <label class="form-label" for="boardId">Board</label>
+        <select id="boardId" class="form-select" aria-describedby="boardStatus" disabled>
           <option value="">-- Select Board --</option>
         </select>
+        <div id="boardStatus" class="form-text" aria-live="polite"></div>
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">Sprint</label>
-        <select id="sprintId" class="form-select" disabled>
+        <label class="form-label" for="sprintId">Sprint</label>
+        <select id="sprintId" class="form-select" aria-describedby="sprintStatus" disabled>
           <option value="">-- Select Sprint --</option>
         </select>
+        <div id="sprintStatus" class="form-text" aria-live="polite"></div>
       </div>
 
-      <div class="col-md-2">
+      <div class="col-md-3">
         <button id="fetchIssuesBtn" class="btn btn-primary w-100 sv-reset-fetch-mode" disabled>
           Fetch Issues
         </button>
+        <div id="issueStatus" class="form-text" aria-live="polite"></div>
       </div>
     </div>
 

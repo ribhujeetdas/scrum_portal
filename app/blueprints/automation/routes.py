@@ -38,6 +38,12 @@ def sprint_viewer_get_sprints():
     return sprint_viewer_feature.sprint_viewer_get_sprints()
 
 
+@automation_bp.route("/sprint-viewer/boards", methods=["POST"])
+@login_required
+def sprint_viewer_get_boards():
+    return sprint_viewer_feature.sprint_viewer_get_boards()
+
+
 @automation_bp.route("/sprint-viewer/issues", methods=["POST"])
 @login_required
 def sprint_viewer_fetch_issues():

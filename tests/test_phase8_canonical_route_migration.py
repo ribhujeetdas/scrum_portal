@@ -39,7 +39,8 @@ def test_dashboard_and_sidebar_render_canonical_links(tmp_path):
     assert response.status_code == 200
     assert 'href="/dashboard"' in html
     assert 'href="/settings/integrations"' in html
-    assert 'href="/reports/tci"' in html
+    assert 'href="/automation/sprint-viewer"' in html
+    assert 'href="/reports/tci"' not in html
     assert 'action="/auth/logout"' in html
     assert 'href="/home"' not in html
     assert 'href="/config/integrations"' not in html
@@ -51,13 +52,13 @@ def test_settings_tabs_render_canonical_links(tmp_path):
     client = app.test_client()
     login(client)
 
-    response = client.get("/settings/projects-boards")
+    response = client.get("/settings/integrations")
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
     assert 'href="/settings/integrations"' in html
-    assert 'href="/settings/projects-boards"' in html
-    assert 'href="/settings/tableau-custom-views"' in html
+    assert 'href="/settings/projects-boards"' not in html
+    assert 'href="/settings/tableau-custom-views"' not in html
     assert 'href="/config/' not in html
 
 

@@ -47,6 +47,7 @@ def test_canonical_api_routes_are_registered(tmp_path):
     assert {
         "/api/automation/rule-copier/fetch",
         "/api/automation/rule-copier/copy",
+        "/api/automation/sprint-viewer/boards",
         "/api/automation/sprint-viewer/sprints",
         "/api/automation/sprint-viewer/issues",
         "/api/automation/sprint-viewer/metrics",

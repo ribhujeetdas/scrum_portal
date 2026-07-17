@@ -14,6 +14,7 @@ from ..automation.routes import (
     fetch_rule,
     sprint_viewer_fetch_issues,
     sprint_viewer_fetch_metrics,
+    sprint_viewer_get_boards,
     sprint_viewer_get_sprints,
 )
 from ..config.routes import custom_views, integrations, projects
@@ -80,6 +81,12 @@ aliases_bp.add_url_rule(
     "/api/automation/rule-copier/copy",
     "api_rule_copier_copy",
     copy_rule,
+    methods=["POST"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/boards",
+    "api_sprint_viewer_boards",
+    sprint_viewer_get_boards,
     methods=["POST"],
 )
 aliases_bp.add_url_rule(

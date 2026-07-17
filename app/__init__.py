@@ -63,6 +63,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         "/client-log": "/api/client-log",
         "/automation/rule-copier/fetch-rule": "/api/automation/rule-copier/fetch",
         "/automation/rule-copier/copy-rule": "/api/automation/rule-copier/copy",
+        "/automation/sprint-viewer/boards": "/api/automation/sprint-viewer/boards",
         "/automation/sprint-viewer/sprints": "/api/automation/sprint-viewer/sprints",
         "/automation/sprint-viewer/issues": "/api/automation/sprint-viewer/issues",
         "/automation/sprint-viewer/metrics": "/api/automation/sprint-viewer/metrics",

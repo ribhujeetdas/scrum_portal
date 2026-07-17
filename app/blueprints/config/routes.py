@@ -162,10 +162,14 @@ def _save_tableau_pat(tableau_form: TableauConfigForm):
 @config_bp.route("/projects", methods=["GET", "POST"])
 @login_required
 def projects():
+    if not current_app.config.get("SHOW_HIDDEN_SETTINGS_FEATURES", False):
+        return redirect(url_for("aliases.settings_integrations"))
     return projects_page()
 
 
 @config_bp.route("/custom-views", methods=["GET", "POST"])
 @login_required
 def custom_views():
+    if not current_app.config.get("SHOW_HIDDEN_SETTINGS_FEATURES", False):
+        return redirect(url_for("aliases.settings_integrations"))
     return custom_views_page()

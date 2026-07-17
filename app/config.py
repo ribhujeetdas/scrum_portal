@@ -85,6 +85,15 @@ class Config:
     )
     LEGACY_ROUTE_SUNSET = os.getenv("LEGACY_ROUTE_SUNSET", "")
 
+    # Reversible visibility switches for temporarily unavailable UI features.
+    # Their routes and implementation remain registered so they can be restored.
+    SHOW_HIDDEN_DASHBOARD_FEATURES = (
+        os.getenv("SHOW_HIDDEN_DASHBOARD_FEATURES", "false").lower() == "true"
+    )
+    SHOW_HIDDEN_SETTINGS_FEATURES = (
+        os.getenv("SHOW_HIDDEN_SETTINGS_FEATURES", "false").lower() == "true"
+    )
+
     SPRINT_METRICS_MAX_WORKERS = int(os.getenv("SPRINT_METRICS_MAX_WORKERS", "5"))
     SPRINT_METRICS_HTTP_TIMEOUT_SECONDS = int(
         os.getenv("SPRINT_METRICS_HTTP_TIMEOUT_SECONDS", str(EXTERNAL_HTTP_TIMEOUT_SECONDS))

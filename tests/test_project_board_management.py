@@ -16,6 +16,7 @@ class ProjectBoardTestConfig(Config):
     FERNET_KEY = Fernet.generate_key().decode("ascii")
     LOG_TO_CONSOLE = False
     LOG_FILE = "test-app.log"
+    SHOW_HIDDEN_SETTINGS_FEATURES = True
 
 
 def create_project_board_app(tmp_path):

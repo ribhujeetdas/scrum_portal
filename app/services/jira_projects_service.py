@@ -48,7 +48,16 @@ class JiraProjectsService:
         Parses:
           permissions.ADMINISTER_PROJECTS.havePermission == True
         """
-        params = {"projectKey": project_key}
+        return self._has_project_permission(project_key, pat, "ADMINISTER_PROJECTS")
+
+    def has_browse_projects(self, project_key: str, pat: str) -> bool:
+        """Return whether the PAT user can browse the requested Jira project."""
+        return self._has_project_permission(project_key, pat, "BROWSE_PROJECTS")
+
+    def _has_project_permission(
+        self, project_key: str, pat: str, permission_key: str
+    ) -> bool:
+        params = {"projectKey": project_key, "permissions": permission_key}
         try:
             data = self._client.get_json(
                 "/rest/api/2/mypermissions",
@@ -76,8 +85,8 @@ class JiraProjectsService:
                 f"Network error calling mypermissions: {exc}") from exc
 
         perms = data.get("permissions") or {}
-        admin = perms.get("ADMINISTER_PROJECTS") or {}
-        return bool(admin.get("havePermission"))
+        permission = perms.get(permission_key) or {}
+        return bool(permission.get("havePermission"))
 
     def list_boards_for_project(self, project_key: str, pat: str) -> list[dict]:
         """

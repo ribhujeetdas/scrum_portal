@@ -2,11 +2,12 @@
   const page = document.getElementById("sprintViewerPage");
   if (!page) return;
 
-  const boardsByProject = JSON.parse(page.getAttribute("data-boards") || "{}");
   const jiraBaseUrl = page.getAttribute("data-jira-base-url") || "";
   const apiFetch = window.portalApiFetch || window.fetch.bind(window);
   const overlay = document.getElementById("loadingOverlay");
+  const projectForm = document.getElementById("projectForm");
   const projectKey = document.getElementById("projectKey");
+  const validateProjectBtn = document.getElementById("validateProjectBtn");
   const boardId = document.getElementById("boardId");
   const sprintId = document.getElementById("sprintId");
   const refreshSprintsBtn = document.getElementById("refreshSprintsBtn");
@@ -19,14 +20,27 @@
   const metricsBox = document.getElementById("metricsBox");
   const workTypeMixBox = document.getElementById("workTypeMixBox");
   const assigneeAccordion = document.getElementById("assigneeAccordion");
+  const projectStatus = document.getElementById("projectStatus");
+  const boardStatus = document.getElementById("boardStatus");
+  const sprintStatus = document.getElementById("sprintStatus");
+  const issueStatus = document.getElementById("issueStatus");
   let currentReportData = null;
   let activeFetchToken = 0;
+  let validatedProjectKey = "";
+  let projectLoading = false;
+  let boardsLoaded = false;
+  let sprintLoading = false;
+  let sprintsLoaded = false;
+  let issueLoading = false;
+  const requestVersions = { boards: 0, sprints: 0, issues: 0, metrics: 0 };
+  const requestControllers = { boards: null, sprints: null, issues: null, metrics: null };
 
   function $(id) {
     return document.getElementById(id);
   }
 
   function setDisabled(el, disabled) {
+    if (!el) return;
     if (disabled) el.setAttribute("disabled", "disabled");
     else el.removeAttribute("disabled");
   }
@@ -58,11 +72,59 @@
   }
 
   function updateControlAvailability() {
-    const resultsActive = isStartOverMode();
-    setDisabled(boardId, resultsActive || !projectKey.value);
-    setDisabled(sprintId, resultsActive || !boardId.value);
-    setDisabled(refreshSprintsBtn, resultsActive || !boardId.value);
-    setDisabled(fetchIssuesBtn, resultsActive ? false : !sprintId.value);
+    const normalizedProject = normalizeProjectKey(projectKey.value);
+    const projectReady = Boolean(
+      boardsLoaded && validatedProjectKey && normalizedProject === validatedProjectKey
+    );
+    const boardsAvailable = boardId.options.length > 1;
+    const sprintsAvailable = sprintId.options.length > 1;
+
+    setDisabled(validateProjectBtn, projectLoading || !normalizedProject);
+    setDisabled(boardId, !projectReady || !boardsAvailable);
+    setDisabled(
+      sprintId,
+      !projectReady || !boardId.value || sprintLoading || !sprintsLoaded || !sprintsAvailable
+    );
+    setDisabled(refreshSprintsBtn, !projectReady || !boardId.value || sprintLoading);
+    setDisabled(
+      fetchIssuesBtn,
+      issueLoading || (isStartOverMode() ? false : (!sprintsLoaded || !sprintId.value))
+    );
+  }
+
+  function normalizeProjectKey(value) {
+    return String(value || "").trim().toUpperCase();
+  }
+
+  function validProjectKey(value) {
+    return /^[A-Z][A-Z0-9_]{1,31}$/.test(value);
+  }
+
+  function setStatus(element, kind, text) {
+    if (!element) return;
+    element.className = "form-text";
+    if (kind === "danger") element.classList.add("text-danger");
+    if (kind === "success") element.classList.add("text-success");
+    if (kind === "warning") element.classList.add("text-warning");
+    element.textContent = text || "";
+  }
+
+  function abortRequest(name) {
+    const controller = requestControllers[name];
+    if (controller) controller.abort();
+    requestControllers[name] = null;
+    requestVersions[name] += 1;
+  }
+
+  function startRequest(name) {
+    abortRequest(name);
+    const controller = new AbortController();
+    requestControllers[name] = controller;
+    return { version: requestVersions[name], signal: controller.signal };
+  }
+
+  function requestIsCurrent(name, version) {
+    return requestVersions[name] === version;
   }
 
   function errorMessage(data, fallback) {
@@ -113,10 +175,11 @@
     msgBox.replaceChildren(alert);
   }
 
-  async function postJson(url, payload) {
+  async function postJson(url, payload, signal) {
     const response = await apiFetch(url, {
       method: "POST",
-      body: JSON.stringify(payload || {})
+      body: JSON.stringify(payload || {}),
+      signal
     });
     return response.json();
   }
@@ -133,12 +196,26 @@
   }
 
   function resetPageState() {
+    abortRequest("boards");
+    abortRequest("sprints");
+    abortRequest("issues");
+    abortRequest("metrics");
     activeFetchToken += 1;
+    projectLoading = false;
+    sprintLoading = false;
+    issueLoading = false;
+    boardsLoaded = false;
+    sprintsLoaded = false;
+    validatedProjectKey = "";
     resetResults();
     setFetchButtonMode("fetch");
     projectKey.value = "";
     boardId.replaceChildren(makeOption("", "-- Select Board --"));
     sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
+    setStatus(projectStatus, "", "");
+    setStatus(boardStatus, "", "");
+    setStatus(sprintStatus, "", "");
+    setStatus(issueStatus, "", "");
     updateControlAvailability();
   }
 
@@ -150,9 +227,9 @@
     return true;
   }
 
-  function populateBoards(project) {
+  function populateBoards(boards) {
     boardId.replaceChildren(makeOption("", "-- Select Board --"));
-    (boardsByProject[project] || []).forEach((board) => {
+    (boards || []).forEach((board) => {
       boardId.appendChild(makeOption(board.board_id, `${board.board_name} (ID: ${board.board_id})`));
     });
   }
@@ -487,25 +564,136 @@
     URL.revokeObjectURL(url);
   }
 
+  function resetIssueFlow() {
+    abortRequest("issues");
+    abortRequest("metrics");
+    activeFetchToken += 1;
+    issueLoading = false;
+    resetResults();
+    setFetchButtonMode("fetch");
+    setStatus(issueStatus, "", "");
+  }
+
+  function resetSprintFlow() {
+    abortRequest("sprints");
+    sprintLoading = false;
+    sprintsLoaded = false;
+    sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
+    setStatus(sprintStatus, "", "");
+    resetIssueFlow();
+  }
+
+  function resetBoardFlow() {
+    validatedProjectKey = "";
+    boardsLoaded = false;
+    boardId.replaceChildren(makeOption("", "-- Select Board --"));
+    setStatus(boardStatus, "", "");
+    resetSprintFlow();
+  }
+
+  async function loadBoards() {
+    if (projectLoading) return;
+    const requestedProject = normalizeProjectKey(projectKey.value);
+    projectKey.value = requestedProject;
+    abortRequest("boards");
+    resetBoardFlow();
+
+    if (!validProjectKey(requestedProject)) {
+      setStatus(
+        projectStatus,
+        "danger",
+        "Enter 2-32 letters, numbers, or underscores, starting with a letter."
+      );
+      updateControlAvailability();
+      return;
+    }
+
+    projectLoading = true;
+    setStatus(projectStatus, "", `Validating Jira project ${requestedProject}...`);
+    setStatus(boardStatus, "", "Boards will load after project access is verified.");
+    updateControlAvailability();
+    const requestState = startRequest("boards");
+
+    try {
+      const data = await postJson(
+        "/api/automation/sprint-viewer/boards",
+        { project_key: requestedProject },
+        requestState.signal
+      );
+      if (!requestIsCurrent("boards", requestState.version)) return;
+      if (!data.ok) {
+        setStatus(projectStatus, "danger", errorMessage(data, "Unable to validate this project."));
+        setStatus(boardStatus, "", "");
+        return;
+      }
+
+      const boards = data.boards || [];
+      validatedProjectKey = data.project_key || requestedProject;
+      boardsLoaded = true;
+      populateBoards(boards);
+      setStatus(projectStatus, "success", `Project ${validatedProjectKey} is accessible.`);
+      if (boards.length) {
+        setStatus(boardStatus, "success", `${boards.length} board(s) loaded. Select a board.`);
+      } else {
+        setStatus(boardStatus, "warning", "No Jira boards are associated with this project.");
+      }
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (!requestIsCurrent("boards", requestState.version)) return;
+      setStatus(projectStatus, "danger", "Network error while validating the Jira project.");
+      setStatus(boardStatus, "", "");
+    } finally {
+      if (requestIsCurrent("boards", requestState.version)) {
+        projectLoading = false;
+        requestControllers.boards = null;
+        updateControlAvailability();
+      }
+    }
+  }
+
   async function loadSprints(refresh) {
-    lockUi();
+    if (sprintLoading || !boardsLoaded || !boardId.value) return;
+    const requestedProject = validatedProjectKey;
+    const requestedBoard = Number(boardId.value);
+    resetSprintFlow();
+    sprintLoading = true;
+    setStatus(sprintStatus, "", "Loading sprints...");
+    updateControlAvailability();
+    const requestState = startRequest("sprints");
+
     try {
       const data = await postJson("/api/automation/sprint-viewer/sprints", {
-        project_key: projectKey.value.trim().toUpperCase(),
-        board_id: Number(boardId.value),
+        project_key: requestedProject,
+        board_id: requestedBoard,
         refresh: Boolean(refresh)
-      });
+      }, requestState.signal);
+      if (!requestIsCurrent("sprints", requestState.version)) return;
       if (!data.ok) {
+        setStatus(sprintStatus, "danger", errorMessage(data, "Failed to load sprints."));
         showAlert("danger", errorMessage(data, "Failed to load sprints."));
         return;
       }
-      populateSprints(data.sprints || []);
-      setDisabled(sprintId, false);
-      showAlert("success", `Sprints loaded (${data.source}). Select a sprint to fetch issues.`);
+      const sprints = data.sprints || [];
+      populateSprints(sprints);
+      sprintsLoaded = true;
+      if (sprints.length) {
+        setStatus(sprintStatus, "success", `${sprints.length} sprint(s) loaded from ${data.source}.`);
+        showAlert("success", `Sprints loaded (${data.source}). Select a sprint to fetch issues.`);
+      } else {
+        setStatus(sprintStatus, "warning", "No closed sprints were found for this board.");
+        showAlert("warning", "No closed sprints were found for this board.");
+      }
     } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (!requestIsCurrent("sprints", requestState.version)) return;
+      setStatus(sprintStatus, "danger", "Network error while loading sprints.");
       showAlert("danger", "Network/Unexpected error while loading sprints.");
     } finally {
-      unlockUi();
+      if (requestIsCurrent("sprints", requestState.version)) {
+        sprintLoading = false;
+        requestControllers.sprints = null;
+        updateControlAvailability();
+      }
     }
   }
 
@@ -744,15 +932,16 @@
     });
   }
 
-  async function startMetricsRequest(bid, sid) {
+  async function startMetricsRequest(bid, sid, signal) {
     try {
       return await postJson("/api/automation/sprint-viewer/metrics", {
         board_id: bid,
         sprint_id: sid,
         total_sp: 0,
         total_count: 0
-      });
+      }, signal);
     } catch (error) {
+      if (error && error.name === "AbortError") return { ok: false, aborted: true };
       return { ok: false, error: "Network/Unexpected error while calculating metrics." };
     }
   }
@@ -773,18 +962,23 @@
     return true;
   }
 
-  projectKey.addEventListener("change", () => {
-    const selectedProject = (projectKey.value || "").trim().toUpperCase();
-    projectKey.value = selectedProject;
-    resetResults();
-    setFetchButtonMode("fetch");
-    populateBoards(selectedProject);
-    sprintId.replaceChildren(makeOption("", "-- Select Sprint --"));
+  projectKey.addEventListener("input", () => {
+    const normalizedProject = normalizeProjectKey(projectKey.value);
+    if (projectKey.value !== normalizedProject) projectKey.value = normalizedProject;
+    abortRequest("boards");
+    projectLoading = false;
+    resetBoardFlow();
+    setStatus(projectStatus, "", "");
     updateControlAvailability();
   });
 
+  projectForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadBoards();
+  });
+
   boardId.addEventListener("change", () => {
-    resetResults();
+    resetSprintFlow();
     if (!boardId.value) {
       updateControlAvailability();
       return;
@@ -794,45 +988,56 @@
   });
 
   refreshSprintsBtn.addEventListener("click", () => {
-    resetResults();
     loadSprints(true);
   });
 
   sprintId.addEventListener("change", () => {
-    resetResults();
+    resetIssueFlow();
     updateControlAvailability();
+    if (sprintId.value) fetchIssues();
   });
 
-  fetchIssuesBtn.addEventListener("click", async () => {
-    if (isStartOverMode()) {
-      confirmStartOver();
-      return;
-    }
+  async function fetchIssues() {
+    if (issueLoading || !sprintId.value || !boardId.value) return;
+    const selectedProject = validatedProjectKey;
+    const selectedBoardName = selectedText(boardId);
+    const selectedSprintName = selectedText(sprintId);
     const bid = Number(boardId.value);
     const sid = Number(sprintId.value);
     const fetchToken = activeFetchToken + 1;
     activeFetchToken = fetchToken;
+    issueLoading = true;
     resetResults();
     setFetchButtonMode("start-over");
-    lockUi();
-    const metricsPromise = startMetricsRequest(bid, sid);
+    setStatus(issueStatus, "", "Loading issues and sprint metrics...");
+    updateControlAvailability();
+    const issuesRequest = startRequest("issues");
+    const metricsRequest = startRequest("metrics");
+    const metricsPromise = startMetricsRequest(bid, sid, metricsRequest.signal);
+
     try {
       const data = await postJson("/api/automation/sprint-viewer/issues", {
         board_id: bid,
         sprint_id: sid
-      });
-      if (fetchToken !== activeFetchToken) return;
+      }, issuesRequest.signal);
+      if (
+        fetchToken !== activeFetchToken ||
+        !requestIsCurrent("issues", issuesRequest.version)
+      ) return;
       if (!data.ok) {
-        showAlert("danger", errorMessage(data, "Failed to fetch sprint issues."));
+        abortRequest("metrics");
+        const message = errorMessage(data, "Failed to fetch sprint issues.");
+        setStatus(issueStatus, "danger", message);
+        showAlert("danger", message);
         setFetchButtonMode("fetch");
         return;
       }
       currentReportData = {
-        projectKey: projectKey.value.trim().toUpperCase(),
+        projectKey: selectedProject,
         boardId: bid,
-        boardName: selectedText(boardId),
+        boardName: selectedBoardName,
         sprintId: sid,
-        sprintName: selectedText(sprintId),
+        sprintName: selectedSprintName,
         issueData: data,
         metrics: null,
       };
@@ -843,20 +1048,48 @@
       renderWorkTypeMix(data.work_type_mix);
       renderGroupedAccordion(data.groups || []);
       resultsCard.classList.remove("d-none");
-      showAlert("success", "Issues fetched successfully. Metrics are calculating...");
+      if ((data.total || 0) > 0) {
+        setStatus(issueStatus, "success", `${data.total} issue(s) loaded.`);
+        showAlert("success", "Issues fetched successfully. Metrics are calculating...");
+      } else {
+        setStatus(issueStatus, "warning", "No issues were found for this sprint.");
+        showAlert("warning", "No issues were found for this sprint. Metrics are calculating...");
+      }
       showMetricsLoading();
       const metricsData = await metricsPromise;
-      if (fetchToken !== activeFetchToken) return;
+      if (
+        fetchToken !== activeFetchToken ||
+        !requestIsCurrent("metrics", metricsRequest.version)
+      ) return;
+      requestControllers.metrics = null;
       renderMetricsResult(metricsData, bid, sid);
     } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (!requestIsCurrent("issues", issuesRequest.version)) return;
+      abortRequest("metrics");
+      setStatus(issueStatus, "danger", "Network error while fetching sprint issues.");
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
       setFetchButtonMode("fetch");
     } finally {
-      unlockUi();
+      if (requestIsCurrent("issues", issuesRequest.version)) {
+        issueLoading = false;
+        requestControllers.issues = null;
+        updateControlAvailability();
+      }
     }
+  }
+
+  fetchIssuesBtn.addEventListener("click", () => {
+    if (isStartOverMode()) {
+      confirmStartOver();
+      return;
+    }
+    fetchIssues();
   });
 
   if (downloadSprintReportBtn) {
     downloadSprintReportBtn.addEventListener("click", downloadSprintReport);
   }
+
+  updateControlAvailability();
 })();

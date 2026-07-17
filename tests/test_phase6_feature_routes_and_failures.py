@@ -119,8 +119,7 @@ def test_ui_pages_render_expected_feature_controls(tmp_path):
     login(client)
 
     checks = [
-        ("/settings/projects-boards", "projects_boards.js"),
-        ("/settings/tableau-custom-views", "tableau_custom_view_settings.js"),
+        ("/settings/integrations", "Enterprise Agile Jira Configuration"),
         ("/automation/rule-copier", "rule_copier.js"),
         ("/automation/sprint-viewer", "sprint_viewer.js"),
         ("/reports/tci", "tci_custom_views.js"),
@@ -132,15 +131,18 @@ def test_ui_pages_render_expected_feature_controls(tmp_path):
         assert expected in response.get_data(as_text=True), path
 
 
-def test_automation_pages_redirect_to_projects_when_no_projects_exist(tmp_path):
+def test_automation_pages_handle_missing_projects_for_their_current_flows(tmp_path):
     app = create_phase6_app(tmp_path)
     client = app.test_client()
     login(client)
 
-    for path in ("/automation/rule-copier", "/automation/sprint-viewer"):
-        response = client.get(path, follow_redirects=False)
-        assert response.status_code == 302
-        assert "/settings/projects-boards" in response.headers["Location"]
+    rule_response = client.get("/automation/rule-copier", follow_redirects=False)
+    assert rule_response.status_code == 302
+    assert "/settings/projects-boards" in rule_response.headers["Location"]
+
+    sprint_response = client.get("/automation/sprint-viewer", follow_redirects=False)
+    assert sprint_response.status_code == 200
+    assert 'id="projectKey"' in sprint_response.get_data(as_text=True)
 
 
 def test_canonical_api_validation_errors_include_request_id(tmp_path):
@@ -184,6 +186,7 @@ def test_canonical_sprint_api_rejects_board_outside_user_projects(tmp_path):
 
 def test_projects_route_handles_mocked_jira_project_failure(tmp_path, monkeypatch):
     app = create_phase6_app(tmp_path)
+    app.config["SHOW_HIDDEN_SETTINGS_FEATURES"] = True
     with app.app_context():
         set_user_tokens()
 
@@ -217,6 +220,7 @@ def test_tableau_custom_view_route_handles_mocked_tableau_failure(
     tmp_path, monkeypatch
 ):
     app = create_phase6_app(tmp_path)
+    app.config["SHOW_HIDDEN_SETTINGS_FEATURES"] = True
     with app.app_context():
         set_user_tokens(tableau_pat=True)
         add_project()

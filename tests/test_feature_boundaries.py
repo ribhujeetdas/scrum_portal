@@ -42,11 +42,13 @@ def test_sprint_viewer_feature_exports_route_handlers():
     from app.features.automation.sprint_viewer.routes import (
         sprint_viewer_fetch_issues,
         sprint_viewer_fetch_metrics,
+        sprint_viewer_get_boards,
         sprint_viewer_get_sprints,
         sprint_viewer_page,
     )
 
     assert callable(sprint_viewer_page)
+    assert callable(sprint_viewer_get_boards)
     assert callable(sprint_viewer_get_sprints)
     assert callable(sprint_viewer_fetch_issues)
     assert callable(sprint_viewer_fetch_metrics)

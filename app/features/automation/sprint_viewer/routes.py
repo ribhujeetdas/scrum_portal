@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import logging
+import re
 
-from flask import current_app, flash, redirect, render_template, request, url_for
+from flask import current_app, render_template, request
 from flask_login import current_user
 
 from ....core.api import json_error, json_ok, safe_error_message
-from ....core.dependencies import crypto_service, jira_service, sprint_viewer_service
+from ....core.dependencies import (
+    crypto_service,
+    jira_projects_service,
+    jira_service,
+    sprint_viewer_service,
+)
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
 from ....extensions import db
 from ....models import UserBoard, UserBoardSprint, UserProject
+from ....services.jira_projects_service import JiraProjectsServiceError
 from ....services.jira_service import JiraServiceError
 from ....services.sprint_viewer_service import SprintViewerService, SprintViewerServiceError
 
@@ -61,44 +68,161 @@ def _board_belongs_to_user(user_id: int, board_id: int) -> bool:
     return q is not None
 
 
+_PROJECT_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
+
+
+def _normalized_project_key(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _save_validated_project_boards(project_key: str, boards: list[dict]) -> None:
+    """Upsert validated associations without removing any previously saved data."""
+    project = UserProject.query.filter_by(
+        user_id=current_user.id, project_key=project_key
+    ).first()
+    if project is None:
+        project = UserProject(
+            user_id=current_user.id,
+            project_key=project_key,
+            admin_projects=False,
+        )
+        db.session.add(project)
+        db.session.flush()
+
+    existing = {
+        board.board_id: board
+        for board in UserBoard.query.filter_by(project_id=project.id).all()
+    }
+    for board_data in boards:
+        board_id = int(board_data["board_id"])
+        board = existing.get(board_id)
+        if board is None:
+            board = UserBoard(project_id=project.id, board_id=board_id)
+            db.session.add(board)
+        board.board_name = (board_data.get("board_name") or "").strip()
+        board.board_type = (board_data.get("board_type") or "").strip()
+        board.board_url = (board_data.get("board_url") or "").strip()
+
+    db.session.commit()
+
+
 def sprint_viewer_page():
     projects = (
-        UserProject.query.filter_by(user_id=current_user.id, admin_projects=True)
+        UserProject.query.filter_by(user_id=current_user.id)
         .order_by(UserProject.project_key.asc())
         .all()
     )
-    if not projects:
-        flash(
-            "No project key found. Redirecting you to Settings to add Projects & Boards.",
-            "warning",
-        )
-        return redirect(url_for("aliases.settings_projects_boards"))
-
-    boards_by_project: dict[str, list[dict]] = {}
-    for project in projects:
-        boards = (
-            UserBoard.query.join(UserProject, UserBoard.project_id == UserProject.id)
-            .filter(UserProject.user_id == current_user.id, UserProject.id == project.id)
-            .order_by(UserBoard.board_name.asc())
-            .all()
-        )
-        boards_by_project[project.project_key] = [
-            {
-                "board_id": board.board_id,
-                "board_name": board.board_name,
-                "board_type": board.board_type,
-                "board_url": board.board_url,
-            }
-            for board in boards
-        ]
 
     return render_template(
         "automation/sprint_viewer.html",
         projects=[project.project_key for project in projects],
-        boards_by_project=boards_by_project,
         jira_base_url=current_app.config["JIRA_BASE_URL"].rstrip("/"),
         trace_ui=bool(current_app.config.get("TRACE_SPRINT_VIEWER_UI", False)),
     )
+
+
+def sprint_viewer_get_boards():
+    payload = request.get_json(silent=True) or {}
+    project_key = _normalized_project_key(payload.get("project_key"))
+    if not _PROJECT_KEY_PATTERN.fullmatch(project_key):
+        return json_error(
+            "Enter a valid Jira project key (2-32 letters, numbers, or underscores; start with a letter).",
+            status_code=400,
+            code="invalid_project_key",
+        )
+
+    if not current_user.jira_pat_enc:
+        return json_error(
+            "Enterprise Agile Jira PAT is not configured. Save it in Settings > Integrations first.",
+            status_code=403,
+            code="jira_pat_missing",
+        )
+
+    try:
+        pat = _get_user_pat()
+    except Exception as exc:
+        current_app.logger.warning(
+            "Sprint Viewer could not read stored Jira PAT error_type=%s",
+            type(exc).__name__,
+        )
+        return json_error(
+            "Unable to read the saved Jira PAT. Re-save it in Settings > Integrations.",
+            status_code=403,
+            code="jira_pat_unavailable",
+        )
+
+    try:
+        _validate_pat_belongs_to_user(pat)
+    except (JiraServiceError, ValueError) as exc:
+        log_handled_exception(
+            "Sprint Viewer PAT validation failed",
+            exc,
+            event="automation.sprint_viewer.pat_validation_failed",
+            feature="sprint_viewer",
+            operation="get_boards",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
+
+    projects_service = jira_projects_service()
+    try:
+        can_browse = projects_service.has_browse_projects(project_key, pat)
+    except JiraProjectsServiceError as exc:
+        log_handled_exception(
+            "Sprint Viewer project access check failed",
+            exc,
+            event="automation.sprint_viewer.project_access_failed",
+            feature="sprint_viewer",
+            operation="get_boards",
+            context={"project_key": project_key},
+        )
+        return json_error(
+            f"Jira project {project_key} was not found or is not accessible to your account.",
+            status_code=403,
+            code="project_not_accessible",
+        )
+
+    if not can_browse:
+        return json_error(
+            f"You do not have access to Jira project {project_key}.",
+            status_code=403,
+            code="project_not_accessible",
+        )
+
+    try:
+        boards = projects_service.list_boards_for_project(project_key, pat)
+    except JiraProjectsServiceError as exc:
+        log_handled_exception(
+            "Sprint Viewer board list failed",
+            exc,
+            event="automation.sprint_viewer.boards_failed",
+            feature="sprint_viewer",
+            operation="get_boards",
+            context={"project_key": project_key},
+        )
+        return json_error(
+            f"Unable to load Jira boards for project {project_key}.",
+            status_code=502,
+            code="boards_unavailable",
+        )
+
+    boards = sorted(boards, key=lambda board: (board.get("board_name") or "").lower())
+    try:
+        _save_validated_project_boards(project_key, boards)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Sprint Viewer failed to save validated boards user=%s project=%s error_type=%s",
+            current_user.eid,
+            project_key,
+            type(exc).__name__,
+        )
+        return json_error(
+            "Boards were loaded, but the validated selection could not be saved.",
+            status_code=500,
+            code="boards_save_failed",
+        )
+
+    return json_ok(project_key=project_key, boards=boards)
 
 
 def sprint_viewer_get_sprints():

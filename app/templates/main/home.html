@@ -3,6 +3,7 @@
 {% block content %}
 
 <div class="row g-3">
+  {% if config.get('SHOW_HIDDEN_DASHBOARD_FEATURES', false) %}
   <!-- Card 1 -->
   <div class="col-12 col-md-6 col-lg-4">
     <div class="card shadow-sm h-100">
@@ -17,12 +18,13 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <!-- Card 2 -->
   <div class="col-12 col-md-6 col-lg-4">
     <div class="card shadow-sm h-100">
       <div class="card-body">
-        <h5 class="card-title">Closed Sprint Viewer</h5>
+        <h5 class="card-title">Sprint Viewer</h5>
         <p class="card-text text-muted">
           Fetch sprint details from a board.
         </p>
@@ -33,6 +35,7 @@
     </div>
   </div>
 
+  {% if config.get('SHOW_HIDDEN_DASHBOARD_FEATURES', false) %}
   <!-- Card 3 (right of Card 2) -->
   <div class="col-12 col-md-6 col-lg-4">
     <div class="card shadow-sm h-100">
@@ -62,6 +65,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 </div>
 
 {% endblock %}

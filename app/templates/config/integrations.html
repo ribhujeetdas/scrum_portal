@@ -28,6 +28,7 @@
       </div>
     </form>
 
+    {% if config.get('SHOW_HIDDEN_SETTINGS_FEATURES', false) %}
     <hr>
 
     <h5 class="mb-3">Tableau Configuration</h5>
@@ -61,6 +62,7 @@
         {{ tableau_form.tableau_validate_and_save(class="btn btn-success") }}
       </div>
     </form>
+    {% endif %}
 
   </div>
 </div>

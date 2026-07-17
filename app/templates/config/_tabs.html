@@ -4,6 +4,7 @@
     <a class="nav-link {% if request.path.endswith('/integrations') %}active{% endif %}"
        href="{{ url_for('aliases.settings_integrations') }}">Integrations</a>
   </li>
+  {% if config.get('SHOW_HIDDEN_SETTINGS_FEATURES', false) %}
   <li class="nav-item">
     <a class="nav-link {% if request.path.endswith('/projects') %}active{% endif %}"
        href="{{ url_for('aliases.settings_projects_boards') }}">Projects & Boards</a>
@@ -12,4 +13,5 @@
     <a class="nav-link {% if request.path.endswith('/custom-views') %}active{% endif %}"
        href="{{ url_for('aliases.settings_tableau_custom_views') }}">Tableau Custom Views</a>
   </li>
+  {% endif %}
 </ul>
