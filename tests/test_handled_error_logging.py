@@ -9,7 +9,7 @@ from app import create_app
 from app.config import Config
 from app.core.error_logging import log_handled_exception
 from app.extensions import db
-from app.models import User, UserBoard, UserProject
+from app.models import User, UserBoard, UserBoardSprint, UserProject
 from app.models import UserTableauCustomView
 from app.services.jira_issue_links_service import JiraIssueLinksServiceError
 from app.services.sprint_viewer_service import SprintViewerServiceError
@@ -75,6 +75,15 @@ def _add_user_project_and_board():
             board_name="ABC Board",
             board_type="scrum",
             board_url="https://jira.example/boards/101",
+        )
+    )
+    db.session.add(
+        UserBoardSprint(
+            user_id=user.id,
+            board_id=101,
+            sprint_id=202,
+            sprint_name="Sprint 202",
+            sprint_state="closed",
         )
     )
     db.session.commit()

@@ -14,6 +14,7 @@ from ...core.dependencies import crypto_service, jira_service
 from ...extensions import db
 from ...models import User
 from ...services.jira_service import JiraServiceError
+from ...core.security import revoke_current_auth_session, start_auth_session
 
 
 def _login_with_form(form):
@@ -35,6 +36,8 @@ def _login_with_form(form):
 
     login_user(user)
     session.permanent = True
+    start_auth_session(user)
+    db.session.commit()
     current_app.logger.info("User logged in: eid=%s", user.eid)
     return redirect(url_for("aliases.dashboard"))
 
@@ -42,13 +45,16 @@ def _login_with_form(form):
 @auth_bp.app_errorhandler(CSRFError)
 def handle_auth_csrf_error(error):
     if request.endpoint in {"auth.login", "aliases.auth_login"} and request.method == "POST":
-        form = LoginForm(meta={"csrf": False})
-        if form.validate():
-            current_app.logger.info("Recovering login POST after stale CSRF token.")
-            return _login_with_form(form)
+        current_app.logger.warning("Rejected login POST with stale or invalid CSRF token.")
         flash("Session expired. Please login again.", "warning")
         return render_template("auth/login.html", form=LoginForm()), 400
 
+    if request.path.startswith("/api/") or request.is_json:
+        current_app.logger.warning("API CSRF validation failed")
+        return {
+            "ok": False,
+            "error": {"code": "CSRF_INVALID", "message": "CSRF validation failed."},
+        }, 400
     current_app.logger.warning("CSRF validation failed: %s", error.description)
     return render_template("error.html", code=400, message="CSRF validation failed."), 400
 
@@ -77,6 +83,7 @@ def login():
 @auth_bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    revoke_current_auth_session()
     logout_user()
     flash("Logged out successfully.", "info")
     return redirect(url_for("aliases.auth_login"))

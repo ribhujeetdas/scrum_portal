@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import time
 
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
 
 class RuleCopierServiceError(Exception):
-    pass
+    def __init__(self, message: str, *, definitive: bool = False, fallback_kind: str | None = None, outcome: str = "not_sent"):
+        super().__init__(message)
+        self.definitive = definitive
+        self.fallback_kind = fallback_kind
+        self.outcome = outcome
+
+
+class RuleCopierDefinitiveRejection(RuleCopierServiceError):
+    def __init__(self, message: str, *, fallback_kind: str):
+        super().__init__(message, definitive=True, fallback_kind=fallback_kind, outcome="rejected")
 
 
 class RuleCopierService:
@@ -153,7 +163,7 @@ class RuleCopierService:
     # ---------------------------
     # Transform + Create rule
     # ---------------------------
-    def transform_rule_for_create(self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str) -> dict:
+    def transform_rule_for_create(self, rule_json: dict, target_project_id: int, author_account_id: str, actor_account_id: str, idempotency_key: str | None = None) -> dict:
         """
         Takes fetched rule JSON and transforms into a payload suitable for create.
 
@@ -209,10 +219,21 @@ class RuleCopierService:
                 payload["projects"] = [{"projectId": str(target_project_id)}]
 
         # Some instances require unique component IDs; best-effort to replace "__NEW__" ids
+        component_index = 0
+
         def _rewrite_component_ids(obj):
+            nonlocal component_index
             if isinstance(obj, dict):
                 if "id" in obj and isinstance(obj["id"], str) and obj["id"].startswith("__NEW__"):
-                    obj["id"] = f"__NEW__{int(time.time() * 1000)}"
+                    component_index += 1
+                    if idempotency_key:
+                        digest = hashlib.sha256(
+                            f"{idempotency_key}:{component_index}".encode("utf-8")
+                        ).hexdigest()
+                        suffix = int(digest[:13], 16)
+                    else:
+                        suffix = int(time.time() * 1000) + component_index
+                    obj["id"] = f"__NEW__{suffix}"
                 for v in obj.values():
                     _rewrite_component_ids(v)
             elif isinstance(obj, list):
@@ -241,6 +262,8 @@ class RuleCopierService:
             return resp.json()
         except ValueError:
             return {"status": "success", "http_status": resp.status_code}
+        finally:
+            resp.close()
 
     @staticmethod
     def _snippet(exc: ExternalServiceError) -> str:
@@ -284,8 +307,22 @@ class RuleCopierService:
                 "Unauthorized (401) while creating rule. Check PAT.") from exc
         if exc.status_code == 403:
             raise RuleCopierServiceError("Forbidden (403) while creating rule.") from exc
+        snippet = self._snippet(exc)
+        if exc.status_code == 400 and "PROJECT_IDENTIFIER_UNSUPPORTED" in snippet:
+            raise RuleCopierDefinitiveRejection(
+                "Jira definitively rejected the numeric project identifier.",
+                fallback_kind="project_identifier",
+            ) from exc
+        if exc.status_code == 400 and "ACTOR_ACCOUNT_ID_INVALID" in snippet:
+            raise RuleCopierDefinitiveRejection(
+                "Jira definitively rejected the configured automation actor.",
+                fallback_kind="actor",
+            ) from exc
         if exc.status_code is not None:
             raise RuleCopierServiceError(
-                f"Create rule API error: {exc.status_code} {self._snippet(exc)}") from exc
+                f"Create rule API error: {exc.status_code}",
+                definitive=exc.status_code < 500,
+                outcome=exc.outcome,
+            ) from exc
         raise RuleCopierServiceError(
-            f"Network error calling create rule API: {exc}") from exc
+            "Network error calling create rule API.", outcome="unknown") from exc

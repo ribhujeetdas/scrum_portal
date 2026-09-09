@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
+from app.integrations.jira.pagination import JiraPaginationError, collect_offset_pages
 
 
 class JiraProjectsServiceError(Exception):
@@ -86,18 +87,15 @@ class JiraProjectsService:
         Handles pagination using startAt/maxResults/isLast if present.
         Returns list of {board_id, board_name, board_type, board_url}
         """
-        all_boards: list[dict] = []
-        start_at = 0
         max_results = 50
-
-        while True:
+        def fetch_page(start_at: int, page_size: int):
             params = {
                 "projectKeyOrId": project_key,
                 "startAt": start_at,
-                "maxResults": max_results,
+                "maxResults": page_size,
             }
             try:
-                data = self._client.get_json(
+                return self._client.get_json(
                     "/rest/agile/1.0/board",
                     headers=self._headers(pat),
                     params=params,
@@ -119,31 +117,20 @@ class JiraProjectsService:
                 raise JiraProjectsServiceError(
                     f"Network error listing boards: {exc}") from exc
 
-            values = data.get("values") or []
-            for b in values:
-                all_boards.append(
+        try:
+            values = collect_offset_pages(fetch_page, collection_key="values", requested_page_size=max_results,
+                                          identity=lambda value: str(value.get("id")) if value.get("id") is not None else None)
+        except JiraPaginationError as exc:
+            raise JiraProjectsServiceError(f"Board pagination incomplete: {exc}") from exc
+        return [
                     {
                         "board_id": int(b.get("id")),
                         "board_name": (b.get("name") or "").strip(),
                         "board_type": (b.get("type") or "").strip(),
                         "board_url": (b.get("self") or "").strip(),
                     }
-                )
-
-            is_last = data.get("isLast")
-            total = data.get("total")
-
-            if is_last is True:
-                break
-
-            if isinstance(total, int):
-                start_at += max_results
-                if start_at >= total:
-                    break
-            else:
-                break
-
-        return all_boards
+                    for b in values
+                ]
 
     # ---------------------------------------------------------------------
     # NEW: Board -> Projects (to find Product Area project key)
@@ -156,14 +143,11 @@ class JiraProjectsService:
         Returns: list of project objects in "values".
         This endpoint returns projects statically associated with the board. [1](https://docs.atlassian.com/software/jira/docs/api/REST/9.13.0/)[3](https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/)
         """
-        all_projects: List[Dict[str, Any]] = []
-        start_at = 0
         max_results = 50
-
-        while True:
-            params = {"startAt": start_at, "maxResults": max_results}
+        def fetch_page(start_at: int, page_size: int):
+            params = {"startAt": start_at, "maxResults": page_size}
             try:
-                data = self._client.get_json(
+                return self._client.get_json(
                     f"/rest/agile/1.0/board/{int(board_id)}/project",
                     headers=self._headers(pat),
                     params=params,
@@ -185,23 +169,11 @@ class JiraProjectsService:
                 raise JiraProjectsServiceError(
                     f"Network error listing board projects: {exc}") from exc
 
-            values = data.get("values") or []
-            all_projects.extend(values)
-
-            is_last = data.get("isLast")
-            total = data.get("total")
-
-            if is_last is True:
-                break
-
-            if isinstance(total, int):
-                start_at += max_results
-                if start_at >= total:
-                    break
-            else:
-                break
-
-        return all_projects
+        try:
+            return collect_offset_pages(fetch_page, collection_key="values", requested_page_size=max_results,
+                                        identity=lambda value: str(value.get("id")) if value.get("id") is not None else None)
+        except JiraPaginationError as exc:
+            raise JiraProjectsServiceError(f"Board project pagination incomplete: {exc}") from exc
 
     @staticmethod
     def extract_product_area_project_key(projects: List[Dict[str, Any]]) -> Optional[str]:

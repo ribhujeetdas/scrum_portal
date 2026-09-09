@@ -25,15 +25,24 @@ def fail(msg: str) -> None:
 def main() -> None:
     try:
         from app import create_app
+        from app.config import Config
     except Exception as exc:
         fail(f"Failed to import create_app(): {exc}")
 
     try:
-        app = create_app()
+        class SmokeConfig(Config):
+            TESTING = True
+            SECRET_KEY = "isolated-smoke-secret"
+            WTF_CSRF_ENABLED = False
+            SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+            JIRA_ENABLED = False
+            TABLEAU_ENABLED = False
+            LOG_TO_CONSOLE = False
+
+        app = create_app(SmokeConfig)
     except Exception as exc:
         fail(f"Failed to create Flask app: {exc}")
 
-    app.config["TESTING"] = True
     client = app.test_client()
 
     for path in ("/auth/login", "/login"):

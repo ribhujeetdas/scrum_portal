@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint
+import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from .extensions import db, login_manager
@@ -26,6 +27,9 @@ class User(db.Model, UserMixin):
     display_name = db.Column(db.String(255), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True)
     deleted = db.Column(db.Boolean, nullable=False, default=False)
+    session_epoch = db.Column(db.Integer, nullable=False, default=1)
+    jira_credential_epoch = db.Column(db.Integer, nullable=False, default=1)
+    access_epoch = db.Column(db.Integer, nullable=False, default=1)
     timezone = db.Column(db.String(64), nullable=True)
     locale = db.Column(db.String(64), nullable=True)
 
@@ -57,7 +61,7 @@ class User(db.Model, UserMixin):
         "UserProject",
         back_populates="user",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
 
     def set_password(self, password: str) -> None:
@@ -65,6 +69,23 @@ class User(db.Model, UserMixin):
 
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.active and not self.deleted)
+
+
+class AuthSession(db.Model):
+    __tablename__ = "auth_sessions"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_epoch = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (db.Index("ix_auth_sessions_user_revoked", "user_id", "revoked_at"),)
 
 
 class UserProject(db.Model):
@@ -192,4 +213,34 @@ class UserTableauCustomView(db.Model):
 
 @login_manager.user_loader
 def load_user(user_id: str):
-    return db.session.get(User, int(user_id))
+    try:
+        numeric_id = int(user_id)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    user = db.session.get(User, numeric_id)
+    return user if user and user.is_active else None
+
+
+# Import feature-owned models so Flask-Migrate and db.create_all see them while
+# preserving the public app.models import surface used by existing callers.
+from .features.automation.sprint_viewer.models import (  # noqa: E402,F401
+    BackgroundJob,
+    ExternalOperation,
+    JiraPrincipal,
+    JiraPrincipalAlias,
+    JiraRequestSlot,
+    JiraScope,
+    JiraSource,
+    JiraSprintCatalog,
+    RateLimitBucket,
+    ReportView,
+    SprintCommentRow,
+    SprintComponent,
+    SprintComponentRevision,
+    SprintHistoryRow,
+    SprintIssueRow,
+    SprintMetricMembership,
+    SprintSnapshot,
+    SprintSnapshotSeries,
+    WorkerLeader,
+)

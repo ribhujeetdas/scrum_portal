@@ -7,11 +7,21 @@ load_dotenv()
 
 
 class Config:
+    APP_ENV = os.getenv("APP_ENV", "development").lower()
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///app.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
 
     JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "").rstrip("/")
+    JIRA_ENABLED = os.getenv("JIRA_ENABLED", "true").lower() == "true"
+    JIRA_SOURCE_ID = os.getenv("JIRA_SOURCE_ID", "primary-jira").strip()
+    JIRA_STORY_POINTS_FIELD = os.getenv("JIRA_STORY_POINTS_FIELD", "customfield_10106")
+    JIRA_APPLICATION_FIELD = os.getenv("JIRA_APPLICATION_FIELD", "customfield_11700")
+    JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10100")
+    JIRA_HISTORY_VISIBILITY_FOLLOWS_ISSUE = (
+        os.getenv("JIRA_HISTORY_VISIBILITY_FOLLOWS_ISSUE", "false").lower() == "true"
+    )
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@wellsfargo.com")
 
     # Cookie & session security
@@ -72,13 +82,21 @@ class Config:
     )
 
     EXTERNAL_HTTP_TIMEOUT_SECONDS = int(os.getenv("EXTERNAL_HTTP_TIMEOUT_SECONDS", "20"))
-    EXTERNAL_HTTP_RETRY_TOTAL = int(os.getenv("EXTERNAL_HTTP_RETRY_TOTAL", "3"))
+    EXTERNAL_HTTP_RETRY_TOTAL = int(os.getenv("EXTERNAL_HTTP_RETRY_TOTAL", "2"))
     EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS = float(
         os.getenv("EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS", "0.5")
     )
     EXTERNAL_HTTP_RETRY_STATUS_CODES = os.getenv(
         "EXTERNAL_HTTP_RETRY_STATUS_CODES", "429,500,502,503,504"
     )
+    EXTERNAL_CA_BUNDLE = os.getenv("EXTERNAL_CA_BUNDLE", "").strip()
+    EXTERNAL_TRUST_ENV = os.getenv("EXTERNAL_TRUST_ENV", "true").lower() == "true"
+    HTTP_CONNECT_TIMEOUT_SECONDS = int(os.getenv("HTTP_CONNECT_TIMEOUT_SECONDS", "5"))
+    HTTP_READ_TIMEOUT_SECONDS = int(os.getenv("HTTP_READ_TIMEOUT_SECONDS", str(EXTERNAL_HTTP_TIMEOUT_SECONDS)))
+    HTTP_OPERATION_BUDGET_SECONDS = int(os.getenv("HTTP_OPERATION_BUDGET_SECONDS", "60"))
+    HTTP_RETRY_AFTER_MAX_SECONDS = int(os.getenv("HTTP_RETRY_AFTER_MAX_SECONDS", "30"))
+    HTTP_MAX_JSON_BYTES = int(os.getenv("HTTP_MAX_JSON_BYTES", str(16 * 1024 * 1024)))
+    TABLEAU_MAX_CSV_BYTES = int(os.getenv("TABLEAU_MAX_CSV_BYTES", str(32 * 1024 * 1024)))
 
     LEGACY_ROUTE_DEPRECATION_HEADERS = (
         os.getenv("LEGACY_ROUTE_DEPRECATION_HEADERS", "true").lower() == "true"
@@ -89,6 +107,28 @@ class Config:
     SPRINT_METRICS_HTTP_TIMEOUT_SECONDS = int(
         os.getenv("SPRINT_METRICS_HTTP_TIMEOUT_SECONDS", str(EXTERNAL_HTTP_TIMEOUT_SECONDS))
     )
+    SPRINT_VIEWER_MODE = os.getenv("SPRINT_VIEWER_MODE", "direct").lower()
+    SPRINT_VIEWER_SNAPSHOT_USER_IDS = os.getenv("SPRINT_VIEWER_SNAPSHOT_USER_IDS", "")
+    SPRINT_SNAPSHOT_ACCESS_POLICY = os.getenv("SPRINT_SNAPSHOT_ACCESS_POLICY", "jira_revalidate")
+    SPRINT_JOB_LEASE_SECONDS = int(os.getenv("SPRINT_JOB_LEASE_SECONDS", "120"))
+    SPRINT_JOB_HEARTBEAT_SECONDS = int(os.getenv("SPRINT_JOB_HEARTBEAT_SECONDS", "15"))
+    SPRINT_JOB_MAX_ATTEMPTS = int(os.getenv("SPRINT_JOB_MAX_ATTEMPTS", "3"))
+    SPRINT_JOB_POLL_SECONDS = float(os.getenv("SPRINT_JOB_POLL_SECONDS", "1"))
+    SPRINT_WORKER_STALE_SECONDS = int(os.getenv("SPRINT_WORKER_STALE_SECONDS", "60"))
+    JIRA_MAX_INFLIGHT_PER_SOURCE = int(os.getenv("JIRA_MAX_INFLIGHT_PER_SOURCE", "4"))
+    JIRA_MAX_BACKGROUND_INFLIGHT = int(os.getenv("JIRA_MAX_BACKGROUND_INFLIGHT", "2"))
+    SPRINT_COMPONENT_MAX_RUNTIME_SECONDS = int(
+        os.getenv("SPRINT_COMPONENT_MAX_RUNTIME_SECONDS", "1800")
+    )
+    SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
+    SQLITE_WRITE_BUDGET_SECONDS = int(os.getenv("SQLITE_WRITE_BUDGET_SECONDS", "5"))
+    TRUSTED_HOSTS = [
+        host.strip()
+        for host in os.getenv("TRUSTED_HOSTS", "").split(",")
+        if host.strip()
+    ]
+    TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
+    TABLEAU_ENABLED = os.getenv("TABLEAU_ENABLED", "true").lower() == "true"
 
     TRACE_SPRINT_VIEWER = os.getenv(
         "TRACE_SPRINT_VIEWER", "false").lower() == "true"

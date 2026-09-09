@@ -15,6 +15,12 @@ from ..automation.routes import (
     sprint_viewer_fetch_issues,
     sprint_viewer_fetch_metrics,
     sprint_viewer_get_sprints,
+    sprint_snapshot_authorize,
+    sprint_snapshot_component,
+    sprint_snapshot_export_manifest,
+    sprint_snapshot_issues,
+    sprint_snapshot_retry,
+    sprint_snapshot_status,
 )
 from ..config.routes import custom_views, integrations, projects
 from ..main.routes import client_log, extend_session, home, session_status
@@ -31,6 +37,42 @@ aliases_bp.add_url_rule(
     "auth_signup_confirm",
     confirm_profile,
     methods=["GET", "POST"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/status",
+    "api_sprint_snapshot_status",
+    sprint_snapshot_status,
+    methods=["GET"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/issues",
+    "api_sprint_snapshot_issues",
+    sprint_snapshot_issues,
+    methods=["GET"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/components/<component_key>",
+    "api_sprint_snapshot_component",
+    sprint_snapshot_component,
+    methods=["GET"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/retry",
+    "api_sprint_snapshot_retry",
+    sprint_snapshot_retry,
+    methods=["POST"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/authorize",
+    "api_sprint_snapshot_authorize",
+    sprint_snapshot_authorize,
+    methods=["POST"],
+)
+aliases_bp.add_url_rule(
+    "/api/automation/sprint-viewer/snapshots/<snapshot_id>/export-manifest",
+    "api_sprint_snapshot_export_manifest",
+    sprint_snapshot_export_manifest,
+    methods=["GET"],
 )
 aliases_bp.add_url_rule(
     "/auth/signup/set-password",

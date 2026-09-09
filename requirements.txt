@@ -1,13 +1,3 @@
-Flask
-Flask-WTF
-Flask-Login
-Flask-SQLAlchemy
-email-validator
-requests
-cryptography
-python-dotenv
-concurrent-log-handler
-Flask-Migrate
-alembic
-pip-audit
-pytest
+# Compatibility installer for local development. Production must install the
+# platform lock documented in docs/operations.md with --require-hashes.
+-r requirements/dev.in

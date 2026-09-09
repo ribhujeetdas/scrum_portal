@@ -1,6 +1,7 @@
 # ===== FILE: services/tableau_service.py =====
 from __future__ import annotations
 from urllib.parse import quote
+from flask import current_app, has_app_context
 
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
 
@@ -224,6 +225,7 @@ class TableauService:
         try:
             page_size = 1000
             page_number = 1
+            consumed = 0
 
             while True:
                 payload = self.list_custom_views(
@@ -236,15 +238,25 @@ class TableauService:
                 )
 
                 items = self._extract_custom_view_items(payload)
+                consumed += len(items)
                 for cv in items:
                     if (cv.get("id") or "").strip() == custom_view_id:
                         return cv
 
                 # pagination
                 pagination = payload.get("pagination") or {}
-                total_available = int(pagination.get("totalAvailable") or 0)
-                if total_available <= page_number * page_size:
+                try:
+                    total_available = int(pagination.get("totalAvailable") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise TableauServiceError(
+                        "Invalid Tableau custom view pagination metadata."
+                    ) from exc
+                if total_available <= consumed:
                     break
+                if not items:
+                    raise TableauServiceError(
+                        "Tableau custom view pagination ended before the advertised total."
+                    )
                 page_number += 1
 
         finally:
@@ -263,6 +275,8 @@ class TableauService:
             resp = self._client.get(
                 self._api(f"/sites/{site_id}/customviews/{custom_view_id}/data"),
                 headers={**self._headers_auth(token), "Accept": "*/*"},
+                params={"maxAge": max(0, int(max_age_minutes))},
+                stream=True,
             )
         except ExternalServiceError as exc:
             self._raise_tableau_error(
@@ -275,7 +289,23 @@ class TableauService:
                 snippet_length=300,
             )
 
-        return resp.content
+        limit = (
+            int(current_app.config.get("TABLEAU_MAX_CSV_BYTES", 32 * 1024 * 1024))
+            if has_app_context() else 32 * 1024 * 1024
+        )
+        chunks = []
+        received = 0
+        try:
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                received += len(chunk)
+                if received > limit:
+                    raise TableauServiceError("Tableau CSV exceeded the configured size limit.")
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            resp.close()
 
     @staticmethod
     def _raise_tableau_error(

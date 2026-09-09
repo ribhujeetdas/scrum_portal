@@ -1,0 +1,6 @@
+-r runtime.in
+pytest
+pytest-playwright
+openpyxl
+pip-tools
+pip-audit

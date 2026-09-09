@@ -6,7 +6,7 @@ from app import create_app
 from app.config import Config
 from app.extensions import db
 from app.models import User
-from app.services.rule_copier_service import RuleCopierServiceError
+from app.services.rule_copier_service import RuleCopierDefinitiveRejection, RuleCopierService
 
 
 class RuleCopyFallbackTestConfig(Config):
@@ -47,6 +47,39 @@ def login_test_user(client, user_id=1):
         sess["_fresh"] = True
 
 
+def test_rule_transform_reuses_component_ids_for_same_idempotency_key():
+    service = RuleCopierService("https://jira.example.test")
+    rule = {
+        "name": "Deterministic rule",
+        "components": [
+            {"id": "__NEW__trigger"},
+            {"children": [{"id": "__NEW__action"}]},
+        ],
+    }
+
+    try:
+        first = service.transform_rule_for_create(
+            rule,
+            target_project_id=123,
+            author_account_id="author",
+            actor_account_id="actor",
+            idempotency_key="stable-operation-key",
+        )
+        second = service.transform_rule_for_create(
+            rule,
+            target_project_id=123,
+            author_account_id="author",
+            actor_account_id="actor",
+            idempotency_key="stable-operation-key",
+        )
+    finally:
+        service._client.close()
+
+    assert first == second
+    assert first["components"][0]["id"].startswith("__NEW__")
+    assert first["components"][0]["id"] != first["components"][1]["children"][0]["id"]
+
+
 class FakeRuleService:
     def __init__(self):
         self.actor_attempts = []
@@ -58,6 +91,7 @@ class FakeRuleService:
         target_project_id,
         author_account_id,
         actor_account_id,
+        idempotency_key=None,
     ):
         return {
             "name": rule_json["name"],
@@ -70,7 +104,10 @@ class FakeRuleService:
         self.project_identifier_attempts.append(project_identifier)
         self.actor_attempts.append(payload["actorAccountId"])
         if payload["actorAccountId"] == "SERVICE_ACTOR":
-            raise RuleCopierServiceError("Create rule API error: actor rejected")
+            raise RuleCopierDefinitiveRejection(
+                "Create rule API rejected actor",
+                fallback_kind="actor",
+            )
         return {"id": 987, "actor": payload["actorAccountId"]}
 
 
@@ -98,6 +135,7 @@ def test_copy_rule_falls_back_to_user_jira_actor_when_config_actor_fails(tmp_pat
             "target_project_key": "ABC",
             "target_board_id": 101,
             "rule_json": {"name": "Rule that rejects service actor"},
+            "client_action_id": "rule-copy-fallback-test",
         },
     )
     data = response.get_json()

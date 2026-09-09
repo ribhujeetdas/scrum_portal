@@ -194,7 +194,8 @@
       const data = await postJson("/api/automation/rule-copier/copy", {
         target_project_key: dstProject.value.trim().toUpperCase(),
         target_board_id: Number(dstBoard.value),
-        rule_json: fetchedRuleJson
+        rule_json: fetchedRuleJson,
+        client_action_id: crypto.randomUUID()
       });
       if (!data.ok) {
         showAlert(copyMsg, "danger", data.error || "Copy failed.");

@@ -27,6 +27,11 @@ Canonical user-visible links should point at `/dashboard`, `/auth/...`, `/settin
 - `app/core/http_client.py`: reusable external HTTP client with retries, timeouts, sanitized snippets, and structured service errors.
 - `app/core/jira_pat_validation.py`: short-lived session cache for Jira PAT identity validation, keyed by user, email, and PAT hash.
 - `app/core/dependencies.py`: shared app-context factories for crypto and external service clients.
+- `app/core/database.py`: SQLite WAL, foreign-key, busy-timeout, synchronous-write, and NullPool policy.
+- `app/core/security.py`: server-side auth sessions plus user, credential, and access epochs.
+- `app/core/rate_limits.py`: SQLite-backed cross-process request limits.
+- `app/features/automation/sprint_viewer/models.py`: scoped immutable snapshot components, jobs, grants, leases, and idempotency records.
+- `workers/sprint_import_worker.py`: one supervised process with one core/access lane and two enrichment lanes.
 - `app/logging_conf.py`: structured request and application logging.
 - `app/static/js/app.js`: shared request ID, toast, client logging, and session timeout behavior.
 
@@ -39,9 +44,13 @@ Event names should be stable and feature-scoped:
 - External JSON parse failures: `<service>.response.invalid_json`
 - Handled feature failures: `<area>.<feature>.<operation>_failed`
 
-## Performance Notes
+## Sprint Viewer Data Flow
 
-Sprint lists are cached in `user_board_sprints` per user and board. Sprint issue and metric calls still execute on demand because they depend on current Jira sprint state; do not persist those results without a freshness policy. If issue/metric latency becomes high, add a background job table keyed by `user_id`, `board_id`, `sprint_id`, and an explicit `refreshed_at`, then have the UI poll a canonical `/api/...` job endpoint.
+Sprint catalogs and completed reports are durable SQLite data. A report series is scoped by portal user, Jira source, credential/access epochs, board, sprint, and calculation/query/schema versions. On a miss, the web process creates one candidate and one deduplicated core job. The worker publishes a complete core revision first, then history, comments, five metric memberships, and final derived metrics as immutable revisions. The active generation changes only after required components are complete and optional components are terminal.
+
+Every new display or export grant revalidates Jira identity, board/sprint membership, all core and metric issue IDs, and stored comment visibility. History is withheld unless the deployment explicitly confirms that history visibility follows issue visibility. Completed report reads then come from SQLite. There is no automatic time-based freshness in this release.
+
+SQLite is intentionally single-host: web and worker processes share one absolute local file, WAL permits readers during a writer, and writes remain short. Leases and fence values reject stale worker publication. Four source request slots reserve two for core/access work and cap enrichment at two.
 
 Jira PAT ownership validation is cached for `JIRA_PAT_VALIDATION_CACHE_SECONDS` within the user session. Keep this short-lived; it avoids repeated `/myself` calls during multi-step UI flows while still revalidating after token/user/session changes.
 

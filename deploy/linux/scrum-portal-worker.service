@@ -1,0 +1,19 @@
+[Unit]
+Description=Scrum Portal sprint import worker
+After=network.target scrum-portal-web.service
+
+[Service]
+Type=simple
+User=scrumportal
+Group=scrumportal
+WorkingDirectory=/opt/scrum-portal
+EnvironmentFile=/etc/scrum-portal.env
+ExecStart=/opt/scrum-portal/.venv/bin/python -m workers.sprint_import_worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

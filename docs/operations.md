@@ -64,3 +64,34 @@ TRACE_SPRINT_VIEWER_UI=false
 SESSION_COOKIE_SECURE=true
 REMEMBER_COOKIE_SECURE=true
 ```
+
+## Process Model And Health
+
+Run Waitress and `python -m workers.sprint_import_worker` as separate supervised processes on one host. They must use the same environment, application revision, Fernet key, and absolute local SQLite file. The worker owns one core/access lane and two enrichment lanes; a database leader lease rejects accidental duplicate worker processes.
+
+Use `/health/live` for process liveness, `/health/ready` for database/WAL/worker admission readiness, and `/health/worker` for the worker heartbeat. These checks do not call Jira or expose filesystem paths or secrets.
+
+## Migration, Backup, And Restore
+
+Before a schema migration, stop worker claiming and web writes, drain requests, and record the current application and migration revisions. Create an online backup and verify it:
+
+```powershell
+flask backup-db --destination D:\ScrumPortal\backups\portal-pre-migration.db
+flask setup-db --check
+flask setup-db --apply
+flask check-db
+```
+
+Run a restored-backup drill against a different absolute local file and the same Fernet key, without live Jira calls. Restore production only while both processes are stopped. Keep daily online backups for 14 days plus every pre-migration backup on an encrypted, access-restricted volume. This gives an RPO of up to 24 hours; writes after the selected backup are lost during restore.
+
+SQLite WAL, SHM, and database files must remain on local persistent disk. SMB, NFS, cloud-synchronized folders, and multi-host sharing are unsupported. Do not copy only the main database file while processes are writing.
+
+## User And Credential Revocation
+
+Use `flask disable-user`, `flask enable-user`, `flask revoke-user-access`, and `flask set-user-password` with exactly one of `--user-id` or `--identifier`. These commands update access/session epochs and revoke active server sessions, report grants, scopes, and jobs. `manage_users_sqlite.py` is a compatibility wrapper around the same application services and no longer exposes arbitrary updates or hard-delete cascades.
+
+Use `flask revoke-user-sessions` when Jira scopes should remain valid. Sprint operations are explicit: `flask rebuild-sprint --user-id ... --board-id ... --sprint-id ...` creates a candidate generation while the active report remains readable; `flask retry-job --job-id ...` restarts only an unleased failed job. `flask purge-staging --older-than-days 7 --dry-run` previews safe staging cleanup and requires `--apply` to mutate. `flask purge-snapshot --snapshot-id ...` is a dry run unless `--apply` is supplied and refuses active/candidate snapshots.
+
+## Sprint Snapshot Rollout
+
+Deploy additive migrations and the worker while `SPRINT_VIEWER_MODE=direct`. Verify WAL and worker health, then use `SPRINT_VIEWER_SNAPSHOT_USER_IDS` for selected users or set `SPRINT_VIEWER_MODE=snapshot` for all users. If admission regresses, return affected users to corrected direct mode, stop worker claiming gracefully, retain snapshot/job data for diagnosis, and deploy a forward fix. Do not downgrade the database to remove stored snapshots.

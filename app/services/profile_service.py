@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..extensions import db
-from ..models import UserProject, UserBoard, UserBoardSprint
+from ..models import User, UserProject, UserBoard, UserBoardSprint
+from ..core.security import invalidate_user_access
 from ..utils.log import log
 
 
@@ -59,6 +60,9 @@ class ProfileService:
         boards_removed = len(board_ids)
 
         try:
+            user = db.session.get(User, req.user_id)
+            if user:
+                invalidate_user_access(user)
             if board_ids:
                 UserBoardSprint.query.filter(
                     UserBoardSprint.user_id == req.user_id,
@@ -115,6 +119,9 @@ class ProfileService:
             raise ProfileServiceError("Board not found for this project.")
 
         try:
+            user = db.session.get(User, req.user_id)
+            if user:
+                invalidate_user_access(user)
             remaining_boards = [
                 b for b in (proj.boards or []) if int(b.board_id) != int(req.board_id)
             ]

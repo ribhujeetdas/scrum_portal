@@ -1,6 +1,16 @@
 (function () {
   const page = document.getElementById("sprintViewerPage");
   if (!page) return;
+  if (page.getAttribute("data-snapshot-mode") === "true") {
+    import("./sprint_viewer/index.js")
+      .then((module) => module.initSprintViewer(page, window.portalApiFetch || window.fetch.bind(window)))
+      .catch((error) => {
+        if (window.portalLogClientEvent) window.portalLogClientEvent("sprint_viewer.module_failed", error);
+        const box = document.getElementById("msgBox");
+        if (box) box.textContent = "Sprint Viewer could not be initialized. Refresh the page and try again.";
+      });
+    return;
+  }
 
   const boardsByProject = JSON.parse(page.getAttribute("data-boards") || "{}");
   const jiraBaseUrl = page.getAttribute("data-jira-base-url") || "";
@@ -256,9 +266,9 @@
       ["Bug points", stats.bug_sp ?? 0],
       ["Unassigned count", stats.unassigned_count ?? 0],
       ["Unassigned %", stats.unassigned_pct ?? 0],
-      ["No relevant comments count", stats.zero_relevant_comment_count ?? 0],
-      ["No relevant comments %", stats.zero_relevant_comment_pct ?? 0],
-      ["Relevant comments count", stats.relevant_comment_count ?? 0],
+      ["No relevant comments count", stats.zero_relevant_comment_count ?? "Unavailable"],
+      ["No relevant comments %", stats.zero_relevant_comment_pct ?? "Unavailable"],
+      ["Relevant comments count", stats.relevant_comment_count ?? "Unavailable"],
       ["Carryover count", stats.carryover_count ?? 0],
       ["Carryover points", stats.carryover_sp ?? 0],
     ]);
@@ -321,7 +331,7 @@
           issue.status || "",
           issue.story_points ?? "",
           issue.feature_key || "",
-          issue.relevant_comment_count ?? 0,
+          issue.relevant_comment_count ?? "Unavailable",
           issue.historical_fallback ? "Current fallback" : "Sprint-end",
           scopeKeys.has(issue.issue_key) ? "Yes" : "No",
         ]);
@@ -554,9 +564,9 @@
     $("bugSp").textContent = stats.bug_sp ?? 0;
     $("unassignedCount").textContent = stats.unassigned_count ?? 0;
     $("unassignedPct").textContent = stats.unassigned_pct ?? 0;
-    $("zeroRelevantCommentCount").textContent = stats.zero_relevant_comment_count ?? 0;
-    $("zeroRelevantCommentPct").textContent = stats.zero_relevant_comment_pct ?? 0;
-    $("relevantCommentCount").textContent = stats.relevant_comment_count ?? 0;
+    $("zeroRelevantCommentCount").textContent = stats.zero_relevant_comment_count ?? "—";
+    $("zeroRelevantCommentPct").textContent = stats.zero_relevant_comment_pct ?? "—";
+    $("relevantCommentCount").textContent = stats.relevant_comment_count ?? "—";
     $("carryoverCount").textContent = stats.carryover_count ?? 0;
     $("carryoverPts").textContent = stats.carryover_sp ?? 0;
   }
@@ -606,7 +616,7 @@
       button.setAttribute("aria-controls", collapseId);
       addText(button, group.assignee_name || "Unassigned");
       const spSum = group.sp_sum ?? 0;
-      addText(button, `${group.issue_count ?? 0} issues, ${typeof spSum === "number" ? spSum.toFixed(2) : spSum} pts, ${group.relevant_comment_count ?? 0} relevant comments`, "ms-2 text-muted");
+      addText(button, `${group.issue_count ?? 0} issues, ${typeof spSum === "number" ? spSum.toFixed(2) : spSum} pts, ${group.relevant_comment_count ?? "—"} relevant comments`, "ms-2 text-muted");
       header.appendChild(button);
 
       const collapse = document.createElement("div");
@@ -657,7 +667,7 @@
         featureCell.className = "col-feature nowrap";
         if (issue.feature_key) featureCell.appendChild(makeIssueLink(issue.feature_key));
         row.appendChild(featureCell);
-        addCell(row, issue.relevant_comment_count ?? 0);
+        addCell(row, issue.relevant_comment_count ?? "Unavailable");
         addCell(row, issue.historical_fallback ? "Current fallback" : "Sprint-end");
         tbody.appendChild(row);
       });
@@ -816,6 +826,7 @@
     setFetchButtonMode("start-over");
     lockUi();
     const metricsPromise = startMetricsRequest(bid, sid);
+    let issuesLoaded = false;
     try {
       const data = await postJson("/api/automation/sprint-viewer/issues", {
         board_id: bid,
@@ -845,15 +856,18 @@
       resultsCard.classList.remove("d-none");
       showAlert("success", "Issues fetched successfully. Metrics are calculating...");
       showMetricsLoading();
-      const metricsData = await metricsPromise;
-      if (fetchToken !== activeFetchToken) return;
-      renderMetricsResult(metricsData, bid, sid);
+      issuesLoaded = true;
     } catch (error) {
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
       setFetchButtonMode("fetch");
     } finally {
+      // Tickets and navigation become usable as soon as core data is ready.
+      // Metrics continue independently and cannot keep the page overlay active.
       unlockUi();
     }
+    const metricsData = await metricsPromise;
+    if (!issuesLoaded || fetchToken !== activeFetchToken) return;
+    renderMetricsResult(metricsData, bid, sid);
   });
 
   if (downloadSprintReportBtn) {

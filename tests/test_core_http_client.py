@@ -63,7 +63,12 @@ def test_http_client_get_json_joins_url_and_uses_timeout():
         (
             "GET",
             "https://jira.example/rest/api/2/myself",
-            {"headers": {"Authorization": "Bearer secret-token"}, "timeout": 7},
+            {
+                "headers": {"Authorization": "Bearer secret-token"},
+                "allow_redirects": False,
+                "stream": True,
+                "timeout": (5.0, 7.0),
+            },
         )
     ]
 
@@ -144,8 +149,28 @@ def test_http_client_retry_policy_is_configurable():
         retry_status_forcelist=(500, 503),
     )
 
-    retry = client._session.get_adapter("https://").max_retries
+    transport_retry = client._session.get_adapter("https://").max_retries
 
-    assert retry.total == 5
-    assert retry.backoff_factor == 0.25
-    assert retry.status_forcelist == (500, 503)
+    assert transport_retry.total == 0
+    assert client.policy.read_retries == 5
+    assert client.policy.backoff_seconds == 0.25
+    assert client.policy.retry_statuses == (500, 503)
+
+
+def test_http_client_never_retries_mutating_post_after_timeout():
+    session = FakeSession(exc=requests.Timeout("ambiguous mutation outcome"))
+    client = ExternalHttpClient(
+        "jira", "https://jira.example/jira", session=session, retry_total=4, sleep=lambda _delay: None
+    )
+    with pytest.raises(ExternalServiceError) as raised:
+        client.post_json("/rest/api/2/rule", json={"name": "rule"})
+    assert len(session.calls) == 1
+    assert raised.value.outcome == "unknown"
+
+
+def test_http_client_rejects_off_origin_and_context_path_escape():
+    client = ExternalHttpClient("jira", "https://jira.example/jira")
+    with pytest.raises(ExternalServiceError, match="Off-origin"):
+        client.get_json("https://attacker.example/jira/rest/api/2/myself")
+    with pytest.raises(ExternalServiceError, match="context path"):
+        client.get_json("https://jira.example/rest/api/2/myself")

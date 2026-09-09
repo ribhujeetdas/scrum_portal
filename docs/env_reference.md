@@ -3,6 +3,7 @@
 Use `.env.example` as the source of truth for local configuration.
 
 Required for normal application use:
+- `APP_ENV`
 - `SECRET_KEY`
 - `DATABASE_URL`
 - `FERNET_KEY`
@@ -13,7 +14,13 @@ Required for normal application use:
 - `EXTERNAL_HTTP_RETRY_TOTAL`
 - `EXTERNAL_HTTP_RETRY_BACKOFF_SECONDS`
 - `EXTERNAL_HTTP_RETRY_STATUS_CODES`
+- `EXTERNAL_CA_BUNDLE`, `EXTERNAL_TRUST_ENV` (enterprise CA and approved proxy environment support)
 - `TABLEAU_BASE_URL`
+- `JIRA_SOURCE_ID`
+- `JIRA_ENABLED`, `TABLEAU_ENABLED`
+- `SPRINT_VIEWER_MODE` (`direct` or `snapshot`)
+- `SPRINT_SNAPSHOT_ACCESS_POLICY` (`jira_revalidate`)
+- `TRUSTED_HOSTS`
 
 Security:
 - `SESSION_COOKIE_SECURE`
@@ -23,6 +30,8 @@ Security:
 - `SESSION_WARNING_THRESHOLD_RATIO`
 - `LEGACY_ROUTE_DEPRECATION_HEADERS`
 - `LEGACY_ROUTE_SUNSET`
+- `TRUSTED_PROXY_COUNT`
+- `RATE_LIMITS_ENABLED`
 
 Logging:
 - `LOG_LEVEL`
@@ -42,5 +51,20 @@ Diagnostics:
 - `TRACE_SPRINT_VIEWER_API`
 - `TRACE_SPRINT_VIEWER_UI`
 - `SPRINT_METRICS_MAX_WORKERS`
+
+Durable Sprint Viewer and SQLite worker:
+- `SPRINT_VIEWER_SNAPSHOT_USER_IDS`
+- `SPRINT_JOB_LEASE_SECONDS`, `SPRINT_JOB_HEARTBEAT_SECONDS`, `SPRINT_JOB_MAX_ATTEMPTS`
+- `SPRINT_JOB_POLL_SECONDS`, `SPRINT_WORKER_STALE_SECONDS`
+- `SPRINT_COMPONENT_MAX_RUNTIME_SECONDS`
+- `JIRA_MAX_INFLIGHT_PER_SOURCE`, `JIRA_MAX_BACKGROUND_INFLIGHT`
+- `JIRA_HISTORY_VISIBILITY_FOLLOWS_ISSUE` (leave `false` unless the capability probe confirms issue visibility safely governs history)
+- `SQLITE_BUSY_TIMEOUT_MS`, `SQLITE_WRITE_BUDGET_SECONDS`
+
+Bounded transport:
+- `HTTP_CONNECT_TIMEOUT_SECONDS`, `HTTP_READ_TIMEOUT_SECONDS`
+- `HTTP_OPERATION_BUDGET_SECONDS`, `HTTP_RETRY_AFTER_MAX_SECONDS`
+- `HTTP_MAX_JSON_BYTES`
+- `TABLEAU_MAX_CSV_BYTES`
 
 Keep tracing disabled in production unless you are actively investigating a problem.

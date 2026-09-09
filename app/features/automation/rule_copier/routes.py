@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
+from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
+import hashlib
+import json
 
 from ....core.api import json_error, json_ok, safe_error_message
 from ....core.dependencies import crypto_service, jira_service, rule_copier_service
 from ....core.error_logging import log_handled_exception
 from ....core.jira_pat_validation import validate_jira_pat_for_current_user
 from ....extensions import db
-from ....models import UserBoard, UserProject
+from ....models import ExternalOperation, UserBoard, UserProject
 from ....services.jira_service import JiraServiceError
 from ....services.rule_copier_service import RuleCopierService, RuleCopierServiceError
+from ..sprint_viewer.schemas import InputValidationError, positive_jira_id, require_json_object
 
 
 def _rule_service() -> RuleCopierService:
@@ -58,31 +63,17 @@ def _create_rule_with_identifier_fallback(
     create_payload: dict,
     pat: str,
 ) -> dict:
-    first_exc: RuleCopierServiceError | None = None
-    for project_identifier in (target_project_id, target_project_key):
-        try:
-            return service.create_rule(project_identifier, create_payload, pat)
-        except RuleCopierServiceError as exc:
-            first_exc = exc
-            log_handled_exception(
-                "Rule Copier create-rule attempt failed",
-                exc,
-                event="automation.rule_copier.create_attempt_failed",
-                feature="rule_copier",
-                operation="copy_rule",
-                context={
-                    "project_identifier": project_identifier,
-                    "actor_account_id": create_payload.get("actorAccountId"),
-                },
-            )
-    if first_exc:
-        raise first_exc
-    raise RuleCopierServiceError("Create rule failed before making an API attempt.")
+    try:
+        return service.create_rule(target_project_id, create_payload, pat)
+    except RuleCopierServiceError as exc:
+        if not exc.definitive or exc.fallback_kind != "project_identifier":
+            raise
+        return service.create_rule(target_project_key, create_payload, pat)
 
 
 def rule_copier_page():
     projects = (
-        UserProject.query.filter_by(
+        UserProject.query.options(selectinload(UserProject.boards)).filter_by(
             user_id=current_user.id, admin_projects=True)
         .order_by(UserProject.project_key.asc())
         .all()
@@ -96,13 +87,7 @@ def rule_copier_page():
 
     boards_by_project: dict[str, list[dict]] = {}
     for project in projects:
-        boards = (
-            UserBoard.query.join(
-                UserProject, UserBoard.project_id == UserProject.id)
-            .filter(UserProject.user_id == current_user.id, UserProject.id == project.id)
-            .order_by(UserBoard.board_name.asc())
-            .all()
-        )
+        boards = sorted(project.boards, key=lambda board: board.board_name.casefold())
         boards_by_project[project.project_key] = [
             {
                 "board_id": board.board_id,
@@ -121,16 +106,13 @@ def rule_copier_page():
 
 
 def fetch_rule():
-    payload = request.get_json(silent=True) or {}
-    project_key = str(payload.get("project_key") or "").strip().upper()
-    board_id = payload.get("board_id")
-    rule_id = payload.get("rule_id")
-
     try:
-        board_id_int = int(board_id)
-        rule_id_int = int(rule_id)
-    except Exception:
-        return json_error("Board ID and Rule ID must be numeric.", status_code=400)
+        payload = require_json_object(request.get_json(silent=True))
+        board_id_int = positive_jira_id(payload.get("board_id"), "Board ID")
+        rule_id_int = positive_jira_id(payload.get("rule_id"), "Rule ID")
+    except InputValidationError as exc:
+        return json_error(str(exc), status_code=400, code="INVALID_INPUT")
+    project_key = str(payload.get("project_key") or "").strip().upper()
 
     if not project_key:
         return json_error("Project key is required.", status_code=400)
@@ -203,16 +185,14 @@ def fetch_rule():
 
 
 def copy_rule():
-    payload = request.get_json(silent=True) or {}
+    try:
+        payload = require_json_object(request.get_json(silent=True))
+        target_board_id_int = positive_jira_id(payload.get("target_board_id"), "Target board ID")
+    except InputValidationError as exc:
+        return json_error(str(exc), status_code=400, code="INVALID_INPUT")
     target_project_key = str(payload.get(
         "target_project_key") or "").strip().upper()
-    target_board_id = payload.get("target_board_id")
     rule_json = payload.get("rule_json")
-
-    try:
-        target_board_id_int = int(target_board_id)
-    except Exception:
-        return json_error("Target board id must be numeric.", status_code=400)
 
     if not target_project_key:
         return json_error("Target project key is required.", status_code=400)
@@ -257,6 +237,15 @@ def copy_rule():
     configured_actor_account_id = str(
         current_app.config["JIRA_AUTOMATION_ACTOR_ACCOUNT_ID"]
     ).strip()
+    idempotency_key = str(
+        request.headers.get("Idempotency-Key") or payload.get("client_action_id") or ""
+    ).strip()
+    if not idempotency_key or len(idempotency_key) > 128:
+        return json_error(
+            "Idempotency-Key is required for rule creation.",
+            status_code=400,
+            code="IDEMPOTENCY_KEY_REQUIRED",
+        )
 
     try:
         service = _rule_service()
@@ -265,7 +254,67 @@ def copy_rule():
             target_project_id=target_jira_project_id,
             author_account_id=author_account_id,
             actor_account_id=configured_actor_account_id,
+            idempotency_key=idempotency_key,
         )
+        fingerprint_payload = {
+            "user_id": current_user.id,
+            "project_id": target_jira_project_id,
+            "board_id": target_board_id_int,
+            "payload": create_payload,
+        }
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+        operation = ExternalOperation.query.filter_by(
+            user_id=current_user.id, operation="rule_create", idempotency_key=idempotency_key
+        ).first()
+        if operation:
+            if operation.request_fingerprint != fingerprint:
+                return json_error("Idempotency key is already bound to another request.", status_code=409, code="IDEMPOTENCY_CONFLICT")
+            if operation.state == "succeeded":
+                return json_ok(message="Rule copy already completed.", operation_id=operation.id, created={"id": operation.external_result_id})
+            return json_error("The previous rule creation outcome requires review.", status_code=409, code="EXTERNAL_OUTCOME_UNKNOWN", details={"operation_id": operation.id})
+        outstanding = ExternalOperation.query.filter(
+            ExternalOperation.user_id == current_user.id,
+            ExternalOperation.operation == "rule_create",
+            ExternalOperation.request_fingerprint == fingerprint,
+            ExternalOperation.state.in_(("sending", "unknown")),
+        ).first()
+        if outstanding:
+            return json_error("A matching rule creation is already unresolved.", status_code=409, code="EXTERNAL_OUTCOME_UNKNOWN", details={"operation_id": outstanding.id})
+        operation = ExternalOperation(
+            user_id=current_user.id,
+            operation="rule_create",
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+            state="sending",
+        )
+        db.session.add(operation)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            operation = ExternalOperation.query.filter_by(
+                user_id=current_user.id,
+                operation="rule_create",
+                idempotency_key=idempotency_key,
+            ).first()
+            if operation and operation.request_fingerprint == fingerprint:
+                if operation.state == "succeeded":
+                    return json_ok(
+                        message="Rule copy already completed.",
+                        operation_id=operation.id,
+                        created={"id": operation.external_result_id},
+                    )
+                return json_error(
+                    "A matching rule creation is already in progress or requires review.",
+                    status_code=409,
+                    code="EXTERNAL_OUTCOME_UNKNOWN",
+                    details={"operation_id": operation.id},
+                )
+            return json_error(
+                "Idempotency key is already bound to another request.",
+                status_code=409,
+                code="IDEMPOTENCY_CONFLICT",
+            )
         try:
             created = _create_rule_with_identifier_fallback(
                 service,
@@ -276,7 +325,14 @@ def copy_rule():
             )
             actor_used = configured_actor_account_id
         except RuleCopierServiceError as configured_actor_exc:
-            if configured_actor_account_id == author_account_id:
+            if (
+                configured_actor_account_id == author_account_id
+                or not configured_actor_exc.definitive
+                or configured_actor_exc.fallback_kind != "actor"
+            ):
+                operation.state = "unknown" if configured_actor_exc.outcome == "unknown" else "rejected"
+                operation.error_code = "EXTERNAL_OUTCOME_UNKNOWN" if operation.state == "unknown" else "RULE_CREATE_REJECTED"
+                db.session.commit()
                 raise
 
             log_handled_exception(
@@ -297,6 +353,7 @@ def copy_rule():
                 target_project_id=target_jira_project_id,
                 author_account_id=author_account_id,
                 actor_account_id=author_account_id,
+                idempotency_key=idempotency_key,
             )
             created = _create_rule_with_identifier_fallback(
                 service,
@@ -307,6 +364,10 @@ def copy_rule():
             )
             actor_used = author_account_id
 
+        operation.state = "succeeded"
+        operation.external_result_id = str((created or {}).get("id") or (created or {}).get("ruleId") or "") or None
+        db.session.commit()
+
         return json_ok(
             message="Rule copied successfully.",
             target_project_key=target_project_key,
@@ -314,6 +375,7 @@ def copy_rule():
             target_board_id=target_board_id_int,
             actor_used=actor_used,
             created=created,
+            operation_id=operation.id,
         )
     except RuleCopierServiceError as exc:
         log_handled_exception(
@@ -327,7 +389,9 @@ def copy_rule():
                 "target_board_id": target_board_id_int,
             },
         )
-        return json_error(safe_error_message("copy the automation rule"), status_code=400)
+        status = 409 if getattr(exc, "outcome", None) == "unknown" else 400
+        code = "EXTERNAL_OUTCOME_UNKNOWN" if status == 409 else "RULE_CREATE_REJECTED"
+        return json_error(safe_error_message("copy the automation rule"), status_code=status, code=code)
     except Exception as exc:
         current_app.logger.exception("Unexpected error in copy_rule: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)

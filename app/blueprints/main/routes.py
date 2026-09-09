@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 from flask import current_app, g, jsonify, render_template, session, flash, redirect, request, url_for
 from flask_login import login_required, current_user, logout_user
 
 from . import main_bp
+from ...core.security import AUTH_SESSION_KEY
+from ...extensions import db
+from ...models import AuthSession
 
 
 @main_bp.before_app_request
@@ -119,6 +123,13 @@ def extend_session():
     new_expires_at = base_expires_at + timeout_seconds
     session["session_expires_at"] = new_expires_at
     session.permanent = True
+    record_id = session.get(AUTH_SESSION_KEY)
+    if record_id:
+        record = db.session.get(AuthSession, str(record_id))
+        if record and record.revoked_at is None:
+            from datetime import UTC, datetime
+            record.expires_at = datetime.fromtimestamp(new_expires_at, UTC)
+            db.session.commit()
 
     payload = _session_payload(now, new_expires_at, timeout_seconds)
     payload["ok"] = True
@@ -127,7 +138,8 @@ def extend_session():
 
 @main_bp.route("/client-log", methods=["POST"])
 def client_log():
-    if request.content_length and request.content_length > 8192:
+    raw = request.get_data(cache=True)
+    if len(raw) > 8192:
         return jsonify({"ok": False, "error": "Payload too large."}), 413
 
     payload = request.get_json(silent=True) or {}
@@ -137,13 +149,20 @@ def client_log():
             return ""
         return str(value).replace("\x00", "")[:max_len]
 
+    def clean_url(value):
+        try:
+            parsed = urlsplit(clean(value, 500))
+            return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        except Exception:
+            return ""
+
     current_app.logger.info(
         "client event",
         extra={
             "event": "client.event",
             "client_event": clean(payload.get("event"), 80),
             "client_message": clean(payload.get("message"), 500),
-            "client_url": clean(payload.get("url"), 500),
+            "client_url": clean_url(payload.get("url")),
             "client_user_agent": clean(payload.get("userAgent"), 300),
         },
     )

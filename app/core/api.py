@@ -43,12 +43,15 @@ def json_error(
     status_code: int = 400,
     code: str | None = None,
     details: Any | None = None,
+    retryable: bool | None = None,
 ):
     error: dict[str, Any] = {"message": message}
     if code:
         error["code"] = code
     if details is not None:
         error["details"] = _sanitize(details)
+    if retryable is not None:
+        error["retryable"] = bool(retryable)
 
     payload: dict[str, Any] = {"ok": False, "error": error}
     rid = _request_id()
@@ -70,3 +73,10 @@ def json_ok(**payload: Any):
     if rid:
         response["request_id"] = rid
     return jsonify(response)
+
+
+def json_accepted(**payload: Any):
+    response = json_ok(**payload)
+    response.status_code = 202
+    response.headers["Retry-After"] = str(max(1, int(payload.get("retry_after_ms", 1500)) // 1000))
+    return response

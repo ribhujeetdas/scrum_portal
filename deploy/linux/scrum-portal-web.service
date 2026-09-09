@@ -1,0 +1,19 @@
+[Unit]
+Description=Scrum Portal web
+After=network.target
+
+[Service]
+Type=simple
+User=scrumportal
+Group=scrumportal
+WorkingDirectory=/opt/scrum-portal
+EnvironmentFile=/etc/scrum-portal.env
+ExecStart=/opt/scrum-portal/.venv/bin/waitress-serve --listen=127.0.0.1:8080 --threads=8 wsgi:app
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

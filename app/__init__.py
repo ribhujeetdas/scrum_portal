@@ -2,17 +2,36 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_login import current_user
 
 from .config import Config
 from .extensions import db, login_manager, csrf, migrate
 from .logging_conf import configure_logging, init_request_correlation
 from .core.config_validation import collect_config_warnings, log_config_warnings
+from .core.config_validation import validate_startup_config
+from .core.database import configure_database, enable_and_verify_wal
+from .core.security import enforce_server_session
+from .core.commands import register_commands
+from .core.health import register_health_routes
+from .core.rate_limits import enforce_rate_limit
+from .core.dependencies import close_request_services
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_object)
+    proxy_count = int(app.config.get("TRUSTED_PROXY_COUNT", 0))
+    if proxy_count > 0:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=proxy_count,
+            x_proto=proxy_count,
+            x_host=proxy_count,
+        )
+    configure_database(app)
+    validate_startup_config(app)
 
     app.permanent_session_lifetime = timedelta(
         minutes=int(app.config.get("SESSION_TIMEOUT_MINUTES", 15))
@@ -21,10 +40,31 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     # Init extensions
     db.init_app(app)
     login_manager.init_app(app)
+
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        if (
+            request.path.startswith("/api/")
+            or request.path.startswith("/automation/sprint-viewer/")
+            or request.is_json
+        ):
+            return jsonify({
+                "ok": False,
+                "error": {
+                    "code": "AUTHENTICATION_REQUIRED",
+                    "message": "Authentication is required.",
+                },
+            }), 401
+        return redirect(url_for("aliases.auth_login", next=request.url))
+
     csrf.init_app(app)
     migrate.init_app(app, db)
 
     from . import models  # noqa: F401
+
+    with app.app_context():
+        if app.config.get("APP_ENV") == "production" or app.config.get("ENABLE_SQLITE_WAL", False):
+            enable_and_verify_wal(app, db.engine)
 
     # Logging
     configure_logging(app)
@@ -49,6 +89,25 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(tableau_custom_views_bp)
     app.register_blueprint(aliases_bp)
 
+    @app.before_request
+    def enforce_control_api_body_limit():
+        if request.method not in {"POST", "PUT", "PATCH"} or not request.is_json:
+            return None
+        if request.path.endswith(("/client-log", "/client_log", "/rule-copier/copy", "/rule-copier/copy-rule")):
+            return None
+        if len(request.get_data(cache=True)) <= 64 * 1024:
+            return None
+        return jsonify({
+            "ok": False,
+            "error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request body is too large."},
+        }), 413
+
+    app.before_request(enforce_server_session)
+    app.before_request(enforce_rate_limit)
+    register_commands(app)
+    register_health_routes(app)
+    app.teardown_request(close_request_services)
+
     legacy_successors = {
         "/home": "/dashboard",
         "/login": "/auth/login",
@@ -71,6 +130,16 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     @app.after_request
     def add_legacy_route_deprecation_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if app.config.get("APP_ENV") == "production" and request.is_secure:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        if current_user.is_authenticated and not request.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        if request.path.startswith("/api/") or request.path.startswith("/automation/sprint-viewer/"):
+            response.headers.setdefault("Cache-Control", "no-store")
         if not app.config.get("LEGACY_ROUTE_DEPRECATION_HEADERS", True):
             return response
         successor = legacy_successors.get(request.path)
@@ -105,9 +174,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     # CLI: init db
     @app.cli.command("init-db")
     def init_db_command():
-        """Initialize the database."""
-        with app.app_context():
-            db.create_all()
-        print("Database initialized.")
+        """Deprecated unsafe entry point."""
+        raise RuntimeError("init-db is retired; use 'flask setup-db --apply'")
 
     return app

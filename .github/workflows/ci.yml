@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then lock=requirements/dev-py312-windows.lock; else lock=requirements/dev-py312-linux.lock; fi
+          python -m pip install --require-hashes -r "$lock"
+      - name: Install browser used by integration tests
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then python -m playwright install --with-deps chromium; else python -m playwright install chromium; fi
+      - name: Compile
+        run: python -m compileall -q app workers migrations
+      - name: Test
+        run: python -m pytest -q
+      - name: Audit runtime dependencies
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then lock=requirements/runtime-py312-windows.lock; else lock=requirements/runtime-py312-linux.lock; fi
+          python -m pip_audit -r "$lock"

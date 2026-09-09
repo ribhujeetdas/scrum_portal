@@ -159,7 +159,7 @@ def test_canonical_api_validation_errors_include_request_id(tmp_path):
     assert response.headers["X-Request-ID"] == "phase6-api-123"
     assert data["ok"] is False
     assert data["request_id"] == "phase6-api-123"
-    assert data["error"]["message"] == "Board ID and Rule ID must be numeric."
+    assert data["error"]["message"] == "Board ID must be a positive integer."
 
 
 def test_canonical_sprint_api_rejects_board_outside_user_projects(tmp_path):

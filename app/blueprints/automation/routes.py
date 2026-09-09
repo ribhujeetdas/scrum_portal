@@ -48,3 +48,39 @@ def sprint_viewer_fetch_issues():
 @login_required
 def sprint_viewer_fetch_metrics():
     return sprint_viewer_feature.sprint_viewer_fetch_metrics()
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/status", methods=["GET"])
+@login_required
+def sprint_snapshot_status(snapshot_id):
+    return sprint_viewer_feature.sprint_snapshot_status(snapshot_id)
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/issues", methods=["GET"])
+@login_required
+def sprint_snapshot_issues(snapshot_id):
+    return sprint_viewer_feature.sprint_snapshot_issues(snapshot_id)
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/components/<component_key>", methods=["GET"])
+@login_required
+def sprint_snapshot_component(snapshot_id, component_key):
+    return sprint_viewer_feature.sprint_snapshot_component(snapshot_id, component_key)
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/retry", methods=["POST"])
+@login_required
+def sprint_snapshot_retry(snapshot_id):
+    return sprint_viewer_feature.sprint_snapshot_retry(snapshot_id)
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/authorize", methods=["POST"])
+@login_required
+def sprint_snapshot_authorize(snapshot_id):
+    return sprint_viewer_feature.sprint_snapshot_authorize(snapshot_id)
+
+
+@automation_bp.route("/sprint-viewer/snapshots/<snapshot_id>/export-manifest", methods=["GET"])
+@login_required
+def sprint_snapshot_export_manifest(snapshot_id):
+    return sprint_viewer_feature.sprint_snapshot_export_manifest(snapshot_id)

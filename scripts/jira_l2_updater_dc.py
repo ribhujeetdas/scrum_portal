@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
+"""Operator-only Jira mutation utility; it is not imported by the web runtime.
+
+This legacy business-rule script intentionally remains independently runnable
+and dry-run capable. Production application code uses app.core.http_client;
+operators must review this script's explicit mutation behavior before use.
+
 Jira Data Center L2 Updater (PAT / Bearer)
 ------------------------------------------
 - Auth: Data Center PAT via Authorization: Bearer <token>

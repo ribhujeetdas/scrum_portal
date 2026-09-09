@@ -142,7 +142,7 @@ def test_automation_pages_load_when_project_key_exists(tmp_path):
     assert client.get("/automation/sprint-viewer").status_code == 200
 
 
-def test_login_recovers_from_stale_csrf_after_session_expiry(tmp_path):
+def test_login_rejects_stale_csrf_then_accepts_a_fresh_form(tmp_path):
     app = create_csrf_test_app(tmp_path)
     client = app.test_client()
 
@@ -163,6 +163,23 @@ def test_login_recovers_from_stale_csrf_after_session_expiry(tmp_path):
         follow_redirects=False,
     )
 
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/dashboard")
+    assert response.status_code == 400
+    assert response.headers.get("Location") is None
 
+    fresh_page = client.get("/auth/login").get_data(as_text=True)
+    fresh_token = re.search(
+        r'name="csrf_token" type="hidden" value="([^"]+)"', fresh_page
+    ).group(1)
+    fresh_response = client.post(
+        "/auth/login",
+        data={
+            "csrf_token": fresh_token,
+            "identifier": "user@wellsfargo.com",
+            "password": "Password123",
+            "submit": "Login",
+        },
+        follow_redirects=False,
+    )
+
+    assert fresh_response.status_code == 302
+    assert fresh_response.headers["Location"].endswith("/dashboard")

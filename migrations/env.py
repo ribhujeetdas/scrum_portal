@@ -94,17 +94,30 @@ def run_migrations_online():
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
 
-    connectable = get_engine()
-
-    with connectable.connect() as connection:
+    def run_with_connection(connection):
+        inspector = __import__("sqlalchemy").inspect(connection)
+        if not inspector.get_table_names():
+            raise RuntimeError(
+                "Empty database detected. Run 'flask setup-db --apply' before 'flask db upgrade'."
+            )
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
+            # Python's sqlite3 legacy transaction mode otherwise allows DDL
+            # while rolling back Alembic's version-table DML on close.
+            transactional_ddl=connection.dialect.name == "sqlite",
             **conf_args
         )
 
         with context.begin_transaction():
             context.run_migrations()
+
+    supplied_connection = config.attributes.get("connection")
+    if supplied_connection is not None:
+        run_with_connection(supplied_connection)
+    else:
+        with get_engine().connect() as connection:
+            run_with_connection(connection)
 
 
 if context.is_offline_mode():

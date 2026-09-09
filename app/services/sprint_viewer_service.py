@@ -1,14 +1,20 @@
 # app/services/sprint_viewer_service.py
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import math
 import re
 from typing import Optional, Set, Dict, Any, List
 
 from flask import current_app, has_app_context
 
 from app.core.http_client import ExternalHttpClient, ExternalServiceError
+from app.features.automation.sprint_viewer.calculations import (
+    build_scrum_metrics as calculate_scrum_metrics,
+    metric_queries,
+)
+from app.integrations.jira.pagination import JiraPaginationError, collect_offset_pages
+from app.integrations.jira.identity import JiraIdentityResolver, build_identity_resolver
 
 
 class SprintViewerServiceError(Exception):
@@ -29,13 +35,28 @@ class SprintViewerService:
         timeout_seconds: int = 30,
         http_client: ExternalHttpClient | None = None,
         metrics_max_workers: int = 5,
+        story_points_field: str = "customfield_10106",
+        application_field: str = "customfield_11700",
+        epic_link_field: str = "customfield_10100",
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout_seconds
         self.metrics_max_workers = max(1, min(int(metrics_max_workers or 5), 16))
+        self.story_points_field = story_points_field
+        self.application_field = application_field
+        self.epic_link_field = epic_link_field
         if not self.base_url:
             raise ValueError("JIRA_BASE_URL is missing.")
         self._client = http_client or self._new_client()
+
+    def normalize_configured_fields(self, issue: dict) -> dict:
+        """Copy configured Jira fields into the stable calculation schema."""
+        fields = issue.get("fields") or {}
+        fields["customfield_10106"] = fields.get(self.story_points_field)
+        fields["customfield_11700"] = fields.get(self.application_field)
+        fields["customfield_10100"] = fields.get(self.epic_link_field)
+        issue["fields"] = fields
+        return issue
 
     # ---------------------------
     # Trace helpers (config-driven)
@@ -112,9 +133,11 @@ class SprintViewerService:
         ).strip()
 
     @staticmethod
-    def _comment_slim(comment: dict) -> dict:
+    def _comment_slim(comment: dict, resolver: JiraIdentityResolver | None = None) -> dict:
+        author = comment.get("author") or {}
         return {
             "author_eid": SprintViewerService._comment_author_eid(comment),
+            "principal_id": resolver.resolve(author) if resolver else None,
             "created": comment.get("created"),
         }
 
@@ -132,13 +155,21 @@ class SprintViewerService:
             return None
 
     @staticmethod
-    def _reconstruct_at_sprint_end(issue: dict, values: dict, sprint_complete_date: Optional[str]) -> tuple[dict, bool]:
+    def _reconstruct_at_sprint_end(
+        issue: dict,
+        values: dict,
+        sprint_complete_date: Optional[str],
+        resolver: JiraIdentityResolver | None = None,
+    ) -> tuple[dict, bool]:
         cutoff = SprintViewerService._parse_jira_datetime(sprint_complete_date)
         if cutoff is None:
             return values, False
 
         histories = ((issue.get("changelog") or {}).get("histories") or [])
         if not histories:
+            changelog = issue.get("changelog")
+            if isinstance(changelog, dict) and changelog.get("total") == 0:
+                return values, False
             return values, True
 
         reconstructed = dict(values)
@@ -157,12 +188,25 @@ class SprintViewerService:
             for item in history.get("items") or []:
                 field = SprintViewerService._item_field(item)
                 if field == "status":
-                    reconstructed["status"] = item.get("fromString") or reconstructed["status"]
+                    reconstructed["status"] = item.get("fromString")
                 elif field == "assignee":
-                    reconstructed["assignee_eid"] = item.get("from") or item.get("fromString") or reconstructed["assignee_eid"]
-                    reconstructed["assignee_name"] = item.get("fromString") or reconstructed["assignee_name"]
+                    previous_id = item.get("from")
+                    previous_label = item.get("fromString")
+                    if previous_id is None and previous_label is None:
+                        reconstructed["assignee_eid"] = "UNASSIGNED"
+                        reconstructed["assignee_name"] = "Unassigned"
+                        reconstructed["principal_id"] = "unassigned"
+                    else:
+                        reconstructed["assignee_eid"] = str(previous_id or previous_label).strip()
+                        reconstructed["assignee_name"] = str(previous_label or previous_id).strip()
+                        reconstructed["principal_id"] = (
+                            resolver.observe_changelog(previous_id, previous_label)
+                            if resolver
+                            else f"key:{str(previous_id or previous_label).strip()}"
+                        )
                 elif field in {"story points", "customfield_10106"}:
-                    sp = SprintViewerService._safe_story_points(item.get("fromString"))
+                    raw_previous = item.get("fromString") if "fromString" in item else item.get("from")
+                    sp = SprintViewerService._safe_story_points(raw_previous)
                     reconstructed["story_points"] = sp
 
         return reconstructed, False
@@ -190,19 +234,15 @@ class SprintViewerService:
     def fetch_closed_sprints_for_board(self, board_id: int, pat: str) -> list[dict]:
         current_year = datetime.now().year
         allowed_years = {current_year, current_year - 1}
-        all_sprints: list[dict] = []
-        start_at = 0
         max_results = 50
 
         self._trace("Sprints start board_id=%s maxResults=%s",
                     board_id, max_results)
 
-        while True:
-            params = {"startAt": start_at,
-                      "maxResults": max_results, "state": "closed"}
-
+        def fetch_page(start_at: int, page_size: int):
+            params = {"startAt": start_at, "maxResults": page_size, "state": "closed"}
             try:
-                data = self._client.get_json(
+                return self._client.get_json(
                     f"/rest/agile/1.0/board/{board_id}/sprint",
                     headers=self._headers(pat),
                     params=params,
@@ -217,34 +257,22 @@ class SprintViewerService:
                     forbidden_message="Forbidden (403) while fetching sprints.",
                 )
 
-            values = data.get("values") or []
-            page_count = len(values)
-
-            for s in values:
-                if (s.get("state") or "").lower() != "closed":
-                    continue
-                year = self._year_from_start_date(s.get("startDate"))
-                if year is None or year not in allowed_years:
-                    continue
-                all_sprints.append(s)
-
-            is_last = data.get("isLast")
-            self._trace(
-                "Sprints page board_id=%s startAt=%s got=%s isLast=%s total_collected=%s",
-                board_id, start_at, page_count, is_last, len(all_sprints)
+        try:
+            source_sprints = collect_offset_pages(
+                fetch_page,
+                collection_key="values",
+                requested_page_size=max_results,
+                identity=lambda sprint: str(sprint.get("id")) if sprint.get("id") is not None else None,
             )
+        except JiraPaginationError as exc:
+            raise SprintViewerServiceError(f"Sprint pagination incomplete: {exc}") from exc
 
-            if is_last is True:
-                self._trace("Sprints stop reason=isLast")
-                break
-            if page_count == 0:
-                self._trace("Sprints stop reason=page_count=0")
-                break
-            if page_count < max_results:
-                self._trace("Sprints stop reason=page_count<maxResults")
-                break
-
-            start_at += page_count
+        all_sprints = [
+            sprint
+            for sprint in source_sprints
+            if (sprint.get("state") or "").lower() == "closed"
+            and self._year_from_start_date(sprint.get("startDate")) in allowed_years
+        ]
 
         self._trace("Sprints done board_id=%s final_count=%s",
                     board_id, len(all_sprints))
@@ -253,33 +281,38 @@ class SprintViewerService:
     # ---------------------------
     # Sprint issues (pagination)
     # ---------------------------
-    def fetch_all_issues_for_sprint(self, sprint_id: int, pat: str) -> dict:
-        start_at = 0
+    def fetch_all_issues_for_sprint(
+        self, sprint_id: int, pat: str, *, hydrate_comments: bool = False
+    ) -> dict:
         max_results = 50
-        all_issues: list[dict] = []
-        total: Optional[int] = None
 
         fields = [
             "summary",
-            "customfield_10106",  # story points
+            self.story_points_field,
             "issuetype",
             "status",
-            "customfield_11700",  # app
+            self.application_field,
+            self.epic_link_field,
             "epic",
-            "comment",
             "assignee",
             "parent",
+            "project",
+            "updated",
         ]
+        if hydrate_comments:
+            fields.append("comment")
 
         self._trace("SprintIssues start sprint_id=%s maxResults=%s",
                     sprint_id, max_results)
 
-        while True:
-            params = {"startAt": start_at, "maxResults": max_results,
-                      "fields": ",".join(fields), "expand": "changelog"}
-
+        def fetch_page(start_at: int, page_size: int):
+            params = {
+                "startAt": start_at,
+                "maxResults": page_size,
+                "fields": ",".join(fields),
+            }
             try:
-                data = self._client.get_json(
+                return self._client.get_json(
                     f"/rest/agile/1.0/sprint/{sprint_id}/issue",
                     headers=self._headers(pat),
                     params=params,
@@ -294,43 +327,19 @@ class SprintViewerService:
                     forbidden_message="Forbidden (403) while fetching sprint issues.",
                 )
 
-            if total is None:
-                t = data.get("total")
-                total = int(t) if isinstance(t, int) else None
-
-            issues = data.get("issues") or []
-            self._hydrate_incomplete_comments(issues, pat)
-            all_issues.extend(issues)
-
-            page_count = len(issues)
-            is_last = data.get("isLast")
-
-            self._trace(
-                "SprintIssues page sprint_id=%s startAt=%s got=%s isLast=%s total=%s collected=%s",
-                sprint_id, start_at, page_count, is_last, total, len(
-                    all_issues)
+        try:
+            all_issues = collect_offset_pages(
+                fetch_page,
+                collection_key="issues",
+                requested_page_size=max_results,
+                identity=lambda issue: str(issue.get("id")) if issue.get("id") is not None else None,
             )
-
-            if is_last is True:
-                self._trace("SprintIssues stop reason=isLast")
-                break
-            if page_count == 0:
-                self._trace("SprintIssues stop reason=page_count=0")
-                break
-            if page_count < max_results:
-                self._trace("SprintIssues stop reason=page_count<maxResults")
-                break
-            if total is not None:
-                try:
-                    if (start_at + page_count) >= int(total):
-                        self._trace("SprintIssues stop reason=reached_total")
-                        break
-                except Exception:
-                    pass
-
-            start_at += page_count
-
-        final_total = int(total) if total is not None else len(all_issues)
+        except JiraPaginationError as exc:
+            raise SprintViewerServiceError(f"Sprint issue pagination incomplete: {exc}") from exc
+        all_issues = [self.normalize_configured_fields(issue) for issue in all_issues]
+        if hydrate_comments:
+            self._hydrate_incomplete_comments(all_issues, pat)
+        final_total = len(all_issues)
         self._trace("SprintIssues done sprint_id=%s final_total=%s collected=%s",
                     sprint_id, final_total, len(all_issues))
         return {"total": final_total, "issues": all_issues}
@@ -387,11 +396,20 @@ class SprintViewerService:
     # Field extraction / grouping
     # ---------------------------
     @staticmethod
-    def extract_issue_fields(issue: dict, sprint_complete_date: Optional[str] = None) -> dict:
+    def extract_issue_fields(
+        issue: dict,
+        sprint_complete_date: Optional[str] = None,
+        resolver: JiraIdentityResolver | None = None,
+    ) -> dict:
         fields = issue.get("fields") or {}
         assignee = fields.get("assignee") or {}
         assignee_eid = assignee.get("name") or "UNASSIGNED"
         assignee_name = assignee.get("displayName") or "Unassigned"
+        principal_id = resolver.resolve(assignee) if resolver else (
+            f"key:{assignee.get('key')}" if assignee.get("key")
+            else f"name:{assignee_eid}" if assignee_eid != "UNASSIGNED"
+            else "unassigned"
+        )
 
         issuetype = fields.get("issuetype") or {}
         status = fields.get("status") or {}
@@ -405,10 +423,11 @@ class SprintViewerService:
             fields.get("customfield_10100") or "")
         epic_name = epic_obj.get("name") or ""
 
+        comment_field_present = "comment" in fields
         comment_obj = fields.get("comment") or {}
-        comment_total = comment_obj.get("total") or 0
+        comment_total = comment_obj.get("total") if comment_field_present else None
         comments = [
-            SprintViewerService._comment_slim(comment)
+            SprintViewerService._comment_slim(comment, resolver)
             for comment in (comment_obj.get("comments") or [])
         ]
 
@@ -423,15 +442,16 @@ class SprintViewerService:
             "app_name": app_name,
             "feature_key": epic_key,
             "feature_name": epic_name,
-            "comment_total": int(comment_total or 0),
+            "comment_total": int(comment_total or 0) if comment_total is not None else None,
             "comments": comments,
-            "relevant_comment_count": 0,
+            "relevant_comment_count": 0 if comment_field_present else None,
             "is_carryover": SprintViewerService._issue_has_multiple_sprints(issue),
             "assignee_eid": assignee_eid,
             "assignee_name": assignee_name,
+            "principal_id": principal_id,
         }
         values, historical_fallback = SprintViewerService._reconstruct_at_sprint_end(
-            issue, values, sprint_complete_date
+            issue, values, sprint_complete_date, resolver
         )
         values["historical_fallback"] = historical_fallback
         return values
@@ -447,23 +467,29 @@ class SprintViewerService:
 
     @staticmethod
     def apply_relevant_comment_counts(extracted_issues: list[dict], sprint_complete_date: Optional[str] = None) -> None:
-        team_eids = {
-            str(issue.get("assignee_eid") or "").strip()
+        team_principals = {
+            str(issue.get("principal_id") or issue.get("assignee_eid") or "").strip()
             for issue in extracted_issues
             if issue.get("assignee_eid") and issue.get("assignee_eid") != "UNASSIGNED"
         }
         cutoff = SprintViewerService._parse_jira_datetime(sprint_complete_date)
 
         for issue in extracted_issues:
+            if issue.get("comment_total") is None and not issue.get("comments"):
+                issue["relevant_comment_count"] = None
+                continue
             assignee_eid = str(issue.get("assignee_eid") or "").strip()
-            allowed_authors = set(team_eids)
-            if assignee_eid and assignee_eid != "UNASSIGNED":
-                allowed_authors.add(assignee_eid)
+            allowed_authors = set(team_principals)
+            principal_id = str(issue.get("principal_id") or assignee_eid).strip()
+            if principal_id and assignee_eid != "UNASSIGNED":
+                allowed_authors.add(principal_id)
 
             count = 0
             for comment in issue.get("comments") or []:
-                author_eid = str(comment.get("author_eid") or "").strip()
-                if author_eid not in allowed_authors:
+                author_identity = str(
+                    comment.get("principal_id") or comment.get("author_eid") or ""
+                ).strip()
+                if author_identity not in allowed_authors:
                     continue
                 created = SprintViewerService._parse_jira_datetime(comment.get("created"))
                 if cutoff is not None and created is not None and created > cutoff:
@@ -481,8 +507,10 @@ class SprintViewerService:
 
         for it in issues:
             eid = it["assignee_eid"]
-            if eid not in groups:
-                groups[eid] = {
+            group_key = str(it.get("principal_id") or eid)
+            if group_key not in groups:
+                groups[group_key] = {
+                    "principal_id": group_key,
                     "assignee_eid": eid,
                     "assignee_name": it["assignee_name"],
                     "issues": [],
@@ -490,13 +518,17 @@ class SprintViewerService:
                     "sp_sum": 0.0,
                 }
 
-            groups[eid]["issues"].append(it)
-            groups[eid]["issue_count"] += 1
-            groups[eid]["sp_sum"] += self._safe_float(it.get("story_points"))
-            groups[eid]["relevant_comment_count"] = (
-                groups[eid].get("relevant_comment_count", 0)
-                + int(it.get("relevant_comment_count") or 0)
-            )
+            groups[group_key]["issues"].append(it)
+            groups[group_key]["issue_count"] += 1
+            groups[group_key]["sp_sum"] += self._safe_float(it.get("story_points"))
+            comment_count = it.get("relevant_comment_count")
+            if comment_count is not None:
+                groups[group_key]["relevant_comment_count"] = (
+                    int(groups[group_key].get("relevant_comment_count") or 0)
+                    + int(comment_count)
+                )
+            elif "relevant_comment_count" not in groups[group_key]:
+                groups[group_key]["relevant_comment_count"] = None
 
         for g in groups.values():
             g["issues"].sort(key=lambda x: (x.get("issue_key") or ""))
@@ -515,6 +547,10 @@ class SprintViewerService:
             g["sp_sum"] = round(float(g["sp_sum"]), 2)
 
         return result
+
+    @staticmethod
+    def build_identity_resolver(issues: list[dict]) -> JiraIdentityResolver:
+        return build_identity_resolver(issues)
 
     # ---------------------------
     # Total SP and helper stats
@@ -539,6 +575,7 @@ class SprintViewerService:
         zero_comment_count = 0
         relevant_comment_count = 0
         zero_relevant_comment_count = 0
+        comments_evaluated_count = 0
         carryover_count = 0
         carryover_sp = 0.0
 
@@ -559,12 +596,14 @@ class SprintViewerService:
             if (it.get("assignee_eid") or "") == "UNASSIGNED":
                 unassigned_count += 1
 
-            if int(it.get("comment_total") or 0) == 0:
-                zero_comment_count += 1
-            relevant_comments = int(it.get("relevant_comment_count") or 0)
-            relevant_comment_count += relevant_comments
-            if relevant_comments == 0:
-                zero_relevant_comment_count += 1
+            if it.get("comment_total") is not None:
+                comments_evaluated_count += 1
+                if int(it.get("comment_total") or 0) == 0:
+                    zero_comment_count += 1
+                relevant_comments = int(it.get("relevant_comment_count") or 0)
+                relevant_comment_count += relevant_comments
+                if relevant_comments == 0:
+                    zero_relevant_comment_count += 1
 
             if it.get("is_carryover"):
                 carryover_count += 1
@@ -583,11 +622,12 @@ class SprintViewerService:
             "bug_pct": round(pct(bug_count, total_count), 1),
             "unassigned_count": unassigned_count,
             "unassigned_pct": round(pct(unassigned_count, total_count), 1),
-            "zero_comment_count": zero_comment_count,
-            "zero_comment_pct": round(pct(zero_comment_count, total_count), 1),
-            "relevant_comment_count": relevant_comment_count,
-            "zero_relevant_comment_count": zero_relevant_comment_count,
-            "zero_relevant_comment_pct": round(pct(zero_relevant_comment_count, total_count), 1),
+            "comments_evaluated_count": comments_evaluated_count,
+            "zero_comment_count": zero_comment_count if comments_evaluated_count else None,
+            "zero_comment_pct": round(pct(zero_comment_count, comments_evaluated_count), 1) if comments_evaluated_count else None,
+            "relevant_comment_count": relevant_comment_count if comments_evaluated_count else None,
+            "zero_relevant_comment_count": zero_relevant_comment_count if comments_evaluated_count else None,
+            "zero_relevant_comment_pct": round(pct(zero_relevant_comment_count, comments_evaluated_count), 1) if comments_evaluated_count else None,
             "carryover_count": carryover_count,
             "carryover_sp": round(float(carryover_sp), 2),
         }
@@ -609,13 +649,19 @@ class SprintViewerService:
 
             assignee = issue.get("assignee_eid") or "UNASSIGNED"
             assignee_name = issue.get("assignee_name") or "Unassigned"
+            assignee_key = str(issue.get("principal_id") or assignee)
             by_assignee.setdefault(
-                assignee,
-                {"assignee_eid": assignee, "assignee_name": assignee_name, "types": {}},
+                assignee_key,
+                {
+                    "principal_id": assignee_key,
+                    "assignee_eid": assignee,
+                    "assignee_name": assignee_name,
+                    "types": {},
+                },
             )
-            by_assignee[assignee]["types"].setdefault(issue_type, blank_bucket())
-            by_assignee[assignee]["types"][issue_type]["count"] += 1
-            by_assignee[assignee]["types"][issue_type]["pts"] += pts
+            by_assignee[assignee_key]["types"].setdefault(issue_type, blank_bucket())
+            by_assignee[assignee_key]["types"][issue_type]["count"] += 1
+            by_assignee[assignee_key]["types"][issue_type]["pts"] += pts
 
         for bucket in overall.values():
             bucket["pts"] = round(bucket["pts"], 2)
@@ -638,30 +684,23 @@ class SprintViewerService:
         pat: str,
         capture_keys: bool = False,
     ) -> dict:
-        start_at = 0
         max_results = 200
-
-        total_sp = 0.0
-        total_count = 0
-        keys: Set[str] = set()
 
         jql_short = jql.replace("\n", " ").strip()
         if len(jql_short) > 180:
             jql_short = jql_short[:180] + "..."
 
-        self._trace_jql("JQLAgg start startAt=%s maxResults=%s jql=%s",
-                        start_at, max_results, jql_short)
+        self._trace_jql("JQLAgg start maxResults=%s jql=%s", max_results, jql_short)
 
-        while True:
+        def fetch_page(start_at: int, page_size: int):
             params = {
                 "jql": jql,
                 "startAt": start_at,
-                "maxResults": max_results,
-                "fields": "customfield_10106",
+                "maxResults": page_size,
+                "fields": f"id,key,{self.story_points_field},project,updated",
             }
-
             try:
-                data = client.get_json(
+                return client.get_json(
                     "/rest/api/2/search",
                     headers=self._headers(pat),
                     params=params,
@@ -676,46 +715,38 @@ class SprintViewerService:
                     forbidden_message="Forbidden (403) while running JQL search.",
                 )
 
-            issues = data.get("issues") or []
-            page_count = len(issues)
-            total_count += page_count
-
-            for issue in issues:
-                if capture_keys:
-                    k = issue.get("key")
-                    if k:
-                        keys.add(str(k))
-
-                f = issue.get("fields") or {}
-                sp = f.get("customfield_10106")
-                if sp is None:
-                    continue
-                try:
-                    total_sp += float(sp)
-                except Exception:
-                    continue
-
-            is_last = data.get("isLast")
-            self._trace_jql(
-                "JQLAgg page startAt=%s got=%s isLast=%s count_so_far=%s sp_so_far=%.2f jql=%s",
-                start_at, page_count, is_last, total_count, total_sp, jql_short
+        try:
+            issues = collect_offset_pages(
+                fetch_page,
+                collection_key="issues",
+                requested_page_size=max_results,
+                identity=lambda issue: str(issue.get("id")) if issue.get("id") is not None else None,
             )
+        except JiraPaginationError as exc:
+            raise SprintViewerServiceError(f"Metric pagination incomplete: {exc}") from exc
 
-            if is_last is True:
-                self._trace_jql("JQLAgg stop reason=isLast jql=%s", jql_short)
-                break
-            if page_count == 0:
-                self._trace_jql(
-                    "JQLAgg stop reason=page_count=0 jql=%s", jql_short)
-                break
-            if page_count < max_results:
-                self._trace_jql(
-                    "JQLAgg stop reason=page_count<maxResults jql=%s", jql_short)
-                break
+        total_sp = 0.0
+        keys: Set[str] = set()
+        memberships: list[dict] = []
+        for issue in issues:
+            fields = self.normalize_configured_fields(issue).get("fields") or {}
+            raw_sp = fields.get("customfield_10106")
+            point_value = self._safe_story_points(raw_sp)
+            if point_value is not None and math.isfinite(point_value):
+                total_sp += point_value
+            if capture_keys and issue.get("key"):
+                keys.add(str(issue["key"]))
+            project = fields.get("project") or {}
+            memberships.append({
+                "issue_id": str(issue.get("id")),
+                "issue_key": issue.get("key"),
+                "project_id": project.get("id"),
+                "project_key": project.get("key"),
+                "story_points": point_value,
+                "updated": fields.get("updated"),
+            })
 
-            start_at += page_count
-
-        out = {"sp": float(total_sp), "count": int(total_count)}
+        out = {"sp": float(total_sp), "count": len(issues), "memberships": memberships}
         if capture_keys:
             out["keys"] = sorted(keys)
         self._trace_jql("JQLAgg done sp=%.2f count=%s jql=%s",
@@ -727,124 +758,26 @@ class SprintViewerService:
     # ---------------------------
     @staticmethod
     def build_scrum_metrics(results: Dict[str, dict]) -> dict:
-        original = results.get("original_commitment", {})
-        completed_original = results.get("completed_original", {})
-        total_completed = results.get("total_completed", {})
-        added = results.get("added_scope", {})
-        removed = results.get("removed_scope", {})
-
-        original_sp = float(original.get("sp", 0.0))
-        original_count = int(original.get("count", 0))
-        completed_original_sp = float(completed_original.get("sp", 0.0))
-        completed_original_count = int(completed_original.get("count", 0))
-        total_completed_sp = float(total_completed.get("sp", 0.0))
-        total_completed_count = int(total_completed.get("count", 0))
-        added_sp = float(added.get("sp", 0.0))
-        added_count = int(added.get("count", 0))
-        removed_sp = float(removed.get("sp", 0.0))
-        removed_count = int(removed.get("count", 0))
-
-        completed_added_sp = max(0.0, total_completed_sp - completed_original_sp)
-        completed_added_count = max(0, total_completed_count - completed_original_count)
-        carryover_sp = max(0.0, original_sp - completed_original_sp - removed_sp)
-        carryover_count = max(0, original_count - completed_original_count - removed_count)
-        scope_net_sp = added_sp - removed_sp
-        scope_net_count = added_count - removed_count
-
-        def pct(n: float, d: float) -> float:
-            return (n / d) * 100.0 if d and d > 0 else 0.0
-
-        out = {
-            "original_commitment_sp": round(original_sp, 2),
-            "original_commitment_count": original_count,
-            "completed_original_sp": round(completed_original_sp, 2),
-            "completed_original_count": completed_original_count,
-            "completed_added_sp": round(completed_added_sp, 2),
-            "completed_added_count": completed_added_count,
-            "total_completed_sp": round(total_completed_sp, 2),
-            "total_completed_count": total_completed_count,
-            "added_scope_sp": round(added_sp, 2),
-            "added_scope_count": added_count,
-            "removed_scope_sp": round(removed_sp, 2),
-            "removed_scope_count": removed_count,
-            "carryover_sp": round(carryover_sp, 2),
-            "carryover_count": carryover_count,
-            "scope_net_sp": round(scope_net_sp, 2),
-            "scope_net_count": scope_net_count,
-            "commitment_predictability_pct": round(pct(completed_original_sp, original_sp), 1),
-            "total_delivery_vs_commitment_pct": round(pct(total_completed_sp, original_sp), 1),
-            "added_scope_pct": round(pct(added_sp, original_sp), 1),
-            "removed_scope_pct": round(pct(removed_sp, original_sp), 1),
-            "scope_change_pct": round(pct(added_sp + removed_sp, original_sp), 1),
-            "scope_added_keys": added.get("keys") or [],
-        }
-
-        # Backward-compatible aliases for existing callers/UI during migration.
-        out.update(
-            {
-                "committed_sp": out["original_commitment_sp"],
-                "committed_count": out["original_commitment_count"],
-                "delivered_sp": out["total_completed_sp"],
-                "delivered_count": out["total_completed_count"],
-                "spillover_sp": out["carryover_sp"],
-                "spillover_count": out["carryover_count"],
-                "scope_added_sp": out["added_scope_sp"],
-                "scope_added_count": out["added_scope_count"],
-                "descope_sp": out["removed_scope_sp"],
-                "descope_count": out["removed_scope_count"],
-                "predictability_pct": out["commitment_predictability_pct"],
-                "spill_pct": round(pct(carryover_sp, original_sp), 1),
-                "scope_pct": out["added_scope_pct"],
-                "spill_red": pct(carryover_sp, original_sp) > 20.0,
-                "scope_red": out["added_scope_pct"] > 20.0,
-            }
-        )
-        return out
+        return calculate_scrum_metrics(results)
 
     def compute_sprint_metrics_parallel(self, board_id: int, sprint_id: int, pat: str, total_sp: float, total_count: int) -> dict:
-        # ScriptRunner JQLs already used in our app
-        completed_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issuetype IN standardIssueTypes()"
-        completed_original_jql = f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
-        added_scope_jql = f"issueFunction in addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
-        removed_scope_jql = f"issueFunction in removedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes()"
-        original_commitment_jql = (
-            f"(issueFunction in completeInSprint({board_id}, {sprint_id}) "
-            f"OR issueFunction in incompleteInSprint({board_id},{sprint_id}) "
-            f"OR issueFunction in removedAfterSprintStart({board_id},{sprint_id})) "
-            f"AND issueFunction NOT IN addedAfterSprintStart({board_id},{sprint_id}) "
-            "AND issuetype IN standardIssueTypes()"
-        )
-
-        jobs = {
-            "original_commitment": {"jql": original_commitment_jql, "capture_keys": False},
-            "completed_original": {"jql": completed_original_jql, "capture_keys": False},
-            "total_completed": {"jql": completed_jql, "capture_keys": False},
-            "added_scope": {"jql": added_scope_jql, "capture_keys": True},
-            "removed_scope": {"jql": removed_scope_jql, "capture_keys": False},
-        }
+        jobs = metric_queries(board_id, sprint_id)
 
         self._trace("Metrics start board_id=%s sprint_id=%s total_sp=%.2f total_count=%s",
                     board_id, sprint_id, total_sp, total_count)
 
         results: Dict[str, dict] = {k: {"sp": 0.0, "count": 0} for k in jobs.keys()}
 
-        def run_one(name: str, spec: dict) -> tuple[str, dict]:
+        for name, spec in jobs.items():
             agg = self._aggregate_by_jql_with_client(
-                client=self._new_client(),
+                client=self._client,
                 jql=spec["jql"],
                 pat=pat,
                 capture_keys=bool(spec.get("capture_keys", False)),
             )
-            return name, agg
-
-        with ThreadPoolExecutor(max_workers=self.metrics_max_workers) as ex:
-            futures = [ex.submit(run_one, name, spec)
-                       for name, spec in jobs.items()]
-            for f in as_completed(futures):
-                name, agg = f.result()
-                results[name] = agg
-                self._trace("Metrics partial %s sp=%.2f count=%s", name, float(
-                    agg.get("sp", 0.0)), int(agg.get("count", 0)))
+            results[name] = agg
+            self._trace("Metrics partial %s sp=%.2f count=%s", name, float(
+                agg.get("sp", 0.0)), int(agg.get("count", 0)))
         out = self.build_scrum_metrics(results)
 
         self._trace("Metrics done board_id=%s sprint_id=%s result=%s",
