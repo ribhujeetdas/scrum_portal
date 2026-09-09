@@ -1,5 +1,28 @@
 # First-Time Setup Guide
 
+## Automated Windows Setup
+
+From PowerShell in the repository root, run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows.ps1
+```
+
+The script creates a Python 3.12 virtual environment, installs the hash-locked dependencies, creates `.env`, generates `SECRET_KEY` and `FERNET_KEY`, configures a local file-backed SQLite database, applies migrations, verifies database integrity, runs the smoke check, and runs the test suite. Existing valid secrets and explicit database configuration are preserved. Use `-RegenerateSecrets` only when intentionally invalidating existing encrypted PAT data and sessions; use `-SkipTests` to omit the full test suite.
+
+The script discovers Python through the Windows `py` launcher or a Python 3.12 `python.exe` on `PATH`. When necessary, pass an explicit interpreter, for example `-Python312 C:\Python312\python.exe`.
+
+The script intentionally leaves Jira, Jira custom fields, Jira PATs, and optional Tableau settings for manual configuration. A Jira PAT belongs to a user and is entered during signup or through Settings, never in the bootstrap script.
+
+Start both the web process and the worker with:
+
+```powershell
+.\scripts\run_windows.ps1
+```
+
+The launcher starts the worker as a hidden child process when snapshot mode is enabled, starts the web server in the current window, and stops its child worker when the web server exits. Worker output is written under `logs/`.
+
 ## 1. Create A Virtual Environment
 
 ```powershell
@@ -43,6 +66,6 @@ py wsgi.py
 
 Open `http://127.0.0.1:5000/login`.
 
-To test snapshot mode, start a second terminal with `py -m workers.sprint_import_worker`, set `SPRINT_VIEWER_MODE=snapshot`, and restart the web process.
+For manual startup in snapshot mode, start a second terminal with `py -m workers.sprint_import_worker`, set `SPRINT_VIEWER_MODE=snapshot`, and restart the web process. The Windows launcher above manages both local processes automatically.
 
 On Linux use `requirements/dev-py312-linux.lock`. Production installs the corresponding `runtime-py312-*.lock`; do not install the development manifest into the service environment.

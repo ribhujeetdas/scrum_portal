@@ -5,19 +5,15 @@ Flask application for Jira automation support, sprint reporting, Tableau custom 
 ## Quick Start
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install --require-hashes -r requirements\dev-py312-windows.lock
-Copy-Item .env.example .env
-flask setup-db --apply
-py -m pytest
-py scripts\smoke_check.py
-py wsgi.py
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows.ps1
+# Configure Jira connection values in .env, then:
+.\scripts\run_windows.ps1
 ```
 
 Open `http://127.0.0.1:5000/login`.
 
-For the durable Sprint Viewer, run `python -m workers.sprint_import_worker` as a separate process and set `SPRINT_VIEWER_MODE=snapshot`. A first request imports Jira data into scoped SQLite snapshots; later requests read the completed snapshot from SQLite after a fresh Jira access check. Core tickets publish first while history, comments, and the five existing metric searches continue independently.
+For the durable Sprint Viewer, a worker process must run while `SPRINT_VIEWER_MODE=snapshot`. `scripts/run_windows.ps1` manages it automatically for local Windows use. A first request imports Jira data into scoped SQLite snapshots; later requests read the completed snapshot from SQLite after a fresh Jira access check. Core tickets publish first while history, comments, and the five existing metric searches continue independently.
 
 Production uses Python 3.12, a local file-backed SQLite database in WAL mode, Waitress behind TLS, and exactly one supervised worker. See `deploy/waitress.md`. Automatic age-based Jira freshness remains deferred; `Refresh Sprints` refreshes only the sprint catalog.
 

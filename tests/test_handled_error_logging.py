@@ -23,6 +23,8 @@ class HandledErrorLoggingTestConfig(Config):
     FERNET_KEY = Fernet.generate_key().decode("ascii")
     LOG_TO_CONSOLE = False
     LOG_FILE = "test-app.log"
+    SPRINT_VIEWER_MODE = "direct"
+    SPRINT_VIEWER_SNAPSHOT_USER_IDS = ""
 
 
 def _create_test_app(tmp_path):
