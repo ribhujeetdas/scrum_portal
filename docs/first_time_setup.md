@@ -1,5 +1,9 @@
 # First-Time Setup Guide
 
+## Windows ZIP Extraction
+
+Repository paths are limited to 60 characters and checked in CI for Windows-invalid or reserved names. GitHub's archive directory and the directory selected for extraction are added to that length. Extract the download to a short local path such as `C:\src\scrum_portal`; avoid deeply nested OneDrive, SharePoint, Desktop, or email-attachment directories. The repository check reserves 120 characters for the selected parent path and 60 characters for GitHub's archive directory while staying below the legacy 260-character Windows limit.
+
 ## Automated Windows Setup
 
 From PowerShell in the repository root, run:

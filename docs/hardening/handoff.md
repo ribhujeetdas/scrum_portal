@@ -8,10 +8,10 @@ Use the prompt below to start implementation in the Scrum Portal workspace. It a
 Implement the Scrum Portal P1/P2 remediation plan in this repository.
 
 First read, in order:
-1. docs/implementation/production-hardening/README.md
-2. docs/implementation/production-hardening/backend-contracts.md
-3. docs/implementation/production-hardening/frontend-and-validation.md
-4. docs/implementation/production-hardening/implementation-status.md
+1. docs/hardening/README.md
+2. docs/hardening/backend.md
+3. docs/hardening/frontend.md
+4. docs/hardening/status.md
 
 The earlier evidence is in docs/sprint-viewer-performance-review.md.
 The implementation package supersedes its tentative architecture suggestions.
@@ -35,7 +35,7 @@ Execute milestones M00 through M09 in dependency order. Start by verifying
 the current repository and test baseline. Implement working increments;
 do not stop after restating the plan or fixing only the UI overlay.
 
-Update implementation-status.md as each finding gets code and actual test
+Update status.md as each finding gets code and actual test
 evidence. All SV01-SV12 and PR01-PR08 rows must be accounted for. Additional
 related fixes listed in the master plan are included. Do not mark a milestone
 complete merely because files exist or a source-text test passes.

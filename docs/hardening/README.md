@@ -7,9 +7,9 @@ Prepared 2026-09-09 for GPT Sol. This is an implementation specification, not ev
 Read this package in order:
 
 1. This file: scope, decisions, coverage, work packages and deployment.
-2. [Backend contracts](backend-contracts.md): persistence, transaction boundaries, Jira algorithms, worker, API and security contracts.
-3. [Frontend and validation](frontend-and-validation.md): UI states, browser behavior, regression cases, acceptance and measurement.
-4. [Sol handoff](SOL-HANDOFF.md): execution instructions and completion checklist.
+2. [Backend contracts](backend.md): persistence, transaction boundaries, Jira algorithms, worker, API and security contracts.
+3. [Frontend and validation](frontend.md): UI states, browser behavior, regression cases, acceptance and measurement.
+4. [Sol handoff](handoff.md): execution instructions and completion checklist.
 
 The originating evidence is [the performance review](../../sprint-viewer-performance-review.md). This package supersedes that review's tentative implementation suggestions. User decisions in the current conversation supersede this package; record their effect before changing implementation. Paths below are repository-relative, rooted at `D:\WF\scrum_portal-main` in the reviewed workspace. Line numbers in the review are navigation aids only; locate functions again before edits.
 
@@ -190,7 +190,7 @@ Dependencies: none. No production changes.
 2. Record Python/dependency versions, route map, existing tests and current migration head. Never read secrets into the transcript or run production migrations to gather a baseline.
 3. Run `python -m pytest -q`; the prior baseline was 69 passing tests, not a permanent expected count. Run the smoke script with explicit isolated test configuration after adapting its current environment dependence.
 4. Capture UI baseline screenshots for Sprint Viewer states and other affected pages using synthetic data. Capture representative current metric fixtures from the existing calculation code and the known synthetic bugs.
-5. Update the initialized `docs/implementation/production-hardening/implementation-status.md` with each coverage ID, milestone state, code links, tests/results, unresolved deployment facts and next action. Preserve prior evidence and update only completed work as work proceeds.
+5. Update the initialized `docs/hardening/status.md` with each coverage ID, milestone state, code links, tests/results, unresolved deployment facts and next action. Preserve prior evidence and update only completed work as work proceeds.
 6. Separate dependency manifests early; generate lock files from the verified baseline, add new dependencies only in the milestone that needs them. Do not blindly upgrade the whole stack while diagnosing behavior.
 
 Exit: reproducible baseline, no production state touched, tracking ledger created.

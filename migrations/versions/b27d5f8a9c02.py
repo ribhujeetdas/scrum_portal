@@ -1,4 +1,4 @@
-"""durable sprint snapshot and worker pipeline
+"""Add the durable sprint snapshot and worker pipeline.
 
 Revision ID: b27d5f8a9c02
 Revises: a18c9e4d7b01

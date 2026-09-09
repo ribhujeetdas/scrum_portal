@@ -26,7 +26,7 @@ Production installation uses the matching runtime hash lock: `requirements/runti
 - Route map: `docs/routes.md`
 - Architecture: `docs/architecture.md`
 - Operations and logging: `docs/operations.md`
-- Hardening implementation ledger: `docs/implementation/production-hardening/implementation-status.md`
+- Hardening implementation ledger: `docs/hardening/status.md`
 
 ## Development Rules
 

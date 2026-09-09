@@ -27,6 +27,8 @@ jobs:
           if [[ "${{ runner.os }}" == "Linux" ]]; then python -m playwright install --with-deps chromium; else python -m playwright install chromium; fi
       - name: Compile
         run: python -m compileall -q app workers migrations
+      - name: Check Windows-safe archive paths
+        run: python scripts/check_windows_paths.py
       - name: Test
         run: python -m pytest -q
       - name: Audit runtime dependencies

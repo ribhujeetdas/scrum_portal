@@ -1,4 +1,4 @@
-"""security epochs and server-side auth sessions
+"""Add security epochs and server-side auth sessions.
 
 Revision ID: a18c9e4d7b01
 Revises: 9c2a1f7b6d10

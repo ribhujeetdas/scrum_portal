@@ -2,7 +2,7 @@
 
 Date: 2026-09-09. Scope: current workspace, with Sprint Viewer as the priority and a targeted review of shared infrastructure.
 
-Follow-up decision: the user selected **SQLite only**, mandatory Jira access revalidation, and preservation of existing metric formulas with time-basis labels. The [implementation plan](implementation/production-hardening/README.md) supersedes the tentative PostgreSQL recommendation below; the findings remain the original review record.
+Follow-up decision: the user selected **SQLite only**, mandatory Jira access revalidation, and preservation of existing metric formulas with time-basis labels. The [implementation plan](hardening/README.md) supersedes the tentative PostgreSQL recommendation below; the findings remain the original review record.
 
 Recommendation: retain Flask, Jinja, Bootstrap, and the existing UI. Complete the feature boundaries already started in this project. Introduce durable, access-scoped sprint snapshots and a separately supervised database-backed worker. Prioritize useful ticket data over comment enrichment and expensive metrics. No Redis, Memcached, automatic data expiration, scheduled refresh, framework rewrite, or microservice split is required for the initial implementation.
 

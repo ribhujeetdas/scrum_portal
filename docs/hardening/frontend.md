@@ -1,6 +1,6 @@
 # Frontend behavior, tests and acceptance
 
-This is the third part of the [implementation plan](README.md). Follow [backend contracts](backend-contracts.md) for exact API states and authorization. All product decisions are settled: SQLite only, fresh Jira access checks, existing metric formulas with time-basis labels.
+This is the third part of the [implementation plan](README.md). Follow [backend contracts](backend.md) for exact API states and authorization. All product decisions are settled: SQLite only, fresh Jira access checks, existing metric formulas with time-basis labels.
 
 ## F01. Preserve the interface while changing its behavior
 

@@ -1,4 +1,4 @@
-"""phase7 project_id and lookup indexes
+"""Add project IDs and lookup indexes.
 
 Revision ID: 9c2a1f7b6d10
 Revises: 44a4a3ce3141
