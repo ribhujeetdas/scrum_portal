@@ -89,13 +89,23 @@ function Test-FernetKey {
     )
 
     $previous = $env:SCRUM_PORTAL_SETUP_FERNET
+    $previousErrorActionPreference = $ErrorActionPreference
+    $isValid = $false
     try {
         $env:SCRUM_PORTAL_SETUP_FERNET = $Value
-        & $Python -c "import os; from cryptography.fernet import Fernet; Fernet(os.environ['SCRUM_PORTAL_SETUP_FERNET'].encode('ascii'))" *> $null
-        return $LASTEXITCODE -eq 0
+        # Windows PowerShell 5.1 promotes native stderr to NativeCommandError
+        # when ErrorActionPreference is Stop. An invalid key is an expected
+        # validation result, so suppress that native error locally.
+        $ErrorActionPreference = "Continue"
+        & $Python -c "import os; from cryptography.fernet import Fernet; Fernet(os.environ['SCRUM_PORTAL_SETUP_FERNET'].encode('ascii'))" 1>$null 2>$null
+        $isValid = $LASTEXITCODE -eq 0
+    } catch {
+        $isValid = $false
     } finally {
         $env:SCRUM_PORTAL_SETUP_FERNET = $previous
+        $ErrorActionPreference = $previousErrorActionPreference
     }
+    return $isValid
 }
 
 Push-Location $repoRoot
@@ -181,7 +191,9 @@ try {
 
     $fernetKey = Get-DotEnvValue -Path $envPath -Name "FERNET_KEY"
     $fernetIsValid = $false
-    if (-not [string]::IsNullOrWhiteSpace($fernetKey)) {
+    $fernetIsPlaceholder = [string]::IsNullOrWhiteSpace($fernetKey) -or
+        $fernetKey -match "^(change-me|replace-with|dev-secret)"
+    if (-not $fernetIsPlaceholder) {
         $fernetIsValid = Test-FernetKey -Python $pythonPath -Value $fernetKey
     }
     if ($RegenerateSecrets -or -not $fernetIsValid) {
