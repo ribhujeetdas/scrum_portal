@@ -1,12 +1,14 @@
 [CmdletBinding()]
 param(
-    [switch]$ProductionStyle
+    [switch]$ProductionStyle,
+    [switch]$SkipPreflight
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$setupPath = Join-Path $PSScriptRoot "setup_windows.ps1"
 $pythonPath = Join-Path $repoRoot ".venv\Scripts\python.exe"
 $envPath = Join-Path $repoRoot ".env"
 $logDirectory = Join-Path $repoRoot "logs"
@@ -29,11 +31,15 @@ function Get-DotEnvValue {
     return $match.Groups[1].Value.Trim()
 }
 
+if (-not $SkipPreflight) {
+    Write-Host "Verifying dependencies and applying database migrations..."
+    & $setupPath -SkipTests
+}
 if (-not (Test-Path -LiteralPath $pythonPath)) {
-    throw "The virtual environment is missing. Run .\scripts\setup_windows.ps1 first."
+    throw "The virtual environment is missing. Run .\scripts\setup_windows.ps1 first, or omit -SkipPreflight."
 }
 if (-not (Test-Path -LiteralPath $envPath)) {
-    throw ".env is missing. Run .\scripts\setup_windows.ps1 first."
+    throw ".env is missing. Run .\scripts\setup_windows.ps1 first, or omit -SkipPreflight."
 }
 
 $mode = if ($env:SPRINT_VIEWER_MODE) {

@@ -66,10 +66,39 @@ def create_csrf_test_app(tmp_path):
     return app
 
 
+def create_uninitialized_test_app(tmp_path):
+    class TestConfig(SessionNavTestConfig):
+        TESTING = True
+        LOG_DIR = str(tmp_path)
+        RATE_LIMITS_ENABLED = True
+
+    return create_app(TestConfig)
+
+
 def login_test_user(client, user_id=1):
     with client.session_transaction() as sess:
         sess["_user_id"] = str(user_id)
         sess["_fresh"] = True
+
+
+def test_anonymous_error_page_does_not_render_authenticated_sidebar(tmp_path):
+    app = create_test_app(tmp_path)
+
+    response = app.test_client().get("/route-that-does-not-exist")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 404
+    assert '<nav class="sidebar' not in html
+    assert "Settings" not in html
+
+
+def test_signup_reports_uninitialized_database_without_internal_error(tmp_path):
+    app = create_uninitialized_test_app(tmp_path)
+
+    response = app.test_client().post("/auth/signup", data={})
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "DATABASE_SETUP_REQUIRED"
 
 
 def test_session_status_initializes_configured_expiry(tmp_path):

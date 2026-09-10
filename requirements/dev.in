@@ -1,4 +1,8 @@
+# All application/runtime direct dependencies are included by this line.
+# Transitive dependencies are resolved and pinned in dev-py312-*.lock.
 -r runtime.in
+
+# Development and verification-only direct dependencies.
 pytest
 pytest-playwright
 openpyxl

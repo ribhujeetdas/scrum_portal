@@ -8,6 +8,7 @@ import time
 from flask import current_app, jsonify, request
 from flask_login import current_user
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from ..extensions import db
 LIMITS = {
@@ -74,6 +75,27 @@ def _increment(operation: str, subject: str, window_start: int, expires_at: date
     return int(value)
 
 
+def _schema_unavailable_response(exc: OperationalError):
+    if "no such table: rate_limit_buckets" not in str(exc).casefold():
+        return None
+    db.session.rollback()
+    current_app.logger.error(
+        "Database schema is missing the rate-limit table",
+        exc_info=True,
+        extra={"event": "database.schema_incomplete"},
+    )
+    response = jsonify({
+        "ok": False,
+        "error": {
+            "code": "DATABASE_SETUP_REQUIRED",
+            "message": "The application database is not initialized. Run the Windows setup script and restart the application.",
+            "retryable": False,
+        },
+    })
+    response.status_code = 503
+    return response
+
+
 def enforce_rate_limit():
     if not current_app.config.get("RATE_LIMITS_ENABLED", not current_app.config.get("TESTING", False)):
         return None
@@ -84,10 +106,16 @@ def enforce_rate_limit():
     now_seconds = int(time.time())
     window_start = now_seconds - (now_seconds % seconds)
     expires_at = datetime.fromtimestamp(window_start, UTC) + timedelta(seconds=seconds * 2)
-    exceeded = any(
-        _increment(operation, subject, window_start, expires_at) > subject_limit
-        for subject, subject_limit in _subjects(operation, limit)
-    )
+    try:
+        exceeded = any(
+            _increment(operation, subject, window_start, expires_at) > subject_limit
+            for subject, subject_limit in _subjects(operation, limit)
+        )
+    except OperationalError as exc:
+        unavailable = _schema_unavailable_response(exc)
+        if unavailable is not None:
+            return unavailable
+        raise
     if exceeded:
         db.session.rollback()
         retry_after = window_start + seconds - now_seconds
@@ -116,10 +144,16 @@ def consume_current_user_limit(operation: str):
     now_seconds = int(time.time())
     window_start = now_seconds - (now_seconds % seconds)
     expires_at = datetime.fromtimestamp(window_start, UTC) + timedelta(seconds=seconds * 2)
-    exceeded = any(
-        _increment(operation, subject, window_start, expires_at) > subject_limit
-        for subject, subject_limit in _subjects(operation, limit)
-    )
+    try:
+        exceeded = any(
+            _increment(operation, subject, window_start, expires_at) > subject_limit
+            for subject, subject_limit in _subjects(operation, limit)
+        )
+    except OperationalError as exc:
+        unavailable = _schema_unavailable_response(exc)
+        if unavailable is not None:
+            return unavailable
+        raise
     if not exceeded:
         return None
     db.session.rollback()
