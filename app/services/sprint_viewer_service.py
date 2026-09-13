@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import math
+from copy import deepcopy
 import re
 from typing import Optional, Set, Dict, Any, List
 
@@ -51,6 +52,8 @@ class SprintViewerService:
 
     def normalize_configured_fields(self, issue: dict) -> dict:
         """Copy configured Jira fields into the stable calculation schema."""
+        issue = deepcopy(issue)
+        issue["_configured_story_points_field"] = self.story_points_field
         fields = issue.get("fields") or {}
         fields["customfield_10106"] = fields.get(self.story_points_field)
         fields["customfield_11700"] = fields.get(self.application_field)
@@ -143,14 +146,15 @@ class SprintViewerService:
 
     @staticmethod
     def _item_field(item: dict) -> str:
-        return str(item.get("field") or item.get("fieldId") or "").strip().lower()
+        return str(item.get("fieldId") or item.get("field") or "").strip().lower()
 
     @staticmethod
     def _safe_story_points(value: Any) -> float | None:
         if value is None or str(value).strip() == "":
             return None
         try:
-            return float(value)
+            parsed = float(value)
+            return parsed if not isinstance(value, bool) and math.isfinite(parsed) and parsed >= 0 else None
         except Exception:
             return None
 
@@ -204,7 +208,7 @@ class SprintViewerService:
                             if resolver
                             else f"key:{str(previous_id or previous_label).strip()}"
                         )
-                elif field in {"story points", "customfield_10106"}:
+                elif field in {"story points", str(issue.get("_configured_story_points_field") or "customfield_10106").lower()}:
                     raw_previous = item.get("fromString") if "fromString" in item else item.get("from")
                     sp = SprintViewerService._safe_story_points(raw_previous)
                     reconstructed["story_points"] = sp
@@ -416,7 +420,10 @@ class SprintViewerService:
         is_subtask = bool(issuetype.get("subtask"))
 
         app_obj = fields.get("customfield_11700") or {}
-        app_name = app_obj.get("value") or ""
+        if isinstance(app_obj, list):
+            app_name = ", ".join(str(item.get("value") or item.get("name") or item.get("id") or "Unknown") for item in app_obj if isinstance(item, dict))
+        else:
+            app_name = app_obj.get("value") or "" if isinstance(app_obj, dict) else str(app_obj)
 
         epic_obj = fields.get("epic") or {}
         epic_key = epic_obj.get("key") or (

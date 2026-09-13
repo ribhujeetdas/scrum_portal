@@ -9,7 +9,7 @@ from ..extensions import db
 from ..features.automation.sprint_viewer.models import WorkerLeader
 
 
-SCHEMA_HEAD = "b27d5f8a9c02"
+SCHEMA_HEAD = "d48e6b9c0d03"
 
 
 def _age_seconds(value) -> float:

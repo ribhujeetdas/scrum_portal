@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "mapping_version": "user-photos-2026-09-13-pending-validation",
+  "catalogue_source": [
+    {
+      "filename": "1-Photo-1.jpg",
+      "sha256": "19de3c13507a7a0b986b015ae52aedc01692655ff427665308b29ab4a917f34a"
+    },
+    {
+      "filename": "2-Photo-2.jpg",
+      "sha256": "ea03dfc033f16b0b4ca7dfe4d10daa5f40c5ac29eb67ea537328ba001a172012"
+    },
+    {
+      "filename": "3-Photo-3.jpg",
+      "sha256": "032c73c763c36b53540d8210e2d7b653b00e963f3a31f4642c7b441504b24449"
+    },
+    {
+      "filename": "4-Photo-4.jpg",
+      "sha256": "25c348498b7085db439c252df7065e973562466b62d564a890451b79234a576c"
+    }
+  ],
+  "jira_instance_scope": null,
+  "project_ids": [],
+  "board_ids": [],
+  "fields": {
+    "points": {
+      "catalogue_name": "story_points",
+      "field_id": "customfield_10106",
+      "parser_kind": "number",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "membership": {
+      "catalogue_name": "sprint",
+      "field_id": "customfield_10104",
+      "parser_kind": "sprints",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "application": {
+      "catalogue_name": "application_name",
+      "field_id": "customfield_11700",
+      "parser_kind": "option",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "feature": {
+      "catalogue_name": "feature_link",
+      "field_id": "customfield_10100",
+      "parser_kind": "text",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "team": {
+      "catalogue_name": "team",
+      "field_id": "customfield_10200",
+      "parser_kind": "option",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "acceptance_criteria": {
+      "catalogue_name": "acceptance_criteria",
+      "field_id": "customfield_10601",
+      "parser_kind": "text",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "flagged": {
+      "catalogue_name": "flagged",
+      "field_id": "customfield_10900",
+      "parser_kind": "options",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "work_category": {
+      "catalogue_name": "work_activity_category",
+      "field_id": "customfield_12003",
+      "parser_kind": "option",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "work_classification": {
+      "catalogue_name": "work_classification",
+      "field_id": "customfield_15804",
+      "parser_kind": "option",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "target_start": {
+      "catalogue_name": "target_start",
+      "field_id": "customfield_10202",
+      "parser_kind": "timestamp",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    },
+    "target_end": {
+      "catalogue_name": "target_end",
+      "field_id": "customfield_10203",
+      "parser_kind": "timestamp",
+      "validation_status": "pending",
+      "history_identifiers": [],
+      "missing_behavior": "dependent_evidence_unavailable"
+    }
+  },
+  "analysis_config": {
+    "timezone": "Asia/Kolkata",
+    "calendar_version": "unconfigured",
+    "known_status_ids": [],
+    "done_status_ids": [],
+    "active_status_ids": [],
+    "review_status_ids": [],
+    "blocked_status_ids": [],
+    "scope_change_percent": 30,
+    "age_days": 14,
+    "population_discovery_validated": false,
+    "daily_events_validated": false,
+    "wip_status_ids": [],
+    "working_weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "holidays": []
+  },
+  "skipped_fields": {
+    "rationale_to_skip_user_acceptance_testing": "ID cut off in Photo 3; no project references; not required by this feature"
+  }
+}

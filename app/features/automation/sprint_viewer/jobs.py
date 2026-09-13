@@ -464,6 +464,12 @@ def _run_core(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None:
     request_id = job.request_id
     db.session.commit()
     service = sprint_viewer_service()
+    if snapshot.calculation_version == 2 and not _verify_board_sprint(service, series.board_id, sprint_id, pat):
+        _unavailable(job, owner, fence, epoch, "sprint_not_closed")
+        snapshot.status = 'failed'
+        snapshot.failure_code = 'sprint_not_closed'
+        db.session.commit()
+        return
     raw = service.fetch_all_issues_for_sprint(sprint_id, pat)
     current = _current_job(job.id, owner, fence, epoch)
     scope, _user, snapshot, _pat = _context(current)
@@ -510,6 +516,8 @@ def _run_core(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None:
         ("history", "sprint_history", 20),
         ("comments", "sprint_comments", 30),
     ):
+        if key == "history" and snapshot.calculation_version == 2:
+            continue
         enqueue_job(scope_id, job_type=job_type, snapshot_id=snapshot_id, component_key=key,
                     lane="enrichment", priority=priority, dedupe_suffix=key, request_id=request_id)
     for index, key in enumerate(METRIC_CATEGORIES):
@@ -534,6 +542,17 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
     materialized_rows = [
         (row.jira_issue_id, row.issue_key, dict(row.payload or {})) for row in core_rows
     ]
+    if snapshot.calculation_version == 2:
+        revisions = [published_output(snapshot_id, key)[1].id for key in METRIC_CATEGORIES]
+        discovered = SprintMetricMembership.query.filter(SprintMetricMembership.category_revision_id.in_(revisions)).all()
+        known = {row[0] for row in materialized_rows}
+        materialized_rows.extend((r.jira_issue_id, r.issue_key, {}) for r in discovered if r.jira_issue_id not in known and not known.add(r.jira_issue_id))
+    from .analysis.field_registry import FieldRegistry
+    from .analysis.normalization import normalize_and_project
+    registry = FieldRegistry((snapshot.sprint_metadata or {}).get("analysis_mapping", {}))
+    frozen_sprint = dict(snapshot.sprint_metadata or {})
+    analysis_config = frozen_sprint.get("analysis_config", {})
+    is_v2 = snapshot.calculation_version == 2
     db.session.commit()
     historical: dict[str, dict[str, Any]] = {}
     resolver = service.build_identity_resolver([])
@@ -546,11 +565,23 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
     for jira_issue_id, issue_key, _current in materialized_rows:
         if not issue_key:
             continue
-        payload = service._client.get_json(
-            f"/rest/api/2/issue/{issue_key}",
-            headers=service._headers(pat),
-            params={"fields": f"summary,{service.story_points_field},{service.application_field},{service.epic_link_field},issuetype,status,assignee,parent,project,updated", "expand": "changelog"},
-        )
+        requested_fields = sorted(set(["summary", "created", "issuetype", "status", "assignee", "parent", "project", "updated", service.story_points_field, service.application_field, service.epic_link_field] + (registry.requested_fields() if is_v2 else [])))
+        try:
+            payload = service._client.get_json(
+                f"/rest/api/2/issue/{issue_key}", headers=service._headers(pat),
+                params={"fields": ",".join(requested_fields), "expand": "changelog"},
+            )
+        except ExternalServiceError as exc:
+            if not is_v2 or exc.status_code != 400:
+                raise
+            # One bounded retry excludes optional fields. Missing keys retain coverage reasons.
+            required_fields = ["summary", "created", "issuetype", "status", "assignee", "project", "updated"]
+            required_fields.extend(registry.fields[k]["field_id"] for k in ("membership", "points") if k in registry.fields and registry.fields[k].get("validation_status") == "validated")
+            payload = service._client.get_json(
+                f"/rest/api/2/issue/{issue_key}", headers=service._headers(pat),
+                params={"fields": ",".join(sorted(set(required_fields))), "expand": "changelog"},
+            )
+        projection = normalize_and_project(payload, registry, resolver, frozen_sprint, analysis_config) if is_v2 else None
         payload = service.normalize_configured_fields(payload)
         changelog = payload.get("changelog") or {}
         histories = changelog.get("histories")
@@ -563,6 +594,8 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
             complete_date,
             resolver,
         )
+        if projection is not None:
+            extracted["analysis_v2"] = projection
         historical[jira_issue_id] = extracted
         staged_rows.append((jira_issue_id, extracted))
     current = _current_job(job.id, owner, fence, epoch)
@@ -578,7 +611,18 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
     revision.received_count = len(historical)
     revision.unique_count = len(historical)
     db.session.commit()
+    analysis = None
+    if is_v2:
+        from .analysis.metrics import calculate
+        from .analysis.rules import evaluate
+        projected = [row["analysis_v2"] for row in historical.values()]
+        analysis = calculate(projected, population_complete=bool(analysis_config.get("population_discovery_validated")), revision=str(revision.id))
+        analysis["suggestions"] = evaluate(projected, analysis, {**analysis_config, "close_date": frozen_sprint.get("complete_date")}, snapshot.series_id)
+        analysis["rows"] = projected
+        analysis["mapping_version"] = registry.version
+        analysis["calendar_version"] = analysis_config.get("calendar_version", "unconfigured")
     _publish(current.id, owner, fence, epoch, revision.id, {
+        "analysis_v2": analysis,
         "issues": historical,
         "time_basis": "at sprint completion",
         "fetched_at": now_utc().isoformat(),
@@ -609,10 +653,18 @@ def _run_comments(job: BackgroundJob, owner: str, fence: int, epoch: int) -> Non
     historical_issues = (history_revision.output or {}).get("issues") or {}
     snapshot_id = snapshot.id
     complete_date = (snapshot.sprint_metadata or {}).get("complete_date")
+    is_v2 = snapshot.calculation_version == 2
+    start_date = (snapshot.sprint_metadata or {}).get("activated_date") or (snapshot.sprint_metadata or {}).get("start_date")
+    start_cutoff = service._parse_jira_datetime(start_date) if is_v2 else None
     materialized_rows = [
         (row.jira_issue_id, row.issue_key, dict(row.payload or {})) for row in core_rows
     ]
+    if is_v2:
+        known = {r[0] for r in materialized_rows}
+        materialized_rows.extend((key, value.get("issue_key"), value) for key, value in historical_issues.items() if key not in known)
     output: dict[str, Any] = {"issues": {}, "time_basis": "visible comments at collection, cutoff at sprint completion", "fetched_at": now_utc().isoformat()}
+    if is_v2:
+        output["time_basis"] = "visible sprint-team comments within activation/start through actual close"
     cutoff = service._parse_jira_datetime(complete_date)
     team: set[str] = set()
     for jira_issue_id, _issue_key, payload in materialized_rows:
@@ -639,7 +691,7 @@ def _run_comments(job: BackgroundJob, owner: str, fence: int, epoch: int) -> Non
             }
             author_values.discard("")
             created = service._parse_jira_datetime(comment.get("created"))
-            if author_values.intersection(team) and (cutoff is None or (created is not None and created <= cutoff)):
+            if author_values.intersection(team) and (cutoff is None or (created is not None and created <= cutoff)) and (not is_v2 or (start_cutoff is not None and created is not None and created >= start_cutoff)):
                 relevant += 1
                 ids.append(comment_id)
                 staged_comments.append((jira_issue_id, comment_id, comment.get("created")))
@@ -709,6 +761,9 @@ def _run_metric(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None:
         enqueue_job(scope_id, job_type="sprint_metrics_final", snapshot_id=snapshot_id,
                     component_key="metrics", lane="enrichment", priority=80,
                     dedupe_suffix="metrics-final", request_id=request_id)
+        if snapshot.calculation_version == 2:
+            enqueue_job(scope_id, job_type="sprint_history", snapshot_id=snapshot_id, component_key="history",
+                        lane="enrichment", priority=70, dedupe_suffix="history", request_id=request_id)
     db.session.commit()
 
 
@@ -737,7 +792,7 @@ def _verify_board_sprint(service, board_id: int, sprint_id: int, pat: str) -> bo
         )
     sprints = collect_offset_pages(fetch, collection_key="values", requested_page_size=50,
                                    identity=lambda item: str(item.get("id")) if item.get("id") is not None else None)
-    return str(sprint_id) in {str(item.get("id")) for item in sprints}
+    return any(str(item.get('id')) == str(sprint_id) and str(item.get('state', '')).lower() == 'closed' for item in sprints)
 
 
 def _visible_issue_ids(service, pat: str, issue_ids: set[str]) -> set[str]:
@@ -794,6 +849,13 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
         raise LeaseLost("Report view is gone")
     components = component_map(snapshot_id)
     if components["core"].state != "ready":
+        if components['core'].state in {'failed', 'unavailable', 'cancelled'}:
+            view.access_state = {key:'denied' for key in ('base','core','history','comments','metrics')}
+            view.error_code = components['core'].error_code or 'CORE_UNAVAILABLE'
+            job.state = 'succeeded'
+            job.lease_until = None
+            db.session.commit()
+            return
         job.state = "retry_wait"
         job.resume_kind = "continuation"
         job.available_at = now_utc() + timedelta(seconds=1)
@@ -876,6 +938,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
         if component_states["history"] == "ready"
         and current_app.config.get("JIRA_HISTORY_VISIBILITY_FOLLOWS_ISSUE", False)
         and core_granted
+        and (snapshot.calculation_version != 2 or metrics_granted)
         else (
             "pending" if component_states["history"] not in {"ready", "unavailable", "failed"}
             else "unavailable"

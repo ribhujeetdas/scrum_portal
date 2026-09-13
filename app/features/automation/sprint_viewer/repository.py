@@ -116,6 +116,8 @@ def require_selection(user_id: int, board_id: int, sprint_id: int) -> tuple[User
     ).first()
     if sprint is None:
         raise SnapshotNotFound("Selected sprint is not in the saved board catalog")
+    if str(sprint.sprint_state or "").lower() != "closed":
+        raise SnapshotAccessDenied("sprint_not_closed")
     return board, sprint
 
 
@@ -200,7 +202,14 @@ def _create_candidate(
     ).scalar_one()
     generation = int(next_generation) - 1
     series.next_generation = int(next_generation)
+    from .analysis.field_registry import load_registry
+    project = (UserProject.query.join(UserBoard, UserBoard.project_id == UserProject.id)
+               .filter(UserProject.user_id == scope.user_id, UserBoard.board_id == series.board_id).first())
+    registry = load_registry(current_app.config).for_scope(
+        series.board_id, project_key=(project.project_id or project.project_key) if project else None,
+        source_id=current_app.config.get("JIRA_SOURCE_ID"))
     candidate = SprintSnapshot(
+        schema_version=series.schema_version, query_version=series.query_version, calculation_version=series.calculation_version,
         series_id=series.id,
         generation=generation,
         sprint_metadata={
@@ -212,6 +221,8 @@ def _create_candidate(
             "activated_date": sprint.activated_date,
             "complete_date": sprint.complete_date,
             "goal": sprint.goal,
+            "analysis_mapping": registry.document,
+            "analysis_config": registry.document.get("analysis_config", current_app.config.get("SPRINT_VIEWER_ANALYSIS_CONFIG", {})),
         },
         collection_started_at=now_utc(),
     )
@@ -243,7 +254,9 @@ def get_or_create_snapshot(
 ) -> tuple[JiraScope, SprintSnapshot, bool]:
     _board, sprint = require_selection(user.id, board_id, sprint_id)
     scope = current_scope(user)
-    versions = (1, 1, 1)
+    from .analysis.field_registry import load_registry
+    registry = load_registry(current_app.config)
+    versions = (1, int(registry.digest[:15], 16) + 2, 2) if current_app.config.get("SPRINT_VIEWER_V2_ENABLED") else (1, 1, 1)
     series = SprintSnapshotSeries.query.filter_by(
         scope_id=scope.id,
         board_id=board_id,
@@ -257,9 +270,9 @@ def get_or_create_snapshot(
             scope_id=scope.id,
             board_id=board_id,
             sprint_id=sprint_id,
-            schema_version=1,
-            query_version=1,
-            calculation_version=1,
+            schema_version=versions[0],
+            query_version=versions[1],
+            calculation_version=versions[2],
         )
         db.session.add(series)
         try:
@@ -269,7 +282,7 @@ def get_or_create_snapshot(
             scope = current_scope(user)
             series = SprintSnapshotSeries.query.filter_by(
                 scope_id=scope.id, board_id=board_id, sprint_id=sprint_id,
-                schema_version=1, query_version=1, calculation_version=1,
+                schema_version=versions[0], query_version=versions[1], calculation_version=versions[2],
             ).one()
     if series.active_snapshot_id:
         active = db.session.get(SprintSnapshot, series.active_snapshot_id)
@@ -293,13 +306,16 @@ def queue_snapshot_rebuild(
     """Queue an explicit replacement generation while keeping the active one readable."""
     _board, sprint = require_selection(user.id, board_id, sprint_id)
     scope = current_scope(user)
+    from .analysis.field_registry import load_registry
+    registry = load_registry(current_app.config)
+    versions = (1, int(registry.digest[:15], 16) + 2, 2) if current_app.config.get("SPRINT_VIEWER_V2_ENABLED") else (1, 1, 1)
     series = SprintSnapshotSeries.query.filter_by(
         scope_id=scope.id,
         board_id=board_id,
         sprint_id=sprint_id,
-        schema_version=1,
-        query_version=1,
-        calculation_version=1,
+        schema_version=versions[0],
+        query_version=versions[1],
+        calculation_version=versions[2],
     ).first()
     if series is None:
         _scope, snapshot, created = get_or_create_snapshot(

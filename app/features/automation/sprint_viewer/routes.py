@@ -29,6 +29,7 @@ from .repository import (
     enqueue_job,
     export_ready,
     get_or_create_snapshot,
+    queue_snapshot_rebuild,
     owned_snapshot,
     owned_view,
     published_output,
@@ -140,7 +141,7 @@ def sprint_viewer_page():
         ]
 
     return render_template(
-        "automation/sprint_viewer.html",
+        "automation/sprint_viewer_v2.html" if current_app.config.get("SPRINT_VIEWER_V2_ENABLED") and _snapshot_mode() else "automation/sprint_viewer.html",
         projects=[project.project_key for project in projects],
         boards_by_project=boards_by_project,
         jira_base_url=current_app.config["JIRA_BASE_URL"].rstrip("/"),
@@ -331,6 +332,9 @@ def sprint_viewer_fetch_issues():
             code="SPRINT_NOT_IN_BOARD",
         )
 
+    if str(sprint_row.sprint_state or "").lower() != "closed":
+        return json_error("Only closed sprints can be analyzed.", status_code=400, code="sprint_not_closed")
+
     if _snapshot_mode():
         return _snapshot_fetch_issues(payload, board_id_int, sprint_id_int)
 
@@ -459,6 +463,10 @@ def sprint_viewer_fetch_metrics():
             code="SPRINT_NOT_IN_BOARD",
         )
 
+    sprint_row = UserBoardSprint.query.filter_by(user_id=current_user.id, board_id=board_id_int, sprint_id=sprint_id_int).first()
+    if str(sprint_row.sprint_state or "").lower() != "closed":
+        return json_error("Only closed sprints can be analyzed.", status_code=400, code="sprint_not_closed")
+
     if _snapshot_mode():
         return _snapshot_fetch_metrics(payload, board_id_int, sprint_id_int)
 
@@ -524,12 +532,21 @@ def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
         if not current_user.jira_pat_enc:
             raise SnapshotAccessDenied("A Jira PAT is required")
         action_id = _client_action(payload)
-        scope, snapshot, created = get_or_create_snapshot(
-            current_user,
-            board_id,
-            sprint_id,
-            request_id=getattr(request, "request_id", None),
-        )
+        rebuild = strict_boolean(payload.get("rebuild"), "rebuild")
+        select_snapshot = queue_snapshot_rebuild if rebuild else get_or_create_snapshot
+        if payload.get('snapshot_id') and not rebuild:
+            scope, snapshot = owned_snapshot(current_user, _valid_uuid(payload['snapshot_id'], 'snapshot_id'))
+            selected_series = db.session.get(SprintSnapshotSeries, snapshot.series_id)
+            if selected_series.board_id != board_id or selected_series.sprint_id != sprint_id:
+                raise SnapshotNotFound('Snapshot does not belong to the selected sprint.')
+            created = False
+        else:
+            scope, snapshot, created = select_snapshot(
+                current_user,
+                board_id,
+                sprint_id,
+                request_id=getattr(request, "request_id", None),
+            )
         if created:
             limited = consume_current_user_limit("sprint_import")
             if limited is not None:

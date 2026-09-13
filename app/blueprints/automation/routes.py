@@ -84,3 +84,21 @@ def sprint_snapshot_authorize(snapshot_id):
 @login_required
 def sprint_snapshot_export_manifest(snapshot_id):
     return sprint_viewer_feature.sprint_snapshot_export_manifest(snapshot_id)
+
+
+@automation_bp.route("/sprint-viewer/views/<view_id>/<operation>", methods=["GET", "POST"])
+@login_required
+def sprint_analysis_v2(view_id, operation):
+    from ...features.automation.sprint_viewer.analysis_routes import dispatch
+    from flask import request
+    from ...core.api import json_error
+    if (operation == "records") != (request.method == "POST"):
+        return json_error("Method not allowed.", status_code=405)
+    return dispatch(view_id, operation)
+
+
+@automation_bp.route("/sprint-viewer/views/<view_id>/issues/<issue_id>/timeline", methods=["GET"])
+@login_required
+def sprint_analysis_timeline(view_id, issue_id):
+    from ...features.automation.sprint_viewer.analysis_routes import dispatch
+    return dispatch(view_id, "timeline", issue_id)

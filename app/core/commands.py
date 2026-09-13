@@ -50,7 +50,7 @@ def _apply_setup(adopt_legacy_head: bool, backup_reference: str | None) -> None:
     elif state == "versioned":
         known_revisions = {
             "c3d00bc3ae67", "f8954404f3b1", "44a4a3ce3141", LEGACY_HEAD,
-            "a18c9e4d7b01", "b27d5f8a9c02",
+            "a18c9e4d7b01", "b27d5f8a9c02", "d48e6b9c0d03",
         }
         if revision not in known_revisions:
             raise click.ClickException(f"Unknown database revision: {revision}")

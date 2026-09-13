@@ -182,11 +182,11 @@ def test_empty_database_safe_bootstrap_is_repeatable_and_backup_is_valid(tmp_pat
     try:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "b27d5f8a9c02"
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "d48e6b9c0d03"
         tables = {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
-        assert {"sprint_snapshots", "background_jobs", "auth_sessions"} <= tables
+        assert {"sprint_snapshots", "background_jobs", "auth_sessions", "sprint_review_records"} <= tables
     finally:
         connection.close()
 

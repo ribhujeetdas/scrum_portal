@@ -29,6 +29,27 @@ COMPONENT_KEYS = (
 )
 
 
+class SprintReviewRecord(db.Model):
+    """Append-only owner-scoped human record revisions, retained across rebuilds."""
+    __tablename__ = 'sprint_review_records'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    source_id = db.Column(db.Integer, db.ForeignKey('jira_sources.id'), nullable=False)
+    board_id = db.Column(db.Integer, nullable=False)
+    sprint_id = db.Column(db.Integer, nullable=False)
+    record_key = db.Column(db.String(80), nullable=False)
+    kind = db.Column(db.String(24), nullable=False)
+    revision = db.Column(db.Integer, nullable=False)
+    idempotency_key = db.Column(db.String(64), nullable=False)
+    payload = db.Column(db.JSON, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'source_id', 'board_id', 'sprint_id', 'record_key', 'revision', name='uq_sprint_review_revision'),
+        UniqueConstraint('user_id', 'idempotency_key', name='uq_sprint_review_idempotency'),
+        Index('ix_sprint_review_scope', 'user_id', 'source_id', 'board_id', 'sprint_id'),
+    )
+
+
 class JiraSource(db.Model):
     __tablename__ = "jira_sources"
     id = db.Column(db.Integer, primary_key=True)

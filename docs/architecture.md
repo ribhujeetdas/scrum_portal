@@ -57,3 +57,10 @@ Jira PAT ownership validation is cached for `JIRA_PAT_VALIDATION_CACHE_SECONDS` 
 ## Migration Rule
 
 Do not move multiple features in one change. Move one feature, keep the old URL surface working, run full tests, then proceed to the next feature.
+# Sprint Viewer v2
+
+The optional v2 shell uses the same snapshot worker. Metric membership discovery precedes v2 history so removed issues participate in boundary reconstruction. Normalized events, typed field coverage, projections, metrics and base rules are published atomically in the immutable history component. V2 history access additionally requires the metric grant. Unsupported history does not replace historical fields with current values.
+
+Pure code is under `app/features/automation/sprint_viewer/analysis/`. Current human review context and authorized comparable-report context are explicitly separate from frozen Jira evidence. `sprint_review_records` is an append-only, user/source/board/sprint-scoped revision ledger with uniqueness constraints for concurrency and idempotency. It survives snapshot rebuilds and mapping changes; it does not create team sharing permissions.
+
+The v2 API uses scoped report views, server-resolved evidence/filter cohorts and bounded timeline/issue pages. It makes no Jira requests on read endpoints. Mapping and algorithm versions select new snapshot series. Disable the feature flag to return to the compatible viewer while retaining private review records and old generations.

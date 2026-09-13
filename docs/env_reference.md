@@ -68,3 +68,10 @@ Bounded transport:
 - `TABLEAU_MAX_CSV_BYTES`
 
 Keep tracing disabled in production unless you are actively investigating a problem.
+# Sprint Viewer v2 configuration
+
+`SPRINT_VIEWER_V2_ENABLED=false` retains the existing viewer. Set it to `true` with `SPRINT_VIEWER_MODE=snapshot` to select the v2 template for the existing snapshot user allowlist. `SPRINT_VIEWER_FIELD_MAPPING_FILE` is an absolute or application-working-directory-relative JSON path. See `docs/config/sprint-viewer-fields.example.json` and `docs/plans/sprint-viewer-v2-implementation.md`.
+
+The registry allows only named parsers and explicit field IDs. A validated instance mapping takes precedence over the three legacy Jira field settings; scoped board/project overrides are applied to the frozen historical registry. Overlapping overrides at the same specificity are rejected. Entries restricted to other scopes/types remain unavailable/not applicable. Mapping changes create a new v2 series key and preserve prior reports and private review records.
+
+Workflow status IDs, population-discovery validation, calendar settings and optional daily-event validation belong in the JSON's `analysis_config`. Catalogue photos alone do not establish those settings. The fixed deployment timezone defaults to Asia/Kolkata. Other IANA zones require timezone data on the host. No AI or new network service is required.

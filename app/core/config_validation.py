@@ -32,6 +32,9 @@ def log_config_warnings(app: Flask, warnings: Iterable[str] | None = None) -> No
 
 
 def validate_startup_config(app: Flask) -> None:
+    if app.config.get("SPRINT_VIEWER_FIELD_MAPPING_FILE"):
+        from ..features.automation.sprint_viewer.analysis.field_registry import load_registry
+        load_registry(app.config)
     app_env = str(app.config.get("APP_ENV") or "").lower()
     if app_env not in {"development", "test", "production"}:
         raise RuntimeError("APP_ENV must be development, test, or production")

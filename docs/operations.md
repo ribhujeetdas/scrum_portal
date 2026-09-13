@@ -95,3 +95,10 @@ Use `flask revoke-user-sessions` when Jira scopes should remain valid. Sprint op
 ## Sprint Snapshot Rollout
 
 Deploy additive migrations and the worker while `SPRINT_VIEWER_MODE=direct`. Verify WAL and worker health, then use `SPRINT_VIEWER_SNAPSHOT_USER_IDS` for selected users or set `SPRINT_VIEWER_MODE=snapshot` for all users. If admission regresses, return affected users to corrected direct mode, stop worker claiming gracefully, retain snapshot/job data for diagnosis, and deploy a forward fix. Do not downgrade the database to remove stored snapshots.
+# Sprint Viewer v2 rollout
+
+Use the existing backup and `setup-db --apply` procedure for additive migration `d48e6b9c0d03`. It creates private review records without modifying existing snapshots. Do not run destructive schema downgrade as routine feature rollback; disable `SPRINT_VIEWER_V2_ENABLED` and retain the table.
+
+Before enabling, validate the deployment mapping/coverage ledger in `docs/plans/sprint-viewer-v2-implementation.md`. Keep the supervised snapshot worker running. Core issues remain usable when historical enrichment is unavailable. `Refresh sprint list` refreshes the catalogue; `Rebuild analysis` creates a candidate and retains the last published view during the rebuild. Pending mappings must not be marked validated merely to remove an unavailable message.
+
+Automated fixtures cover migration, worker publication, permissions and rendered UI. Actual Jira reconciliation, representative performance measurements and the role-user pilot remain deployment gates. No production database or Jira data was changed by the implementation tests.

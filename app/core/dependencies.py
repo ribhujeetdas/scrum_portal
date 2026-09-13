@@ -58,6 +58,11 @@ def rule_copier_service() -> RuleCopierService:
 
 
 def sprint_viewer_service() -> SprintViewerService:
+    from ..features.automation.sprint_viewer.analysis.field_registry import load_registry
+    registry = load_registry(current_app.config)
+    def mapped(concept, legacy, default):
+        spec = registry.fields.get(concept, {})
+        return spec['field_id'] if spec.get('validation_status') == 'validated' and spec.get('field_id') else current_app.config.get(legacy, default)
     return _memoized("sprint_viewer", lambda: SprintViewerService(
         current_app.config["JIRA_BASE_URL"],
         timeout_seconds=current_app.config.get(
@@ -65,9 +70,9 @@ def sprint_viewer_service() -> SprintViewerService:
             current_app.config.get("EXTERNAL_HTTP_TIMEOUT_SECONDS", 30),
         ),
         metrics_max_workers=current_app.config.get("SPRINT_METRICS_MAX_WORKERS", 5),
-        story_points_field=current_app.config.get("JIRA_STORY_POINTS_FIELD", "customfield_10106"),
-        application_field=current_app.config.get("JIRA_APPLICATION_FIELD", "customfield_11700"),
-        epic_link_field=current_app.config.get("JIRA_EPIC_LINK_FIELD", "customfield_10100"),
+        story_points_field=mapped('points', "JIRA_STORY_POINTS_FIELD", "customfield_10106"),
+        application_field=mapped('application', "JIRA_APPLICATION_FIELD", "customfield_11700"),
+        epic_link_field=mapped('feature', "JIRA_EPIC_LINK_FIELD", "customfield_10100"),
     ))
 
 
