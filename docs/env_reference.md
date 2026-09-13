@@ -75,3 +75,5 @@ Keep tracing disabled in production unless you are actively investigating a prob
 The registry allows only named parsers and explicit field IDs. A validated instance mapping takes precedence over the three legacy Jira field settings; scoped board/project overrides are applied to the frozen historical registry. Overlapping overrides at the same specificity are rejected. Entries restricted to other scopes/types remain unavailable/not applicable. Mapping changes create a new v2 series key and preserve prior reports and private review records.
 
 Workflow status IDs, population-discovery validation, calendar settings and optional daily-event validation belong in the JSON's `analysis_config`. Catalogue photos alone do not establish those settings. The fixed deployment timezone defaults to Asia/Kolkata. Other IANA zones require timezone data on the host. No AI or new network service is required.
+
+For exact startup commands and UI troubleshooting, see [Run Sprint Viewer v2](sprint-viewer-v2-run.md). Both mode and flag are required; a nonempty user allowlist limits eligible accounts. Restart web and worker after changing configuration.

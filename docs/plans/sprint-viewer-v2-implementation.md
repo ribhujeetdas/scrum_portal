@@ -53,6 +53,8 @@ The supported Release A/B paths are implemented, but deployment readiness is **n
 
 ## Configuration, migration and rollback
 
+For copyable Windows upgrade/start commands and UI troubleshooting, use [Run Sprint Viewer v2](../sprint-viewer-v2-run.md). The local launcher accepts `-SprintViewerV2`; existing `.env` files are preserved during setup, so installing this feature alone does not activate the UI.
+
 1. Back up the database using the existing operations procedure. Apply migrations using the established `setup-db --apply`/deployment workflow. New additive revision: `d48e6b9c0d03`, following `b27d5f8a9c02`; creates `sprint_review_records` and its scope/revision/idempotency indexes. No user database was migrated during implementation.
 2. Copy `docs/config/sprint-viewer-fields.example.json` to a deployment-owned configuration path. Validate the required fields against authorized Jira metadata and sanitized current/changelog examples. Record verified `known_status_ids`, `done_status_ids`, `active_status_ids`, `review_status_ids`; blocked status IDs are optional. Set calendar version, timezone, working weekdays and holidays for calendar rules.
 3. Set `SPRINT_VIEWER_FIELD_MAPPING_FILE` to that JSON path. The three existing `JIRA_*_FIELD` variables remain backward compatible; validated instance registry fields take precedence. Mapping/configuration and legacy input changes alter the v2 query version. Existing reports retain their frozen configuration.

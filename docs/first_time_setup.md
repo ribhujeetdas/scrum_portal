@@ -27,10 +27,14 @@ Start both the web process and the worker with:
 
 The launcher starts the worker as a hidden child process when snapshot mode is enabled, starts the web server in the current window, and stops its child worker when the web server exits. Worker output is written under `logs/`.
 
+## Enable the new Sprint Viewer UI
+
+Existing `.env` files are preserved during setup. To activate v2, use `.\scripts\run_windows.ps1 -SprintViewerV2`, or set both `SPRINT_VIEWER_MODE=snapshot` and `SPRINT_VIEWER_V2_ENABLED=true` in `.env` and restart web and worker. See [the v2 run guide](sprint-viewer-v2-run.md) for upgrades, backups, allowlists, and missing metrics.
+
 ## 1. Create A Virtual Environment
 
 ```powershell
-py -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -m pip install --require-hashes -r requirements\dev-py312-windows.lock
 ```
@@ -48,9 +52,9 @@ Never commit `.env`, database files, or logs.
 ## 3. Initialize Or Upgrade The Database
 
 ```powershell
-flask setup-db --check
-flask setup-db --apply
-flask check-db
+python -m flask --app wsgi:app setup-db --check
+python -m flask --app wsgi:app setup-db --apply
+python -m flask --app wsgi:app check-db
 ```
 
 `setup-db` safely distinguishes an empty database, a known versioned database, an exact unversioned legacy-head schema, and an unknown/partial schema. Direct `flask db upgrade` rejects an empty database. Adopting an exact unversioned legacy database requires `--adopt-legacy-head --backup-reference <verified-backup>`.

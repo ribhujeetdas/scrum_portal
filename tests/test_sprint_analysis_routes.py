@@ -62,6 +62,25 @@ def analysis_app(tmp_path):
         db.session.remove(); db.engine.dispose()
 
 
+@pytest.mark.parametrize('mode,enabled,users,expected', [
+    ('snapshot', True, '', True),
+    ('snapshot', False, '', False),
+    ('direct', True, '', False),
+    ('snapshot', True, '999999', False),
+    ('snapshot', True, 'current', True),
+])
+def test_viewer_activation_requires_mode_flag_and_allowlist(analysis_app, mode, enabled, users, expected):
+    app, client, _ = analysis_app
+    if users == 'current':
+        with client.session_transaction() as session:
+            users = session['_user_id']
+    app.config.update(SPRINT_VIEWER_MODE=mode, SPRINT_VIEWER_V2_ENABLED=enabled,
+                      SPRINT_VIEWER_SNAPSHOT_USER_IDS=users)
+    response = client.get('/automation/sprint-viewer')
+    assert response.status_code == 200
+    assert ('id="sprintViewerV2"' in response.text) is expected
+
+
 def test_analysis_evidence_export_and_revisions(analysis_app):
     _, client, view = analysis_app
     base = f'/automation/sprint-viewer/views/{view}'

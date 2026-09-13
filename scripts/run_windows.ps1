@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$ProductionStyle,
-    [switch]$SkipPreflight
+    [switch]$SkipPreflight,
+    [switch]$SprintViewerV2
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,22 +14,11 @@ $pythonPath = Join-Path $repoRoot ".venv\Scripts\python.exe"
 $envPath = Join-Path $repoRoot ".env"
 $logDirectory = Join-Path $repoRoot "logs"
 
-function Get-DotEnvValue {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return $null
-    }
-    $content = [System.IO.File]::ReadAllText($Path)
-    $pattern = "(?m)^\s*" + [regex]::Escape($Name) + "=(.*)$"
-    $match = [regex]::Match($content, $pattern)
-    if (-not $match.Success) {
-        return $null
-    }
-    return $match.Groups[1].Value.Trim()
+# Both child processes inherit these overrides. Persist the same settings in
+# .env when starting the web and worker manually or through a service manager.
+if ($SprintViewerV2) {
+    $env:SPRINT_VIEWER_MODE = "snapshot"
+    $env:SPRINT_VIEWER_V2_ENABLED = "true"
 }
 
 if (-not $SkipPreflight) {
@@ -42,22 +32,25 @@ if (-not (Test-Path -LiteralPath $envPath)) {
     throw ".env is missing. Run .\scripts\setup_windows.ps1 first, or omit -SkipPreflight."
 }
 
-$mode = if ($env:SPRINT_VIEWER_MODE) {
-    $env:SPRINT_VIEWER_MODE
-} else {
-    Get-DotEnvValue -Path $envPath -Name "SPRINT_VIEWER_MODE"
-}
-$snapshotUsers = if ($env:SPRINT_VIEWER_SNAPSHOT_USER_IDS) {
-    $env:SPRINT_VIEWER_SNAPSHOT_USER_IDS
-} else {
-    Get-DotEnvValue -Path $envPath -Name "SPRINT_VIEWER_SNAPSHOT_USER_IDS"
-}
-$needsWorker = $mode -eq "snapshot" -or -not [string]::IsNullOrWhiteSpace($snapshotUsers)
 $worker = $null
 $webExitCode = 0
 
 Push-Location $repoRoot
 try {
+    $viewerConfigJson = & $pythonPath -c "import json; from app.config import Config; print(json.dumps({'mode': Config.SPRINT_VIEWER_MODE, 'v2': Config.SPRINT_VIEWER_V2_ENABLED, 'users': bool(Config.SPRINT_VIEWER_SNAPSHOT_USER_IDS.strip())}))"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read Sprint Viewer configuration."
+    }
+    $viewerConfig = $viewerConfigJson | ConvertFrom-Json
+    $needsWorker = $viewerConfig.mode -eq "snapshot"
+    if ($viewerConfig.v2 -and $needsWorker) {
+        Write-Host "Sprint Viewer v2 enabled: /automation/sprint-viewer"
+        if ($viewerConfig.users) {
+            Write-Host "The snapshot user allowlist is active; only listed user IDs see v2."
+        }
+    } else {
+        Write-Host "The original Sprint Viewer UI is selected. To use v2, launch with -SprintViewerV2."
+    }
     if ($needsWorker) {
         New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
         $workerStdout = Join-Path $logDirectory "worker-dev.stdout.log"

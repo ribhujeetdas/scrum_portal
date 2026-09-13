@@ -222,6 +222,7 @@ try {
     Write-Host "Configure JIRA_BASE_URL, Jira custom fields, and optional Tableau values in .env."
     Write-Host "Users add their Jira PAT through signup or Settings; the script never writes a PAT."
     Write-Host "Start the application with: .\scripts\run_windows.ps1"
+    Write-Host "For the new Sprint Viewer UI: .\scripts\run_windows.ps1 -SprintViewerV2"
 } finally {
     Pop-Location
 }

@@ -11,3 +11,5 @@ Configure both with:
 - Modify permission for the database, WAL/SHM files, log directory, and backup target; read permission for application files and secrets.
 
 Use the commands in `deploy/waitress.md`. Check the three health endpoints after every restart. The worker leader lease rejects an overlapping second worker; investigate instead of repeatedly launching another process.
+
+For Sprint Viewer v2, set `SPRINT_VIEWER_MODE=snapshot` and `SPRINT_VIEWER_V2_ENABLED=true` in the shared service environment, apply migrations, and restart both services. The local launcher switch does not configure services. See [the v2 run guide](../../docs/sprint-viewer-v2-run.md).

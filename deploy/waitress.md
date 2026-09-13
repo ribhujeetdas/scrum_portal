@@ -29,3 +29,5 @@ python -m workers.sprint_import_worker
 ```
 
 The supervisor must set the repository as its working directory, use the virtual environment executables, restart failed processes with bounded backoff, and send a graceful termination before force-kill. Verify `/health/live`, `/health/ready`, and `/health/worker` before routing traffic or enabling `SPRINT_VIEWER_MODE=snapshot`.
+
+Sprint Viewer v2 additionally requires `SPRINT_VIEWER_V2_ENABLED=true` in both processes. A nonempty `SPRINT_VIEWER_SNAPSHOT_USER_IDS` restricts the UI to listed local user IDs. See [the v2 run guide](../docs/sprint-viewer-v2-run.md); installing dependencies alone does not enable the UI.
