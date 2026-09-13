@@ -58,11 +58,11 @@ def rule_copier_service() -> RuleCopierService:
 
 
 def sprint_viewer_service() -> SprintViewerService:
-    from ..features.automation.sprint_viewer.analysis.field_registry import load_registry
+    from ..features.automation.sprint_viewer.analysis.field_registry import CONFIGURED, load_registry
     registry = load_registry(current_app.config)
     def mapped(concept, legacy, default):
         spec = registry.fields.get(concept, {})
-        return spec['field_id'] if spec.get('validation_status') == 'validated' and spec.get('field_id') else current_app.config.get(legacy, default)
+        return spec['field_id'] if spec.get('validation_status') in CONFIGURED and spec.get('field_id') else current_app.config.get(legacy, default)
     return _memoized("sprint_viewer", lambda: SprintViewerService(
         current_app.config["JIRA_BASE_URL"],
         timeout_seconds=current_app.config.get(

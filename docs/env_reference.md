@@ -77,3 +77,5 @@ The registry allows only named parsers and explicit field IDs. A validated insta
 Workflow status IDs, population-discovery validation, calendar settings and optional daily-event validation belong in the JSON's `analysis_config`. Catalogue photos alone do not establish those settings. The fixed deployment timezone defaults to Asia/Kolkata. Other IANA zones require timezone data on the host. No AI or new network service is required.
 
 For exact startup commands and UI troubleshooting, see [Run Sprint Viewer v2](sprint-viewer-v2-run.md). Both mode and flag are required; a nonempty user allowlist limits eligible accounts. Restart web and worker after changing configuration.
+
+With no mapping file, the supplied photo IDs for points, membership, application and feature are used with strict runtime parsers (`photo_confirmed`). Explicit mapping files replace this default; `pending` entries are not extracted. This does not enable history access or infer workflow status IDs.

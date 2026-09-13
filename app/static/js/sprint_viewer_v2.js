@@ -20,7 +20,7 @@
 
   let state = { view: roles.includes(params.get("view")) ? params.get("view") : "team", tab: tabs.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview", focus: params.get("focus") || "all", developer: params.get("developer") || "", search: params.get("search") || "", evidence: params.get("evidence") || "", page: 1, revision: "", viewId: "", snapshotId: "", analysis: null, suggestions: [], records: [] };
 
-  let sequence = 0, issueSequence = 0, drawerSequence = 0, controller = new AbortController(), pollTimer, searchTimer, accessTimer, edit = null;
+  let sequence = 0, issueSequence = 0, drawerSequence = 0, controller = new AbortController(), pollTimer, searchTimer, accessTimer, edit = null, lastStatus = "", pollStarted = 0;
 
   function node(tag, text, className) { const el = document.createElement(tag); if (text != null) el.textContent = text; if (className) el.className = className; if (className === "sv2-table-region") { el.tabIndex = 0; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Scrollable evidence table"); } return el; }
 
@@ -92,13 +92,29 @@
 
   }
 
+  function updateSelectionControls() {
+
+    $("Board").disabled = !$("Project").value;
+
+    $("Sprint").disabled = !$("Board").value || $("Sprint").options.length <= 1;
+
+    $("Analyze").disabled = !$("Sprint").value;
+
+    $("Refresh").disabled = !$("Board").value;
+
+    $("Rebuild").disabled = !state.analysis;
+
+    $("Export").disabled = !state.analysis;
+
+  }
+
   function resetReport() {
 
-    sequence++; issueSequence++; clearTimeout(accessTimer); controller.abort(); controller = new AbortController(); clearTimeout(pollTimer);
+    sequence++; issueSequence++; clearTimeout(searchTimer); clearTimeout(accessTimer); controller.abort(); controller = new AbortController(); clearTimeout(pollTimer);
 
     state.analysis = null; state.revision = ""; state.viewId = ""; state.snapshotId = ""; state.page = 1;
 
-    $("Report").hidden = true; $("Issues").replaceChildren();
+    $("Report").hidden = true; $("Issues").replaceChildren(); lastStatus = ""; pollStarted = Date.now(); updateSelectionControls();
 
   }
 
@@ -110,19 +126,29 @@
 
     options($("Board"), list.map(b => [b.board_id, b.board_name]), initial ? params.get("board") : "", "Select board");
 
-    if (!$("Board").value && list.length) $("Board").value = list[0].board_id;
+    options($("Sprint"), [], "", "Select closed sprint");
 
-    await loadSprints(false, initial);
+    updateSelectionControls();
+
+    message("Select a board, then a closed sprint and click Analyze.");
+
+    if (initial && $("Board").value) await loadSprints(false, true);
 
   }
 
   async function loadSprints(refresh = false, initial = false) {
 
+    const selected = initial ? params.get("sprint") : (refresh ? $("Sprint").value : "");
+
     resetReport(); const token = sequence;
 
-    if (!$("Board").value) return;
+    options($("Sprint"), [], "", "Select closed sprint"); updateSelectionControls();
+
+    if (!$("Board").value) { message("Select a board."); return; }
 
     message("Loading closed sprint catalogue…");
+
+    $("Refresh").disabled = true;
 
     try {
 
@@ -130,15 +156,15 @@
 
       if (token !== sequence) return;
 
-      const list = (result.sprints || []).filter(s => !s.state || s.state === "closed");
+      const list = (result.sprints || []).filter(s => s.state === "closed" || s.sprint_state === "closed");
 
-      const selected = initial ? params.get("sprint") : $("Sprint").value;
+      options($("Sprint"), list.map(s => [s.id || s.sprint_id, s.name || s.sprint_name]), selected, list.length ? "Select closed sprint" : "No closed sprints available");
 
-      options($("Sprint"), list.map(s => [s.id || s.sprint_id, s.name || s.sprint_name]), selected, list.length ? null : "No closed sprints available");
+      message(list.length ? "Select a closed sprint and click Analyze." : "No closed sprints available.");
 
-      if (list.length) await loadSprint(); else message("No closed sprints available.");
+    } catch (error) { if (token === sequence) fail(error); }
 
-    } catch (error) { fail(error); }
+    finally { if (token === sequence) updateSelectionControls(); }
 
   }
 
@@ -148,7 +174,7 @@
 
     if (!$("Sprint").value) return;
 
-    urlState(true); message(rebuild ? "Building a new historical revision…" : "Authorizing the selected report…");
+    $("Analyze").disabled = true; urlState(true); message(rebuild ? "Building a new historical revision…" : "Authorizing the selected report…");
 
     try {
 
@@ -162,7 +188,7 @@
 
       await poll(token);
 
-    } catch (error) { fail(error); }
+    } catch (error) { if (token === sequence) { fail(error); updateSelectionControls(); } }
 
   }
 
@@ -170,7 +196,7 @@
 
     if (!state.analysis) return loadSprint(true);
 
-    const token = sequence;
+    const token = sequence; clearTimeout(pollTimer); const rebuildStarted = Date.now();
 
     message("Building a candidate revision. The published report remains available below.");
 
@@ -196,7 +222,9 @@
 
           } else if (status.state === "failed" || Object.values(status.components || {}).some(c => c.state === "failed")) message("Candidate rebuild failed. The previous published report remains available.");
 
-          else pollTimer = setTimeout(check, 2500);
+          else if (Date.now() - rebuildStarted >= 120000) message("Rebuild checks paused after two minutes. Click Analyze to check again; the previous report is retained.");
+
+          else pollTimer = setTimeout(check, 5000);
 
         } catch (error) { if (error.name !== "AbortError") message(`Candidate rebuild: ${error.message}. Previous report retained.`); }
 
@@ -205,6 +233,20 @@
       await check();
 
     } catch (error) { if (error.name !== "AbortError") message(error.message); }
+
+  }
+
+  const terminalStates = ["ready", "failed", "unavailable", "cancelled"];
+
+  function isPending(status) {
+
+    if (["failed", "cancelled"].includes(status.state) || status.access?.core === "denied") return false;
+
+    const components = Object.values(status.components || {});
+
+    return !components.length || components.some(c => !terminalStates.includes(c.state)) ||
+
+      Object.entries(status.access || {}).some(([key, value]) => value === "pending" && !["failed", "unavailable", "cancelled"].includes(status.components?.[key]?.state));
 
   }
 
@@ -220,41 +262,60 @@
 
       if (status.access?.core === "denied") { const e = new Error("Report access was denied."); e.status = 403; throw e; }
 
-      if (status.access?.core === "granted") {
+      const signature = JSON.stringify([Object.entries(status.components || {}).map(([key, c]) => [key, c.state, c.revision, c.error_code]), status.access]);
+
+      const pending = isPending(status);
+
+      if (status.access?.core === "granted" && signature !== lastStatus) {
 
         const result = await request(base("analysis"));
 
         if (token !== sequence) return;
 
-        const changed = state.revision !== result.revision;
+        lastStatus = signature;
 
         state.analysis = result; state.revision = result.revision; params.set("sprint", $("Sprint").value); params.set("snapshot", state.snapshotId); urlState(true); state.records = result.review_records || [];
 
         clearTimeout(accessTimer);
 
-        if (result.access_expires_at) accessTimer = setTimeout(() => { const error = new Error("Jira access expired. Select the sprint again to reauthorize."); error.status = 403; fail(error); }, Math.max(0, Date.parse(result.access_expires_at) - Date.now()));
+        if (result.access_expires_at) accessTimer = setTimeout(() => { const error = new Error("Jira access expired. Click Analyze to reauthorize."); error.status = 403; fail(error); updateSelectionControls(); }, Math.max(0, Date.parse(result.access_expires_at) - Date.now()));
 
         $("Report").hidden = false;
 
-        render();
+        // Do not replace dropdown options while the user is choosing an option.
 
-        if (changed) { await loadIssues(); await loadSuggestions(); }
+        if (!root.contains(document.activeElement) || document.activeElement.tagName !== "SELECT") render();
 
-        message(result.population_complete ? `Historical revision ${result.revision} · Generation ${result.generation}` : "Core issues are available. Historical analysis is pending or unavailable; missing evidence is not zero.");
+        else document.activeElement.addEventListener("blur", () => { if (token === sequence) render(); }, { once: true });
 
-      } else message("Import queued. Core issues will appear before enrichment finishes.");
+        await loadIssues(); await loadSuggestions();
 
-      const terminal = Object.values(status.components || {}).every(c => ["ready", "failed", "unavailable", "cancelled"].includes(c.state));
+      }
 
-      if (!terminal || status.access?.core !== "granted" || (status.components?.history?.state === "ready" && status.access?.history === "pending")) pollTimer = setTimeout(() => poll(token), 2000);
+      const failures = Object.entries(status.components || {}).filter(([,c]) => ["failed", "unavailable", "cancelled"].includes(c.state)).map(([key,c]) => `${pretty(key)}: ${c.error_code || c.state}`);
 
-    } catch (error) { if (token === sequence) fail(error); }
+      const reasons = state.analysis?.diagnostics || [];
+
+      message([pending ? "Import in progress…" : (state.analysis ? "Report loaded." : "Import stopped before core issues became available."), ...failures, ...reasons].join(" "));
+
+      updateSelectionControls();
+
+      if (pending) {
+
+        if (Date.now() - pollStarted >= 120000) message("Automatic checks paused after two minutes. Click Analyze to check again. The worker may still be importing; check worker status if there is no progress.");
+
+        else pollTimer = setTimeout(() => poll(token), Math.min(10000, 2000 + Math.floor((Date.now() - pollStarted) / 15000) * 1000));
+
+      }
+
+    } catch (error) { if (token === sequence) { fail(error); updateSelectionControls(); } }
 
   }
 
-  function metricCard(id, label) {
+  function metricCard(id, label, allowCollected = false) {
 
     let metric = state.analysis?.metrics[id];
+    if (allowCollected && metric?.value == null && state.analysis?.jira_summary?.[id]) metric = state.analysis.jira_summary[id];
 
     if (id.startsWith("assigned_")) {
 
@@ -270,6 +331,7 @@
 
     const value = metric?.value;
 
+    if (metric?.source) card.append(node("small", metric.source));
     card.append(node("strong", value == null ? "—" : `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}${metric.unit === "percent" ? "%" : ""}`));
 
     card.append(node("small", metric ? `${metric.availability} · ${metric.measured_count}/${metric.eligible_count} measured · ${pretty(metric.unit)}` : "Unavailable — required evidence is not recorded"));
@@ -293,10 +355,15 @@
     $("SprintName").textContent = data.sprint?.name || "Closed sprint";
 
     const formatDate = value => {
+
       if (!value) return "Unavailable";
+
       try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: data.timezone || "Asia/Kolkata" }).format(new Date(value)); }
+
       catch { return value; }
+
     };
+
     $("Dates").textContent = `${formatDate(data.sprint?.activated_date || data.sprint?.start_date)} → ${formatDate(data.sprint?.complete_date)} · ${data.timezone || "Asia/Kolkata"} · Mapping ${data.mapping_version}${data.sprint?.activated_date ? "" : " · Scheduled start fallback"}${data.sprint?.end_date && data.sprint.end_date !== data.sprint.complete_date ? ` · Scheduled end ${formatDate(data.sprint.end_date)}` : ""}`;
 
     $("Goal").textContent = data.sprint?.goal ? `Recorded goal: ${data.sprint.goal}` : "Sprint goal is not recorded.";
@@ -311,9 +378,13 @@
 
     options($("Developer"), (data.developers || []).map(d => [d.id, d.label]), state.developer, "Select developer");
 
-    $("Summary").replaceChildren(...($("Lens").value === "points" ? [metricCard("planned_points", "Planned"), metricCard("plan_completed", "Plan completed · count ratio"), metricCard("delivered_points", "Total completed"), metricCard("unfinished_points", "Unfinished at close"), metricCard("added_points", "Added baseline points")] : [metricCard("planned", "Planned"), metricCard("plan_completed", "Plan completed"), metricCard("completed", "Total completed"), metricCard("unfinished", "Unfinished at close"), metricCard("added", "Scope additions")]));
-
-    $("Summary").lastChild.append(node("small", `Removals: ${data.metrics[$("Lens").value === "points" ? "removed_points" : "removed"]?.value ?? "Unavailable"}`), button("View removals", () => evidence(data.metrics.removed.evidence_ref)));
+    const pointLens = $("Lens").value === "points";
+    const summary = pointLens ? [["planned_points","Planned"],["plan_completed_points","Plan completed"],["delivered_points","Total completed"],["unfinished_points","Unfinished at close"],["added_points","Added points"]] : [["planned","Planned"],["plan_completed","Plan completed"],["completed","Total completed"],["unfinished","Unfinished at close"],["added","Scope additions"]];
+    $("Summary").replaceChildren(...summary.map(([id, label]) => metricCard(id, label, true)));
+    const removalId = pointLens ? "removed_points" : "removed";
+    const removal = data.metrics[removalId]?.value != null ? data.metrics[removalId] : data.jira_summary?.[removalId];
+    $("Summary").lastChild.append(node("small", `Removals: ${removal?.value ?? "Unavailable"}${removal?.source ? " (Jira sprint query)" : ""}`));
+    if (removal?.value != null) $("Summary").lastChild.append(button("View removals", () => evidence(removal.evidence_ref)));
 
     $("RoleMetrics").replaceChildren(...role.metrics.map(id => metricCard(id)));
 
@@ -322,17 +393,25 @@
     role.sections.forEach(title => { $("RoleEvidence").append(node("h3", title)); renderSection(title, $("RoleEvidence")); });
 
     $("Outcome").replaceChildren(node("p", `Original eligible plan: ${data.metrics.planned.value ?? "Unavailable"}. Already-Done exclusions: ${data.metrics.planned.exclusion_counts?.already_done ?? "Unavailable"}.`));
+
     const outcomes = node("div", null, "sv2-outcomes");
+
     [["plan_completed","Completed","#177a68"],["original_unfinished","Unfinished","#986313"],["original_removed","Removed","#59677e"]].forEach(([id,label,color]) => { const m = data.metrics[id]; const count = id === "plan_completed" ? m.numerator : m.value; const segment = button(`${label}: ${count ?? "Unavailable"}`, () => evidence(m.evidence_ref)); segment.style.borderBottom = `5px solid ${color}`; segment.style.flex = String(Math.max(1, count || 0)); outcomes.append(segment); }); $("Outcome").append(outcomes);
 
     $("Flow").replaceChildren(...["cycle_median", "cycle_p85", "closing_age", "reopened", "blocked_duration"].map(id => metricCard(id)));
 
     $("Stages").textContent = "Stage durations are available in issue timelines when complete status history is present. Unknown intervals are unavailable.";
+
     $("Daily").replaceChildren();
+
     if (data.daily?.availability === "ready") {
+
       $("Daily").append(node("h3", "Daily scope, Done and WIP"), node("p", data.daily.time_basis));
+
       const table = node("table"), head = node("tr"); ["Date", "Scope", "Done in scope", "WIP"].forEach(t => head.append(node("th", t))); table.append(head);
+
       data.daily.samples.forEach(sample => { const tr = node("tr"); [sample.date,sample.scope,sample.done,sample.wip].forEach(value => tr.append(node("td", value ?? "Unavailable"))); table.append(tr); }); const region = node("div", null, "sv2-table-region"); region.append(table); $("Daily").append(region);
+
     } else $("Daily").append(unavailable("Daily scope/Done/WIP requires validated complete events. No daily values have been fabricated."));
 
     renderActions(); showTab(false);
@@ -378,6 +457,7 @@
     else if (title.includes("Flow")) { target.append(metricCard("cycle_median"), metricCard("closing_age")); return; }
 
     if (!items.length) { target.append(unavailable("Required evidence has not been recorded or authorized for this revision.")); return; }
+
     if (!state.analysis.population_complete) target.append(node("p", "Covered historical issues only. The complete sprint population has not been verified; these are partial counts."));
 
     const table = node("table"); const head = node("tr"); const contribution = title.includes("contribution") || title.includes("Selected developer"); ["Population", "Completed", "Unfinished", "Removed", ...(contribution ? ["Closing scope", "Completed baseline points", "Share of team completions", "Story / Bug / Task"] : [])].forEach(t => head.append(node("th", t))); const thead = node("thead"); thead.append(head); table.append(thead); const body = node("tbody");
@@ -418,7 +498,8 @@
 
         const tr = node("tr"), key = node("td"); key.append(button(row.issue_key || row.issue_id, () => drawer(row.issue_id)), node("div", row.summary)); tr.append(key);
 
-        [row.issue_type, row.assignee?.label || "Unknown historical assignment", `${row.origin || "Unavailable"} / ${row.outcome || "Unavailable"}`, row.status || "Unavailable", row.baseline_points ?? "Unavailable", typeof row.feature === "string" ? row.feature : "Unavailable", row.relevant_comment_count ?? "Unavailable"].forEach(value => tr.append(node("td", value)));
+        const collected = (historical, current) => historical ?? (current != null && current !== "" ? `${current} (at collection)` : "Unavailable");
+        [row.issue_type || "Unavailable", collected(row.assignee?.label, row.collected?.assignee), `${row.origin || "Unavailable"} / ${row.outcome || "Unavailable"}`, collected(row.status, row.collected?.status), collected(row.baseline_points, row.collected?.points), collected(typeof row.feature === "string" ? row.feature : null, row.collected?.feature), row.relevant_comment_count ?? "Unavailable"].forEach(value => tr.append(node("td", value)));
 
         $("Issues").append(tr);
 
@@ -445,7 +526,11 @@
       const row = result.issue; $("DrawerContent").replaceChildren(node("h2", `${row.issue_key} · ${row.summary}`), node("p", `Coverage: ${row.coverage}. Basis: ${row.time_basis || "unavailable"}. Start / entry estimate: ${row.baseline_points ?? "Unavailable"}; close / removal: ${row.closing_points ?? "Unavailable"}.`));
 
       $("DrawerContent").append(node("p", "Summary is observed at collection; boundary status, assignment and estimates require historical coverage."));
+      if (row.reason_codes?.length) $("DrawerContent").append(node("p", `Missing historical evidence: ${row.reason_codes.map(pretty).join(", ")}`));
+      if (row.collected) $("DrawerContent").append(node("p", `At collection: ${row.collected.assignee || "Unassigned"}; ${row.collected.status || "Unknown status"}; ${row.collected.points ?? "Unknown"} points; application ${row.collected.application || "Unknown"}; feature ${row.collected.feature || "Unknown"}.`));
+
       $("DrawerContent").append(node("p", `Sprint-window team comments: ${row.relevant_comment_count ?? "Unavailable"} (${row.comment_coverage || "unavailable"}). Comment volume is context, not performance.`));
+
       $("DrawerContent").append(node("p", `Cycle: ${row.cycle_days ?? "Unavailable"} elapsed days. Closing age: ${row.closing_age_days ?? "Unavailable"} elapsed days.`), node("h3", "Recorded field events"));
 
       (row.events || []).forEach(e => $("DrawerContent").append(node("p", `${e.at} · ${e.field}: ${JSON.stringify(e.old)} → ${JSON.stringify(e.new)}`)));
@@ -479,7 +564,9 @@
       if (s.status !== "matched" || disposition !== $("Disposition").value || ($("Category").value && s.category !== $("Category").value)) return;
 
       count++; const panel = node("article", null, "sv2-observation");
+
       if (state.records.some(r => r.payload.source_rule_id === s.rule_id && r.payload.source_evidence !== s.id)) panel.append(node("small", "Updated evidence · previous disposition retained in review history."));
+
       panel.append(node("h3", `${s.count} ${s.evidence_record_keys ? "actions" : "issues"} · ${s.title}`), node("p", s.prompt));
 
       panel.append(button(`View ${s.count} ${s.evidence_record_keys ? "actions" : "issues"}`, () => { if (s.evidence_record_keys) { state.tab = "retro"; showTab(); } else evidence(s.id); }), button("Create action", () => openEdit("action", crypto.randomUUID(), { title: s.title, note: s.prompt, source_evidence: s.id, state: "Open" })), button(disposition === "Dismissed" ? "Undo dismissal" : "Dismiss", () => openEdit("disposition", `observation:${s.id}`, { source_evidence: s.id, state: disposition === "Dismissed" ? "Open" : "Dismissed" })));
@@ -501,9 +588,13 @@
     state.records.filter(r => ["action", "context", "assessment", "issue_review"].includes(r.kind)).forEach(r => { const box = node("article", null, "sv2-observation"); box.append(node("h3", r.payload.title || pretty(r.kind)), node("p", `${r.payload.state || r.payload.acceptance || ""} · ${r.payload.owner || ""} ${r.payload.due_date || ""}`), node("p", r.payload.note || r.payload.scope_reason || ""), node("small", `Recorded ${r.recorded_at} · author ${r.author_id} · revision ${r.revision}`), button("Edit", () => openEdit(r.kind, r.record_key, r.payload)), button("Audit history", async () => { try { const result = await request(`${base("record-history")}?record_key=${encodeURIComponent(r.record_key)}`); $("DrawerContent").replaceChildren(node("h2", "Human record history")); result.records.forEach(record => $("DrawerContent").append(node("p", `Revision ${record.revision} · ${record.recorded_at} · ${JSON.stringify(record.payload)}`))); $("Drawer").showModal(); } catch (error) { fail(error); } })); $("Actions").append(box); });
 
     if (!$("Actions").children.length) $("Actions").append(node("p", "No private review records yet."));
+
     $("Actions").append(node("h3", "Previous sprint actions"));
+
     const previous = state.analysis.previous_actions || [];
+
     if (!previous.length) $("Actions").append(node("p", "No previous actions available from authorized reports."));
+
     previous.forEach(record => { const box = node("article", null, "sv2-observation"); box.append(node("h3", record.payload.title), node("p", `${record.sprint_name} · ${record.payload.state} · Due ${record.payload.due_date}`), button("Follow up", () => openEdit("action", record.record_key, record.payload, record))); $("Actions").append(box); });
 
   }
@@ -557,6 +648,7 @@
       const result = await request(`/automation/sprint-viewer/views/${saved.viewId}/records`, { kind: saved.kind, record_key: saved.key, expected_revision: saved.revision, idempotency_key: saved.idem, payload });
 
       state.records = state.records.filter(r => r.record_key !== saved.key).concat(result.record); $("Edit").close(); edit = null;
+
       if (state.analysis) { state.analysis = await request(base("analysis")); state.records = state.analysis.review_records; render(); await loadSuggestions(); }
 
     } catch (error) { $("EditError").textContent = `${error.message} Your draft is retained.`; }
@@ -564,6 +656,7 @@
   });
 
   $("Drawer").addEventListener("close", () => { drawerSequence++; });
+
   $("EditCancel").onclick = () => { $("Edit").close(); edit = null; };
 
   function showTab(write = true) {
@@ -607,16 +700,18 @@
   $("Clear").onclick = () => { ["Feature","Application","IssueType","Status"].forEach(id => $(id).value = ""); state.focus = "all"; state.search = ""; state.evidence = ""; state.page = 1; $("Search").value = ""; $("Focus").value = "all"; urlState(); loadIssues(); };
 
   $("Group").onchange = () => { urlState(); loadIssues(); };
+
   ["Feature","Application","IssueType","Status","Sort"].forEach(id => $(id).onchange = () => { state.page = 1; urlState(); loadIssues(); }); $("Lens").onchange = render;
 
   $("PagePrev").onclick = () => { state.page--; loadIssues(); }; $("PageNext").onclick = () => { state.page++; loadIssues(); };
 
   function clearSelectionFilters() { state.evidence = ""; state.search = ""; state.focus = "all"; state.developer = ""; state.page = 1; ["Feature","Application","IssueType","Status"].forEach(id => $(id).value = ""); }
-  $("Project").onchange = () => { clearSelectionFilters(); loadBoards(); }; $("Board").onchange = () => { clearSelectionFilters(); loadSprints(); }; $("Sprint").onchange = () => { clearSelectionFilters(); urlState(); loadSprint(); };
+
+  $("Project").onchange = () => { clearSelectionFilters(); loadBoards(); }; $("Board").onchange = () => { clearSelectionFilters(); loadSprints(); }; $("Sprint").onchange = () => { clearSelectionFilters(); resetReport(); urlState(); updateSelectionControls(); message("Click Analyze to load the selected sprint."); };
+
+  $("Analyze").onclick = () => loadSprint();
 
   $("Refresh").onclick = () => loadSprints(true); $("Rebuild").onclick = rebuildAnalysis;
-
-  $("Prev").onclick = () => { if ($("Sprint").selectedIndex < $("Sprint").options.length - 1) { $("Sprint").selectedIndex++; $("Sprint").onchange(); } }; $("Next").onclick = () => { if ($("Sprint").selectedIndex > 0) { $("Sprint").selectedIndex--; $("Sprint").onchange(); } };
 
   $("Export").onclick = async () => { if (!state.analysis) return; try { const response = await api(`${base("export")}?${query()}`, { signal: controller.signal }); if (!response.ok) { const error = new Error("Export access expired or the revision changed."); error.status = response.status; throw error; } const href = URL.createObjectURL(await response.blob()); const a = node("a"); a.href = href; a.download = "sprint-analysis.csv"; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000); } catch (error) { fail(error); } };
 
@@ -625,25 +720,39 @@
   $("Disposition").onchange = renderSuggestions; $("Category").onchange = renderSuggestions;
 
   window.addEventListener("popstate", async () => {
+
     const p = new URLSearchParams(location.search);
+
     [...params.keys()].forEach(key => params.delete(key)); p.forEach((value,key) => params.set(key,value));
+
     const changedProject = p.get("project") !== $("Project").value;
+
     const changedBoard = p.get("board") !== $("Board").value;
+
     const changedSprint = p.get("sprint") !== $("Sprint").value;
+
     state.view = roles.includes(p.get("view")) ? p.get("view") : "team";
+
     state.tab = tabs.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview";
+
     state.focus = p.get("focus") || "all"; state.search = p.get("search") || "";
+
     state.developer = p.get("developer") || ""; state.evidence = p.get("evidence") || ""; state.page = 1;
+
     Object.entries({ feature: "Feature", application: "Application", issue_type: "IssueType", status: "Status", sort: "Sort", group: "Group" }).forEach(([key,id]) => $(id).value = p.get(key) || (key === "sort" ? "issue_key" : ""));
+
     if (changedProject || changedBoard) { $("Project").value = p.get("project") || ""; await loadBoards(true); }
-    else if (changedSprint) { $("Sprint").value = p.get("sprint") || ""; await loadSprint(); }
+
+    else if (changedSprint) { $("Sprint").value = p.get("sprint") || ""; resetReport(); message("Click Analyze to load the selected sprint."); }
+
     else { render(); loadIssues(); }
+
   });
+
   if (params.get("project") && [...$("Project").options].some(o => o.value === params.get("project"))) $("Project").value = params.get("project");
 
-  else if ($("Project").options.length > 1) $("Project").selectedIndex = 1;
-
   Object.entries({ feature: "Feature", application: "Application", issue_type: "IssueType", status: "Status", sort: "Sort", group: "Group" }).forEach(([key,id]) => { if (params.has(key)) $(id).value = params.get(key); });
+
   loadBoards(true);
 
 })();

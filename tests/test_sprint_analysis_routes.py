@@ -106,6 +106,85 @@ def test_expired_grant_blocks_analysis_and_export(analysis_app):
         assert client.get(f'/automation/sprint-viewer/views/{view}/{operation}').status_code == 403
 
 
+def test_collected_summary_survives_unavailable_history_and_respects_grants(analysis_app):
+    from app.features.automation.sprint_viewer.calculations import METRIC_CATEGORIES
+    from app.features.automation.sprint_viewer.models import SprintMetricMembership
+    app, client, view_id = analysis_app
+    with app.app_context():
+        view = db.session.get(ReportView, view_id)
+        view.access_state = {'core':'granted', 'history':'unavailable', 'metrics':'granted'}
+        core = SprintComponent.query.filter_by(snapshot_id=view.snapshot_id, component_key='core').one()
+        revision = SprintComponentRevision(component_id=core.id, revision=1, state='ready', output={
+            'groups':[{'issues':[{'issue_id':'1','issue_key':'TEST-1','summary':'Collected item','issue_type':'Story',
+                                 'assignee_name':'Developer A','status':'Done','story_points':3,'feature_key':'F-1'}]}]})
+        db.session.add(revision); db.session.flush(); core.published_revision_id = revision.id; core.state = 'ready'
+        verified = {'core':revision.id}
+        for category in METRIC_CATEGORIES:
+            component = SprintComponent.query.filter_by(snapshot_id=view.snapshot_id, component_key=category).one()
+            included = category in {'original_commitment','completed_original','total_completed'}
+            rev = SprintComponentRevision(component_id=component.id, revision=1, state='ready', output={'count':int(included)})
+            db.session.add(rev); db.session.flush(); component.state = 'ready'; component.published_revision_id = rev.id
+            verified[category] = rev.id
+            if included:
+                db.session.add(SprintMetricMembership(category_revision_id=rev.id, jira_issue_id='1', issue_key='TEST-1', story_points=3))
+        view.verified_revisions = verified
+        db.session.commit()
+    base = f'/automation/sprint-viewer/views/{view_id}'
+    response = client.get(base+'/analysis')
+    assert response.status_code == 200
+    data = response.json
+    assert data['jira_summary']['planned']['value'] == 1
+    assert data['jira_summary']['plan_completed']['value'] == 100
+    assert data['jira_summary']['delivered_points']['value'] == 3
+    assert data['metrics']['planned']['value'] is None  # no fake historical coverage
+    ref = data['jira_summary']['completed']['evidence_ref']
+    row = client.get(base+'/issues', query_string={'evidence':ref}).json['issues'][0]
+    assert row['collected']['assignee'] == 'Developer A'
+    assert row['assignee'] is None and row['baseline_points'] is None
+    with app.app_context():
+        db.session.get(ReportView, view_id).access_state = {'core':'granted','history':'unavailable','metrics':'denied'}
+        db.session.commit()
+    assert client.get(base+'/analysis').json['jira_summary'] == {}
+    assert client.get(base+'/issues', query_string={'evidence':ref}).status_code == 400
+
+
+def test_failed_query_exposes_blocked_dependents_as_terminal(analysis_app, monkeypatch):
+    from types import SimpleNamespace
+    from app.features.automation.sprint_viewer import jobs
+    from app.features.automation.sprint_viewer.models import SprintSnapshot
+    from app.features.automation.sprint_viewer.repository import serialize_status
+    app, _, view_id = analysis_app
+    with app.app_context():
+        view = db.session.get(ReportView, view_id)
+        for key in ('history','comments','metrics'):
+            component = SprintComponent.query.filter_by(snapshot_id=view.snapshot_id, component_key=key).one()
+            component.state = 'missing'
+        failed = SprintComponent.query.filter_by(snapshot_id=view.snapshot_id, component_key='original_commitment').one()
+        failed.state = 'failed'; failed.error_code = 'JIRA_QUERY_FAILED'
+        db.session.commit()
+        status = serialize_status(db.session.get(SprintSnapshot, view.snapshot_id), view)
+        for key in ('history','comments','metrics'):
+            assert status['components'][key]['state'] == 'unavailable'
+            assert status['components'][key]['error_code'] == 'DEPENDENCY_UNAVAILABLE'
+        core = SprintComponent.query.filter_by(snapshot_id=view.snapshot_id, component_key='core').one()
+        revision = SprintComponentRevision(component_id=core.id, revision=1, state='ready', output={'groups':[]})
+        db.session.add(revision); db.session.flush()
+        core.state = 'ready'; core.published_revision_id = revision.id
+        view.access_state = {'base':'granted','core':'granted'}
+        view.verified_revisions = {'core':revision.id}
+        db.session.commit()
+        snapshot = db.session.get(SprintSnapshot, view.snapshot_id)
+        user = db.session.get(User, view.user_id)
+        job = SimpleNamespace(id='test-grant', cursor={'view_id':view_id}, state='running', lease_until=None)
+        monkeypatch.setattr(jobs, '_context', lambda _: (None, user, snapshot, 'synthetic'))
+        monkeypatch.setattr(jobs, '_current_job', lambda *args: job)
+        monkeypatch.setattr(jobs, 'sprint_viewer_service', lambda: object())
+        jobs._run_authorize_view(job, 'owner', 1, 1)
+        assert job.state == 'succeeded'
+        assert view.access_state['metrics'] == 'unavailable'
+        assert view.access_state['history'] == 'unavailable'
+
+
 def test_reviews_idempotency_conflict_and_validation(analysis_app):
     _, client, view = analysis_app
     url = f'/automation/sprint-viewer/views/{view}/records'
@@ -141,7 +220,9 @@ def test_v2_rendered_roles_drilldown_review_and_mobile(page, analysis_app, tmp_p
     origin = f'http://127.0.0.1:{server.server_port}'
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
-    page.route('**/automation/sprint-viewer/sprints', lambda route: route.fulfill(json={'ok':True, 'sprints':[{'id':42,'name':'Closed sprint','state':'closed'}]}))
+    requests = []
+    page.on('request', lambda req: requests.append(req.url))
+    page.route('**/automation/sprint-viewer/sprints', lambda route: route.fulfill(json={'ok':True, 'sprints':[{'id':42,'name':'Closed sprint','state':'closed'}, {'id':43,'name':'Other sprint','state':'closed'}]}))
     page.route('**/automation/sprint-viewer/issues', lambda route: route.fulfill(json={'ok':True,'view_id':view,'snapshot_id':snapshot}))
     page.route('**/snapshots/*/status?*', lambda route: route.fulfill(json={'ok':True,'access':{'core':'granted','history':'granted'},'components':{'core':{'state':'ready'},'history':{'state':'ready'}}}))
     try:
@@ -150,6 +231,19 @@ def test_v2_rendered_roles_drilldown_review_and_mobile(page, analysis_app, tmp_p
         page.locator('input[name="password"]').fill('Password12345')
         page.locator('button[type="submit"], input[type="submit"]').first.click()
         page.goto(origin+'/automation/sprint-viewer')
+        assert page.locator('#svProject').input_value() == ''
+        assert page.locator('#svBoard').is_disabled()
+        assert page.locator('#svAnalyze').is_disabled()
+        assert not any('/sprint-viewer/sprints' in url or '/sprint-viewer/issues' in url for url in requests)
+        page.select_option('#svProject', 'TEST')
+        assert page.locator('#svBoard').input_value() == ''
+        assert not any('/sprint-viewer/sprints' in url for url in requests)
+        page.select_option('#svBoard', '10')
+        page.locator('#svSprint option[value="42"]').wait_for(state='attached')
+        assert page.locator('#svSprint').input_value() == ''
+        page.select_option('#svSprint', '42')
+        assert not any('/sprint-viewer/issues' in url for url in requests)
+        page.locator('#svAnalyze').click()
         page.locator('#svIssues button').first.wait_for()
         assert 'Past sprint analysis' in page.title()
         assert 'Asia/Kolkata' in page.locator('#svDates').inner_text()
@@ -177,12 +271,69 @@ def test_v2_rendered_roles_drilldown_review_and_mobile(page, analysis_app, tmp_p
         page.get_by_role('heading', name='Follow up review').wait_for()
         page.locator('#svTab-overview').click()
         page.set_viewport_size({'width':1440,'height':1000})
-        page.screenshot(path=str(tmp_path/'v2-desktop.png'), full_page=True)
+        page.evaluate('window.scrollTo(0, 0)')
+        page.screenshot(path=str(tmp_path/'v2-desktop.png'), full_page=False)
         page.set_viewport_size({'width':390,'height':844})
-        page.screenshot(path=str(tmp_path/'v2-mobile.png'), full_page=True)
+        page.evaluate('window.scrollTo(0, 0)')
+        page.screenshot(path=str(tmp_path/'v2-mobile.png'), full_page=False)
         assert page.locator('#sprintViewerV2').evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+        assert page.locator('#svSprint').evaluate('(el) => getComputedStyle(el).fontSize') == '16px'
+        assert page.locator('#sprintViewerV2').evaluate('(el) => getComputedStyle(el).fontSize') == '16px'
+        before = len([u for u in requests if '/status?' in u or u.endswith('/analysis')])
+        page.wait_for_timeout(2300)
+        assert len([u for u in requests if '/status?' in u or u.endswith('/analysis')]) == before
+        page.select_option('#svSprint', '43')
+        assert not page.locator('#svReport').is_visible()
+        assert len([u for u in requests if u.endswith('/sprint-viewer/issues')]) == 1
+        page.select_option('#svProject', '')
+        assert page.locator('#svBoard').input_value() == ''
+        assert page.locator('#svSprint').input_value() == ''
         assert not errors
+    finally:
+        page.goto('about:blank'); server.shutdown(); thread.join(timeout=5)
+
+
+def test_v2_unchanged_poll_does_not_render_and_stops_after_timeout(page, analysis_app):
+    import threading
+    from werkzeug.serving import make_server
+    app, _, view = analysis_app
+    with app.app_context():
+        snapshot = db.session.get(ReportView, view).snapshot_id
+    server = make_server('127.0.0.1', 0, app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    origin = f'http://127.0.0.1:{server.server_port}'
+    requests = []
+    page.on('request', lambda req: requests.append(req.url))
+    page.route('**/automation/sprint-viewer/sprints', lambda route: route.fulfill(json={'sprints':[{'id':42,'name':'Closed','state':'closed'}]}))
+    page.route('**/automation/sprint-viewer/issues', lambda route: route.fulfill(json={'view_id':view,'snapshot_id':snapshot}))
+    page.route('**/snapshots/*/status?*', lambda route: route.fulfill(json={
+        'access':{'core':'granted','history':'granted','comments':'pending'},
+        'components':{'core':{'state':'ready'},'history':{'state':'ready'},'comments':{'state':'running'}}}))
+    try:
+        page.clock.install()
+        page.goto(origin+'/auth/login')
+        page.locator('input[name="identifier"]').fill('test@example.com')
+        page.locator('input[name="password"]').fill('Password12345')
+        page.locator('button[type="submit"], input[type="submit"]').first.click()
+        page.goto(origin+'/automation/sprint-viewer')
+        page.select_option('#svProject', 'TEST'); page.select_option('#svBoard', '10')
+        page.locator('#svSprint option[value="42"]').wait_for(state='attached')
+        page.select_option('#svSprint', '42'); page.locator('#svAnalyze').click()
+        page.locator('#svIssues button').first.wait_for()
+        page.wait_for_function("document.getElementById('svMessage').textContent.includes('Import in progress')")
+        page.evaluate("window.dropdownChanges = 0; new MutationObserver(() => window.dropdownChanges++).observe(document.getElementById('svDeveloper'), {childList:true})")
+        page.locator('#svSprint').focus()
+        with page.expect_response('**/snapshots/*/status?*'):
+            page.clock.run_for(2500)
+        assert len([url for url in requests if url.endswith('/analysis')]) == 1
+        assert page.evaluate('window.dropdownChanges') == 0
+        with page.expect_response('**/snapshots/*/status?*'):
+            page.clock.fast_forward(120000)
+        page.wait_for_function("document.getElementById('svMessage').textContent.includes('checks paused')")
+        count = len([url for url in requests if '/status?' in url])
+        page.clock.run_for(15000)
+        assert len([url for url in requests if '/status?' in url]) == count
     finally:
         page.goto('about:blank'); server.shutdown(); thread.join(timeout=5)
 

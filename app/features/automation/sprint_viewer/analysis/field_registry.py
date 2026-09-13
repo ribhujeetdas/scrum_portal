@@ -8,6 +8,23 @@ from pathlib import Path
 import re
 
 PARSERS = {'number', 'text', 'option', 'options', 'user', 'users', 'sprints', 'timestamp', 'date', 'boolean'}
+CONFIGURED = {'validated', 'photo_confirmed'}
+
+
+def default_document(config):
+    # User-provided IDs are usable configuration. Runtime shape checks still apply;
+    # confirming an ID does not assert complete history or validate workflow semantics.
+    fields = {
+        'points': ('JIRA_STORY_POINTS_FIELD', 'customfield_10106', 'number'),
+        'membership': (None, 'customfield_10104', 'sprints'),
+        'application': ('JIRA_APPLICATION_FIELD', 'customfield_11700', 'option'),
+        'feature': ('JIRA_EPIC_LINK_FIELD', 'customfield_10100', 'text'),
+    }
+    return {'mapping_version': 'user-photo-ids-v1', 'fields': {
+        name: {'field_id': config.get(setting) or field_id, 'parser_kind': parser,
+               'validation_status': 'photo_confirmed', 'history_identifiers': []}
+        for name, (setting, field_id, parser) in fields.items()
+    }}
 
 
 def parse_value(kind, value):
@@ -53,7 +70,7 @@ class FieldRegistry:
         self.digest = hashlib.sha256(json.dumps(self.document, sort_keys=True).encode()).hexdigest()
 
     def requested_fields(self):
-        return sorted({s['field_id'] for s in self.fields.values() if s.get('validation_status') == 'validated' and s.get('field_id')})
+        return sorted({s['field_id'] for s in self.fields.values() if s.get('validation_status') in CONFIGURED and s.get('field_id')})
 
     def for_scope(self, board_id, project_key=None, source_id=None):
         document = deepcopy(self.document)
@@ -82,7 +99,7 @@ class FieldRegistry:
             issue_type = str(((issue.get('fields') or {}).get('issuetype') or {}).get('id', ''))
             if spec.get('issue_type_ids') and issue_type not in {str(v) for v in spec['issue_type_ids']}:
                 value = {'value': None, 'reason': 'not_applicable'}
-            elif spec.get('validation_status') != 'validated' or not field_id:
+            elif spec.get('validation_status') not in CONFIGURED or not field_id:
                 value = {'value': None, 'reason': 'mapping_unvalidated'}
             elif field_id not in (issue.get('fields') or {}):
                 value = {'value': None, 'reason': 'missing_key'}
@@ -94,7 +111,7 @@ class FieldRegistry:
 
 def load_registry(config):
     path = config.get('SPRINT_VIEWER_FIELD_MAPPING_FILE')
-    document = json.loads(Path(path).read_text(encoding='utf-8')) if path else {}
+    document = json.loads(Path(path).read_text(encoding='utf-8')) if path else default_document(config)
     document.setdefault('analysis_config', config.get('SPRINT_VIEWER_ANALYSIS_CONFIG') or {})
     document['legacy_inputs'] = {key: config.get(key) for key in ('JIRA_STORY_POINTS_FIELD', 'JIRA_APPLICATION_FIELD', 'JIRA_EPIC_LINK_FIELD')}
     return FieldRegistry(document)

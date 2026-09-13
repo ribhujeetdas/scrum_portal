@@ -1,5 +1,5 @@
 """A single normalized issue/event contract for historical analysis imports."""
-from .field_registry import parse_value
+from .field_registry import CONFIGURED, parse_value
 from .boundaries import instant, project_issue
 
 
@@ -20,9 +20,9 @@ def normalize_issue(raw, registry, resolver):
     values.update(status=str(status.get('id')) if status.get('id') is not None else None,
                   assignee={'id': resolver.resolve(assignee), 'label': (assignee or {}).get('displayName') or 'Unassigned'})
     aliases = {'status': 'status', 'assignee': 'assignee'}
-    aliases.update({spec['field_id']: name for name, spec in registry.fields.items() if spec.get('field_id') and spec.get('validation_status') == 'validated'})
+    aliases.update({spec['field_id']: name for name, spec in registry.fields.items() if spec.get('field_id') and spec.get('validation_status') in CONFIGURED})
     for name, spec in registry.fields.items():
-        if spec.get('validation_status') == 'validated':
+        if spec.get('validation_status') in CONFIGURED:
             for alias in spec.get('history_identifiers', []):
                 if alias in aliases and aliases[alias] != name:
                     raise ValueError('Ambiguous history identifier')

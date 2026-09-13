@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "mapping_version": "user-photos-2026-09-13-pending-validation",
+  "mapping_version": "user-photos-2026-09-13-configured-ids",
   "catalogue_source": [
     {
       "filename": "1-Photo-1.jpg",
@@ -27,7 +27,7 @@
       "catalogue_name": "story_points",
       "field_id": "customfield_10106",
       "parser_kind": "number",
-      "validation_status": "pending",
+      "validation_status": "photo_confirmed",
       "history_identifiers": [],
       "missing_behavior": "dependent_evidence_unavailable"
     },
@@ -35,7 +35,7 @@
       "catalogue_name": "sprint",
       "field_id": "customfield_10104",
       "parser_kind": "sprints",
-      "validation_status": "pending",
+      "validation_status": "photo_confirmed",
       "history_identifiers": [],
       "missing_behavior": "dependent_evidence_unavailable"
     },
@@ -43,7 +43,7 @@
       "catalogue_name": "application_name",
       "field_id": "customfield_11700",
       "parser_kind": "option",
-      "validation_status": "pending",
+      "validation_status": "photo_confirmed",
       "history_identifiers": [],
       "missing_behavior": "dependent_evidence_unavailable"
     },
@@ -51,7 +51,7 @@
       "catalogue_name": "feature_link",
       "field_id": "customfield_10100",
       "parser_kind": "text",
-      "validation_status": "pending",
+      "validation_status": "photo_confirmed",
       "history_identifiers": [],
       "missing_behavior": "dependent_evidence_unavailable"
     },

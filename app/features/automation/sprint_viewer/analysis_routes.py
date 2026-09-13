@@ -140,7 +140,8 @@ def dispatch(view_id, operation, issue_id=None):
     try:
         scope, snapshot, view, series = context(view_id)
         from .analysis.sections import add_sections
-        data = add_sections(analysis_data(snapshot, view))
+        from .analysis.collected import add_collected_context
+        data = add_sections(add_collected_context(snapshot, view, analysis_data(snapshot, view)))
         records = latest_records(records_query(scope, series))
         from .analysis.review_context import add_review_context
         add_review_context(data, records, (snapshot.sprint_metadata or {}).get('analysis_config', {}), datetime.now(UTC))
@@ -177,9 +178,9 @@ def dispatch(view_id, operation, issue_id=None):
                 safe = lambda v: ("'" + str(v)) if str(v).lstrip().startswith(('=', '+', '-', '@', '\t', '\r')) else str(v if v is not None else '')
                 writer.writerow(['Sprint', series.sprint_id, 'Snapshot', snapshot.id, 'Revision', data['revision'], 'Role', safe(request.args.get('view', 'team')), 'Basis', 'start / first entry / close or final removal'])
                 writer.writerow(['Filters', safe(str({key:request.args.get(key) for key in ('focus','developer','search','evidence','feature','application','issue_type','status','sort') if request.args.get(key)}))])
-                writer.writerow(['Key', 'Summary', 'Type', 'Assignee at boundary', 'Origin', 'Outcome', 'Status at boundary', 'Baseline points', 'Coverage'])
+                writer.writerow(['Key', 'Summary', 'Type', 'Assignee at boundary', 'Origin', 'Outcome', 'Status at boundary', 'Baseline points', 'Coverage', 'Assignee at collection', 'Status at collection', 'Points at collection', 'Feature at collection', 'Application at collection'])
                 for r in rows:
-                    writer.writerow([safe(v) for v in [r.get('issue_key'), r.get('summary'), r.get('issue_type'), (r.get('assignee') or {}).get('label'), r.get('origin'), r.get('outcome'), r.get('status'), r.get('baseline_points'), r.get('coverage')]])
+                    writer.writerow([safe(v) for v in [r.get('issue_key'), r.get('summary'), r.get('issue_type'), (r.get('assignee') or {}).get('label'), r.get('origin'), r.get('outcome'), r.get('status'), r.get('baseline_points'), r.get('coverage'), *[(r.get('collected') or {}).get(k) for k in ('assignee','status','points','feature','application')]]])
                 return Response(stream.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename="sprint-analysis.csv"'})
             page = int(request.args.get('page', '1'))
             if page < 1:

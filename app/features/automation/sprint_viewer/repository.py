@@ -413,8 +413,23 @@ def component_map(snapshot_id: str) -> dict[str, SprintComponent]:
     }
 
 
+def effective_component_states(snapshot, components):
+    """Expose terminal dependency failures even when a dependent job was never queued."""
+    states = {key: value.state for key, value in components.items()}
+    failed = {'failed', 'unavailable', 'cancelled'}
+    waiting = {'missing', 'queued', 'running'}
+    if any(states.get(key) in failed for key in METRIC_CATEGORIES):
+        for key in ('metrics', 'history') if snapshot.calculation_version == 2 else ('metrics',):
+            if states.get(key) in waiting:
+                states[key] = 'unavailable'
+    if states.get('history') in failed and states.get('comments') in waiting:
+        states['comments'] = 'unavailable'
+    return states
+
+
 def serialize_status(snapshot: SprintSnapshot, view: ReportView) -> dict[str, Any]:
     components = component_map(snapshot.id)
+    effective_states = effective_component_states(snapshot, components)
     latest_revisions: dict[int, SprintComponentRevision] = {}
     component_ids = [component.id for component in components.values()]
     if component_ids:
@@ -435,9 +450,9 @@ def serialize_status(snapshot: SprintSnapshot, view: ReportView) -> dict[str, An
         "retry_after_ms": 1500,
         "components": {
             key: {
-                "state": value.state,
+                "state": effective_states[key],
                 "revision": value.published_revision_id,
-                "error_code": value.error_code,
+                "error_code": value.error_code or ('DEPENDENCY_UNAVAILABLE' if effective_states[key] != value.state else None),
                 "progress": (
                     {
                         "expected": latest_revisions[value.id].expected_count,

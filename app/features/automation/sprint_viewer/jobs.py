@@ -33,7 +33,7 @@ from .models import (
     SprintSnapshotSeries,
     WorkerLeader,
 )
-from .repository import component_map, enqueue_job, now_utc, published_output
+from .repository import component_map, effective_component_states, enqueue_job, now_utc, published_output
 
 
 log = logging.getLogger("app.sprint_worker")
@@ -547,7 +547,7 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
         discovered = SprintMetricMembership.query.filter(SprintMetricMembership.category_revision_id.in_(revisions)).all()
         known = {row[0] for row in materialized_rows}
         materialized_rows.extend((r.jira_issue_id, r.issue_key, {}) for r in discovered if r.jira_issue_id not in known and not known.add(r.jira_issue_id))
-    from .analysis.field_registry import FieldRegistry
+    from .analysis.field_registry import CONFIGURED, FieldRegistry
     from .analysis.normalization import normalize_and_project
     registry = FieldRegistry((snapshot.sprint_metadata or {}).get("analysis_mapping", {}))
     frozen_sprint = dict(snapshot.sprint_metadata or {})
@@ -576,7 +576,7 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
                 raise
             # One bounded retry excludes optional fields. Missing keys retain coverage reasons.
             required_fields = ["summary", "created", "issuetype", "status", "assignee", "project", "updated"]
-            required_fields.extend(registry.fields[k]["field_id"] for k in ("membership", "points") if k in registry.fields and registry.fields[k].get("validation_status") == "validated")
+            required_fields.extend(registry.fields[k]["field_id"] for k in ("membership", "points") if k in registry.fields and registry.fields[k].get("validation_status") in CONFIGURED)
             payload = service._client.get_json(
                 f"/rest/api/2/issue/{issue_key}", headers=service._headers(pat),
                 params={"fields": ",".join(sorted(set(required_fields))), "expand": "changelog"},
@@ -633,6 +633,9 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
 
 def _run_comments(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None:
     _scope, _user, snapshot, pat = _context(job)
+    if effective_component_states(snapshot, component_map(snapshot.id)).get('comments') == 'unavailable':
+        _unavailable(job, owner, fence, epoch, 'HISTORY_DEPENDENCY_UNAVAILABLE')
+        return
     history_component = SprintComponent.query.filter_by(
         snapshot_id=snapshot.id, component_key="history"
     ).one()
@@ -866,12 +869,13 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
     series = db.session.get(SprintSnapshotSeries, snapshot.series_id)
     expected_eid, expected_key = user.eid, user.jira_key
     board_id, sprint_id = series.board_id, series.sprint_id
-    component_states = {key: value.state for key, value in components.items()}
+    component_states = effective_component_states(snapshot, components)
     component_revisions = {key: value.published_revision_id for key, value in components.items()}
     prior_access = dict(view.access_state or {})
     prior_verified = dict(view.verified_revisions or {})
     core_ids = {row.jira_issue_id for row in _core_rows(snapshot_id)[1]}
     metric_ready = all(component_states[key] == "ready" for key in METRIC_CATEGORIES)
+    metric_failed = any(component_states[key] in {'failed', 'unavailable', 'cancelled'} for key in METRIC_CATEGORIES)
     metric_ids: set[str] = set()
     if metric_ready:
         revision_ids = [component_revisions[key] for key in METRIC_CATEGORIES]
@@ -923,7 +927,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
             denial_code = "METRIC_ACCESS_CHANGED"
 
     optional_terminal = all(
-        component_states[key] in {"ready", "unavailable", "failed"}
+        component_states[key] in {"ready", "unavailable", "failed", "cancelled"}
         for key in ("history", "comments")
     )
     comments_state = "pending"
@@ -931,7 +935,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
         comments_state = "granted" if (
             reuse_comment_grant or _comments_still_visible(service, pat, snapshot_id)
         ) else "denied"
-    elif component_states["comments"] in {"unavailable", "failed"}:
+    elif component_states["comments"] in {"unavailable", "failed", "cancelled"}:
         comments_state = "unavailable"
     history_state = (
         "granted"
@@ -940,7 +944,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
         and core_granted
         and (snapshot.calculation_version != 2 or metrics_granted)
         else (
-            "pending" if component_states["history"] not in {"ready", "unavailable", "failed"}
+            "pending" if component_states["history"] not in {"ready", "unavailable", "failed", "cancelled"}
             else "unavailable"
         )
     )
@@ -959,6 +963,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
         "metrics": (
             "denied" if not core_granted
             else "granted" if metrics_granted
+            else "unavailable" if metric_failed
             else "pending" if not metric_ready
             else "denied"
         ),
@@ -977,7 +982,7 @@ def _run_authorize_view(job: BackgroundJob, owner: str, fence: int, epoch: int) 
     if denial_code or (metric_ready and not metrics_granted):
         current.state = "succeeded"
         current.lease_until = None
-    elif not metric_ready or not optional_terminal:
+    elif (not metric_ready and not metric_failed) or not optional_terminal:
         current.state = "retry_wait"
         current.resume_kind = "continuation"
         current.available_at = now_utc() + timedelta(seconds=1)

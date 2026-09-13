@@ -14,6 +14,22 @@ def test_numbers_preserve_zero_and_reject_invalid_values():
     assert parse_value('number', None)['reason'] == 'present_null'
 
 
+def test_photo_fields_are_requested_without_optional_mapping_file():
+    from app.features.automation.sprint_viewer.analysis.field_registry import load_registry
+    registry = load_registry({})
+    assert registry.requested_fields() == ['customfield_10100','customfield_10104','customfield_10106','customfield_11700']
+    raw = {'fields':{'customfield_10106':0, 'customfield_10104':[{'id':42}],
+                     'customfield_10100':'F-1', 'customfield_11700':{'id':'1','value':'App'}}}
+    values = registry.extract(raw)
+    assert values['points']['value'] == 0
+    assert values['membership']['value'] == [42]
+    assert values['feature']['value'] == 'F-1'
+    assert values['application']['value']['value'] == 'App'
+    overridden = load_registry({'JIRA_STORY_POINTS_FIELD':'customfield_900'})
+    assert 'customfield_900' in overridden.requested_fields()
+    assert 'customfield_10106' not in overridden.requested_fields()
+
+
 def test_registry_does_not_mutate_source_and_uses_ids():
     registry = FieldRegistry({'mapping_version': 'test', 'fields': {
         'points': {'field_id': 'customfield_9', 'parser_kind': 'number', 'validation_status': 'validated'}}})

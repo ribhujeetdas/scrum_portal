@@ -21,7 +21,7 @@ The v2 UI is opt-in. Pulling the code or running setup does **not** enable it in
 .\scripts\run_windows.ps1 -SprintViewerV2
 ```
 
-The launcher installs the locked dependencies, applies database migrations, and starts both processes with v2 enabled. Back up an existing database before upgrading; see [the v2 run guide](docs/sprint-viewer-v2-run.md). Open `http://127.0.0.1:5000/automation/sprint-viewer` after login. Add Projects & Boards in Settings if prompted, then select a closed sprint. The new page has role selection and Overview, Suggestions, Flow & Quality, Trends, and Retrospective tabs.
+The launcher installs the locked dependencies, applies database migrations, and starts both processes with v2 enabled. Back up an existing database before upgrading; see [the v2 run guide](docs/sprint-viewer-v2-run.md). Open `http://127.0.0.1:5000/automation/sprint-viewer` after login. Add Projects & Boards in Settings if prompted, then select a closed sprint and click **Analyze**. The new page has role selection and Overview, Suggestions, Flow & Quality, Trends, and Retrospective tabs.
 
 For persistent activation or manual/service startup, set `SPRINT_VIEWER_MODE=snapshot` and `SPRINT_VIEWER_V2_ENABLED=true` in `.env`, then restart **both** processes. A nonempty `SPRINT_VIEWER_SNAPSHOT_USER_IDS` restricts the new view to those local user IDs. The launcher option preserves that restriction.
 
