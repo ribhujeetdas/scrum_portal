@@ -396,6 +396,161 @@ class SprintViewerService:
             start_at += len(comments)
         return all_comments
 
+    def fetch_issue_assignee_timeline(self, issue_key: str, pat: str) -> dict:
+        """Fetch only the evidence needed to resolve an issue's assignee over time."""
+        try:
+            issue = self._client.get_json(
+                f"/rest/api/2/issue/{issue_key}",
+                headers=self._headers(pat),
+                params={"fields": "assignee", "expand": "changelog"},
+            )
+        except ExternalServiceError as exc:
+            self._raise_sprint_api_error(
+                exc,
+                network_message="Network error fetching issue assignee history",
+                invalid_json_message="Invalid JSON returned by issue assignee history API.",
+                generic_message="Issue assignee history API error",
+                unauthorized_message="Unauthorized (401) while fetching issue assignee history. Check PAT.",
+                forbidden_message="Forbidden (403) while fetching issue assignee history.",
+            )
+        return self.extract_assignee_timeline(issue)
+
+    @staticmethod
+    def extract_assignee_timeline(issue: dict) -> dict:
+        """Return a body-free assignee timeline and whether its Jira history is complete."""
+        fields = issue.get("fields") or {}
+        current = fields.get("assignee") or {}
+        current_identity = {
+            key: current.get(key)
+            for key in ("accountId", "key", "name", "displayName")
+            if current.get(key) is not None
+        }
+        changelog = issue.get("changelog")
+        histories = changelog.get("histories") if isinstance(changelog, dict) else None
+        complete = isinstance(histories, list)
+        histories = histories if isinstance(histories, list) else []
+
+        if isinstance(changelog, dict):
+            try:
+                total = int(changelog.get("total")) if changelog.get("total") is not None else len(histories)
+                start_at = int(changelog.get("startAt") or 0)
+                complete = complete and start_at == 0 and total <= len(histories)
+            except (TypeError, ValueError):
+                complete = False
+
+        events: list[dict] = []
+        ordinal = 0
+        for history in histories:
+            changed_at = history.get("created")
+            for item in history.get("items") or []:
+                if SprintViewerService._item_field(item) != "assignee":
+                    continue
+                if SprintViewerService._parse_jira_datetime(changed_at) is None:
+                    complete = False
+                events.append(
+                    {
+                        "created": changed_at,
+                        "from": item.get("from"),
+                        "fromString": item.get("fromString"),
+                        "to": item.get("to"),
+                        "toString": item.get("toString"),
+                        "ordinal": ordinal,
+                    }
+                )
+                ordinal += 1
+
+        return {"complete": complete, "current": current_identity, "events": events}
+
+    @staticmethod
+    def summarize_relevant_comments(
+        assignee_timeline: dict,
+        comments: list[dict],
+        sprint_start_date: Optional[str],
+        sprint_complete_date: Optional[str],
+    ) -> dict:
+        """Count comments by the assignee effective at that instant inside the sprint window."""
+        comments = list(comments or [])
+        summary = {
+            "comment_total": len(comments),
+            "relevant_comment_count": None,
+            "visible_ids": [],
+            "coverage": "unavailable",
+        }
+        if not comments:
+            summary.update(relevant_comment_count=0, coverage="complete")
+            return summary
+
+        start = SprintViewerService._parse_jira_datetime(sprint_start_date)
+        complete = SprintViewerService._parse_jira_datetime(sprint_complete_date)
+        if (
+            start is None
+            or complete is None
+            or start > complete
+            or not assignee_timeline.get("complete")
+        ):
+            return summary
+
+        timeline_issue = {
+            "fields": {
+                "assignee": assignee_timeline.get("current") or {},
+                "comment": {"comments": comments},
+            },
+            "changelog": {
+                "histories": [
+                    {
+                        "created": event.get("created"),
+                        "items": [
+                            {
+                                "field": "assignee",
+                                "from": event.get("from"),
+                                "fromString": event.get("fromString"),
+                                "to": event.get("to"),
+                                "toString": event.get("toString"),
+                            }
+                        ],
+                    }
+                    for event in assignee_timeline.get("events") or []
+                ]
+            },
+        }
+        resolver = build_identity_resolver([timeline_issue])
+        current_principal = resolver.resolve(assignee_timeline.get("current") or {})
+        events: list[tuple[datetime, int, str]] = []
+        for event in assignee_timeline.get("events") or []:
+            changed_at = SprintViewerService._parse_jira_datetime(event.get("created"))
+            if changed_at is None:
+                return summary
+            previous = resolver.observe_changelog(event.get("from"), event.get("fromString"))
+            events.append((changed_at, int(event.get("ordinal") or 0), previous))
+        events.sort(key=lambda row: (row[0], row[1]), reverse=True)
+
+        relevant = 0
+        visible_ids: list[str] = []
+        for comment in comments:
+            created = SprintViewerService._parse_jira_datetime(comment.get("created"))
+            if created is None:
+                return summary
+            if created < start or created > complete:
+                continue
+            assignee_principal = current_principal
+            for changed_at, _ordinal, previous in events:
+                if changed_at > created:
+                    assignee_principal = previous
+            author_principal = resolver.resolve(comment.get("author") or {})
+            if assignee_principal == "unassigned" or author_principal != assignee_principal:
+                continue
+            relevant += 1
+            comment_id = str(comment.get("id") or "").strip()
+            if comment_id:
+                visible_ids.append(comment_id)
+
+        summary.update(
+            relevant_comment_count=relevant,
+            visible_ids=visible_ids,
+            coverage="complete",
+        )
+        return summary
+
     # ---------------------------
     # Field extraction / grouping
     # ---------------------------
@@ -583,6 +738,7 @@ class SprintViewerService:
         relevant_comment_count = 0
         zero_relevant_comment_count = 0
         comments_evaluated_count = 0
+        relevant_comments_evaluated_count = 0
         carryover_count = 0
         carryover_sp = 0.0
 
@@ -607,6 +763,8 @@ class SprintViewerService:
                 comments_evaluated_count += 1
                 if int(it.get("comment_total") or 0) == 0:
                     zero_comment_count += 1
+            if it.get("relevant_comment_count") is not None:
+                relevant_comments_evaluated_count += 1
                 relevant_comments = int(it.get("relevant_comment_count") or 0)
                 relevant_comment_count += relevant_comments
                 if relevant_comments == 0:
@@ -630,11 +788,12 @@ class SprintViewerService:
             "unassigned_count": unassigned_count,
             "unassigned_pct": round(pct(unassigned_count, total_count), 1),
             "comments_evaluated_count": comments_evaluated_count,
+            "relevant_comments_evaluated_count": relevant_comments_evaluated_count,
             "zero_comment_count": zero_comment_count if comments_evaluated_count else None,
             "zero_comment_pct": round(pct(zero_comment_count, comments_evaluated_count), 1) if comments_evaluated_count else None,
-            "relevant_comment_count": relevant_comment_count if comments_evaluated_count else None,
-            "zero_relevant_comment_count": zero_relevant_comment_count if comments_evaluated_count else None,
-            "zero_relevant_comment_pct": round(pct(zero_relevant_comment_count, comments_evaluated_count), 1) if comments_evaluated_count else None,
+            "relevant_comment_count": relevant_comment_count if relevant_comments_evaluated_count else None,
+            "zero_relevant_comment_count": zero_relevant_comment_count if relevant_comments_evaluated_count else None,
+            "zero_relevant_comment_pct": round(pct(zero_relevant_comment_count, relevant_comments_evaluated_count), 1) if relevant_comments_evaluated_count else None,
             "carryover_count": carryover_count,
             "carryover_sp": round(float(carryover_sp), 2),
         }

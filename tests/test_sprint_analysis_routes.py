@@ -208,6 +208,239 @@ def test_closed_only_and_rendered_shell(analysis_app):
     assert response.status_code == 400 and response.json['error']['code'] == 'sprint_not_closed'
 
 
+def _previous_view_assignment_fixture():
+    issue = {
+        'id': '2',
+        'key': 'TEST-2',
+        'fields': {
+            'summary': 'Assignment changes during sprint',
+            'created': '2026-01-01T00:00:00Z',
+            'customfield_10106': 5,
+            'customfield_11700': {'value': 'Application'},
+            'customfield_10100': 'F-1',
+            'status': {'name': 'Done'},
+            'issuetype': {'name': 'Story', 'subtask': False},
+            'assignee': {'key': 'B', 'name': 'B', 'displayName': 'Developer B'},
+        },
+        'changelog': {
+            'total': 1,
+            'startAt': 0,
+            'histories': [{
+                'id': 'assignment-change',
+                'created': '2026-01-10T00:00:00Z',
+                'items': [{
+                    'fieldId': 'assignee',
+                    'from': 'A',
+                    'fromString': 'A',
+                    'to': 'B',
+                    'toString': 'B',
+                }],
+            }],
+        },
+    }
+    comments = [
+        {'id': 'before-sprint', 'author': {'key': 'A', 'name': 'A'}, 'created': '2026-01-01T00:00:00Z'},
+        {'id': 'inside-a', 'author': {'key': 'A', 'name': 'A'}, 'created': '2026-01-08T00:00:00Z'},
+        {'id': 'wrong-before-change', 'author': {'key': 'B', 'name': 'B'}, 'created': '2026-01-08T01:00:00Z'},
+        {'id': 'wrong-after-change', 'author': {'key': 'A', 'name': 'A'}, 'created': '2026-01-12T00:00:00Z'},
+        {'id': 'inside-b', 'author': {'key': 'B', 'name': 'B'}, 'created': '2026-01-12T01:00:00Z'},
+        {'id': 'after-sprint', 'author': {'key': 'B', 'name': 'B'}, 'created': '2026-01-20T00:00:00Z'},
+    ]
+    return issue, comments
+
+
+def test_previous_view_direct_core_does_not_wait_for_relevant_comments(analysis_app, monkeypatch):
+    from copy import deepcopy
+    from app.features.automation.sprint_viewer import routes
+    from app.services.sprint_viewer_service import SprintViewerService
+
+    app, client, _ = analysis_app
+    issue, comments = _previous_view_assignment_fixture()
+    calls = []
+
+    class Client:
+        def get_json(self, path, **kwargs):
+            calls.append(path)
+            if path.endswith('/comment'):
+                return {'comments': deepcopy(comments), 'total': len(comments), 'startAt': 0}
+            return deepcopy(issue)
+
+    service = SprintViewerService('https://jira.example', http_client=Client())
+    monkeypatch.setattr(
+        service,
+        'fetch_all_issues_for_sprint',
+        lambda *args, **kwargs: {'issues': [deepcopy(issue)], 'total': 1},
+    )
+    monkeypatch.setattr(routes, '_sprint_service', lambda: service)
+    monkeypatch.setattr(routes, '_get_user_pat', lambda: 'synthetic-test-token')
+    monkeypatch.setattr(routes, '_validate_pat_belongs_to_user', lambda _pat: None)
+    app.config.update(SPRINT_VIEWER_MODE='direct', SPRINT_VIEWER_V2_ENABLED=False)
+
+    core = client.post('/automation/sprint-viewer/issues', json={'board_id': 10, 'sprint_id': 42})
+    assert core.status_code == 200
+    assert core.json['work_type_mix']['overall']['Story']['count'] == 1
+    assert core.json['groups'][0]['issues'][0]['relevant_comment_count'] is None
+    assert calls == []
+
+    result = client.post(
+        '/automation/sprint-viewer/issues',
+        json={'board_id': 10, 'sprint_id': 42, 'component': 'comments'},
+    )
+    assert result.status_code == 200
+    assert result.json['issues'][0]['relevant_comment_count'] == 2
+    assert result.json['issues'][0]['comment_coverage'] == 'complete'
+    assert result.json['stats']['relevant_comment_count'] == 2
+    assert calls == ['/rest/api/2/issue/TEST-2', '/rest/api/2/issue/TEST-2/comment']
+
+
+def test_previous_view_browser_keeps_core_interactive_during_background_enrichment(page, analysis_app):
+    import json
+    import threading
+    from werkzeug.serving import make_server
+
+    app, _, _ = analysis_app
+    app.config.update(SPRINT_VIEWER_MODE='direct', SPRINT_VIEWER_V2_ENABLED=False)
+    core = {
+        'ok': True,
+        'total': 1,
+        'standard_total': 1,
+        'total_sp': 5,
+        'sprint': {'name': 'Closed sprint', 'start_date': '2026-01-05T00:00:00Z', 'complete_date': '2026-01-15T00:00:00Z'},
+        'stats': {'relevant_comment_count': None, 'zero_relevant_comment_count': None, 'zero_relevant_comment_pct': None},
+        'work_type_mix': {'overall': {'Story': {'count': 1, 'pts': 5}}, 'by_assignee': []},
+        'groups': [{
+            'principal_id': 'key:B',
+            'assignee_eid': 'B',
+            'assignee_name': 'Developer B',
+            'issue_count': 1,
+            'sp_sum': 5,
+            'relevant_comment_count': None,
+            'issues': [{
+                'issue_id': '2',
+                'issue_key': 'TEST-2',
+                'summary': 'Core renders first',
+                'issue_type': 'Story',
+                'status': 'Done',
+                'story_points': 5,
+                'relevant_comment_count': None,
+            }],
+        }],
+    }
+    comments = {
+        'ok': True,
+        'component': 'comments',
+        'issues': [{'issue_id': '2', 'issue_key': 'TEST-2', 'comment_total': 6, 'relevant_comment_count': 2, 'comment_coverage': 'complete'}],
+        'stats': {'relevant_comment_count': 2, 'zero_relevant_comment_count': 0, 'zero_relevant_comment_pct': 0},
+    }
+    metrics = {'ok': True, 'metrics': {'committed_count': 1, 'committed_sp': 5, 'scope_added_keys': []}}
+    init_script = f"""
+      (() => {{
+        const originalFetch = window.fetch.bind(window);
+        const response = (payload) => new Response(JSON.stringify(payload), {{
+          status: 200,
+          headers: {{'Content-Type': 'application/json'}}
+        }});
+        window.fetch = (input, options = {{}}) => {{
+          const url = typeof input === 'string' ? input : input.url;
+          if (url.endsWith('/api/automation/sprint-viewer/sprints')) {{
+            return Promise.resolve(response({json.dumps({'ok': True, 'sprints': [{'id': 42, 'name': 'Closed sprint', 'state': 'closed'}]})}));
+          }}
+          if (url.endsWith('/api/automation/sprint-viewer/issues')) {{
+            const body = JSON.parse(options.body || '{{}}');
+            if (body.component === 'comments') {{
+              window.__commentsRequested = true;
+              return new Promise((resolve) => {{ window.__releaseComments = () => resolve(response({json.dumps(comments)})); }});
+            }}
+            return Promise.resolve(response({json.dumps(core)}));
+          }}
+          if (url.endsWith('/api/automation/sprint-viewer/metrics')) {{
+            window.__metricsRequested = true;
+            return new Promise((resolve) => {{ window.__releaseMetrics = () => resolve(response({json.dumps(metrics)})); }});
+          }}
+          return originalFetch(input, options);
+        }};
+      }})();
+    """
+    page.add_init_script(script=init_script)
+
+    server = make_server('127.0.0.1', 0, app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f'http://127.0.0.1:{server.server_port}'
+    try:
+        page.goto(origin + '/auth/login')
+        page.locator('input[name="identifier"]').fill('test@example.com')
+        page.locator('input[name="password"]').fill('Password12345')
+        page.locator('button[type="submit"], input[type="submit"]').first.click()
+        page.goto(origin + '/automation/sprint-viewer')
+        page.select_option('#projectKey', 'TEST')
+        page.select_option('#boardId', '10')
+        page.locator('#sprintId option[value="42"]').wait_for(state='attached')
+        page.select_option('#sprintId', '42')
+        page.locator('#fetchIssuesBtn').click()
+
+        page.wait_for_function('window.__commentsRequested === true && window.__metricsRequested === true')
+        assert page.locator('#workTypeMixBox').is_visible()
+        assert 'Story' in page.locator('#workTypeOverall').inner_text()
+        assert page.locator('#loadingOverlay').evaluate('(el) => getComputedStyle(el).display') == 'none'
+        assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == 'Unavailable'
+
+        page.locator('#assigneeAccordion .accordion-button').click()
+        page.locator('#assigneeAccordion .accordion-collapse.show').wait_for()
+        page.evaluate('window.__releaseComments()')
+        page.wait_for_function("document.getElementById('relevantCommentCount').textContent === '2'")
+        assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == '2'
+        assert page.locator('#assigneeAccordion .accordion-collapse').get_attribute('class').endswith('show')
+
+        page.evaluate('window.__releaseMetrics()')
+        page.wait_for_function("document.getElementById('committedFmt').textContent.includes('1 #')")
+    finally:
+        page.goto('about:blank')
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_previous_view_rebuilds_cached_snapshot_with_old_comment_semantics(analysis_app):
+    from app.features.automation.sprint_viewer.models import SprintSnapshot, SprintSnapshotSeries
+
+    app, client, _ = analysis_app
+    app.config.update(SPRINT_VIEWER_MODE='snapshot', SPRINT_VIEWER_V2_ENABLED=False)
+    with app.app_context():
+        user = User.query.first()
+        _scope, old_snapshot, _created = get_or_create_snapshot(user, 10, 42)
+        old_snapshot.status = 'ready'
+        series = db.session.get(SprintSnapshotSeries, old_snapshot.series_id)
+        series.active_snapshot_id = old_snapshot.id
+        series.candidate_snapshot_id = None
+        comments_component = SprintComponent.query.filter_by(
+            snapshot_id=old_snapshot.id,
+            component_key='comments',
+        ).one()
+        revision = SprintComponentRevision(
+            component_id=comments_component.id,
+            revision=1,
+            state='ready',
+            output={'time_basis': 'visible comments at collection, cutoff at sprint completion'},
+        )
+        db.session.add(revision)
+        db.session.flush()
+        comments_component.state = 'ready'
+        comments_component.published_revision_id = revision.id
+        db.session.commit()
+        old_snapshot_id = old_snapshot.id
+
+    response = client.post(
+        '/automation/sprint-viewer/issues',
+        json={'board_id': 10, 'sprint_id': 42, 'client_action_id': str(uuid.uuid4())},
+    )
+    assert response.status_code == 202
+    assert response.json['snapshot_id'] != old_snapshot_id
+    with app.app_context():
+        replacement = db.session.get(SprintSnapshot, response.json['snapshot_id'])
+        assert replacement.calculation_version == 1
+        assert replacement.status in {'pending', 'processing'}
+
+
 def test_v2_rendered_roles_drilldown_review_and_mobile(page, analysis_app, tmp_path):
     import json
     import threading
@@ -337,7 +570,9 @@ def test_v2_access_error_is_visible_with_code_and_request_id(page, analysis_app)
         page.locator('#svAnalyze').click()
 
         message = page.locator('#svMessage')
-        message.wait_for()
+        page.wait_for_function(
+            "document.getElementById('svMessage').textContent.includes('Settings > Integrations')"
+        )
         assert 'Settings > Integrations' in message.inner_text()
         assert 'JIRA_PAT_REQUIRED' in message.inner_text()
         assert 'server-denied-123' in message.inner_text()
@@ -487,6 +722,67 @@ def test_v2_worker_publishes_normalized_history_and_windowed_comments(analysis_a
         assert history['analysis_v2']['metrics']['planned_points']['value'] == 3
         assert history['analysis_v2']['rows'][0]['outcome'] == 'done'
         assert published_output(snapshot.id,'comments')[1].output['issues']['2']['relevant_comment_count'] == 1
+
+
+def test_previous_view_worker_uses_assignee_at_comment_time(analysis_app, monkeypatch):
+    from app.core.dependencies import crypto_service
+    from app.features.automation.sprint_viewer import jobs
+    from app.features.automation.sprint_viewer.models import BackgroundJob
+    from app.features.automation.sprint_viewer.repository import published_output
+    from app.services.sprint_viewer_service import SprintViewerService
+    from copy import deepcopy
+
+    app, _, _ = analysis_app
+    raw, comments = _previous_view_assignment_fixture()
+
+    class Client:
+        def get_json(self, path, **kwargs):
+            if '/board/' in path:
+                return {'values': [{'id': 44, 'state': 'closed'}], 'total': 1, 'startAt': 0, 'isLast': True}
+            return deepcopy(raw)
+
+    service = SprintViewerService('https://jira.example', http_client=Client())
+    monkeypatch.setattr(jobs, 'sprint_viewer_service', lambda: service)
+    monkeypatch.setattr(service, 'fetch_all_issues_for_sprint', lambda *args: {'issues': [deepcopy(raw)], 'total': 1})
+    monkeypatch.setattr(service, '_aggregate_by_jql_with_client', lambda *args: {'count': 1, 'sp': 5, 'memberships': [{'issue_id': '2', 'issue_key': 'TEST-2', 'story_points': 5}]})
+    monkeypatch.setattr(service, '_fetch_all_comments_for_issue', lambda *args: deepcopy(comments))
+
+    with app.app_context():
+        user = User.query.first()
+        user.jira_pat_enc = crypto_service().encrypt('synthetic-test-token')
+        BackgroundJob.query.update({'state': 'succeeded'})
+        db.session.add(UserBoardSprint(
+            user_id=user.id,
+            board_id=10,
+            sprint_id=44,
+            sprint_name='Previous-view sprint',
+            sprint_state='closed',
+            start_date='2026-01-05T00:00:00Z',
+            complete_date='2026-01-15T00:00:00Z',
+        ))
+        db.session.flush()
+        _, snapshot, _ = get_or_create_snapshot(user, 10, 44)
+        snapshot.calculation_version = 1
+        db.session.commit()
+
+        owner = str(uuid.uuid4())
+        epoch = jobs.acquire_leadership(owner)
+        for _ in range(20):
+            job = jobs.claim_job(owner, epoch, 'core') or jobs.claim_job(owner, epoch, 'enrichment')
+            if job is None:
+                BackgroundJob.query.filter_by(state='retry_wait').update(
+                    {'available_at': datetime.now(UTC) - timedelta(seconds=1)}
+                )
+                db.session.commit()
+                job = jobs.claim_job(owner, epoch, 'core') or jobs.claim_job(owner, epoch, 'enrichment')
+            if job is None:
+                break
+            jobs.run_job(job, owner, epoch)
+
+        output = published_output(snapshot.id, 'comments')[1].output
+        assert output['issues']['2']['relevant_comment_count'] == 2
+        assert output['issues']['2']['visible_ids'] == ['inside-a', 'inside-b']
+        assert output['time_basis'] == 'visible comments by the assignee at comment time within activation/start through actual close'
 
 
 def test_additive_migration_from_prior_schema_preserves_snapshot(analysis_app):

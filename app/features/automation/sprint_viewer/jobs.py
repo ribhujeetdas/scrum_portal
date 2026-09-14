@@ -596,6 +596,10 @@ def _run_history(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None
         )
         if projection is not None:
             extracted["analysis_v2"] = projection
+        else:
+            # Calculation v1 uses this body-free evidence later so comments can
+            # be classified without repeating the issue-history request.
+            extracted["_assignee_timeline"] = service.extract_assignee_timeline(payload)
         historical[jira_issue_id] = extracted
         staged_rows.append((jira_issue_id, extracted))
     current = _current_job(job.id, owner, fence, epoch)
@@ -665,44 +669,63 @@ def _run_comments(job: BackgroundJob, owner: str, fence: int, epoch: int) -> Non
     if is_v2:
         known = {r[0] for r in materialized_rows}
         materialized_rows.extend((key, value.get("issue_key"), value) for key, value in historical_issues.items() if key not in known)
-    output: dict[str, Any] = {"issues": {}, "time_basis": "visible comments at collection, cutoff at sprint completion", "fetched_at": now_utc().isoformat()}
+    output: dict[str, Any] = {"issues": {}, "time_basis": "visible comments by the assignee at comment time within activation/start through actual close", "fetched_at": now_utc().isoformat()}
     if is_v2:
         output["time_basis"] = "visible sprint-team comments within activation/start through actual close"
     cutoff = service._parse_jira_datetime(complete_date)
     team: set[str] = set()
-    for jira_issue_id, _issue_key, payload in materialized_rows:
-        identity = historical_issues.get(jira_issue_id) or payload
-        principal = str(identity.get("principal_id") or "").strip()
-        eid = str(identity.get("assignee_eid") or "").strip()
-        team.update(value for value in (principal, eid, principal.partition(":")[2]) if value)
+    if is_v2:
+        for jira_issue_id, _issue_key, payload in materialized_rows:
+            identity = historical_issues.get(jira_issue_id) or payload
+            principal = str(identity.get("principal_id") or "").strip()
+            eid = str(identity.get("assignee_eid") or "").strip()
+            team.update(value for value in (principal, eid, principal.partition(":")[2]) if value)
     db.session.commit()
     staged_comments: list[tuple[str, str, Any]] = []
     for jira_issue_id, issue_key, _payload in materialized_rows:
         if not issue_key:
             continue
         comments = service._fetch_all_comments_for_issue(issue_key, pat)
-        relevant = 0
-        ids: list[str] = []
-        for comment in comments:
-            comment_id = str(comment.get("id") or "")
-            if not comment_id:
-                continue
-            author = comment.get("author") or {}
-            author_values = {
-                str(author.get(field) or "").strip()
-                for field in ("accountId", "key", "name")
+        if is_v2:
+            relevant = 0
+            ids: list[str] = []
+            for comment in comments:
+                comment_id = str(comment.get("id") or "")
+                if not comment_id:
+                    continue
+                author = comment.get("author") or {}
+                author_values = {
+                    str(author.get(field) or "").strip()
+                    for field in ("accountId", "key", "name")
+                }
+                author_values.discard("")
+                created = service._parse_jira_datetime(comment.get("created"))
+                if author_values.intersection(team) and (cutoff is None or (created is not None and created <= cutoff)) and (start_cutoff is not None and created is not None and created >= start_cutoff):
+                    relevant += 1
+                    ids.append(comment_id)
+            summary = {
+                "comment_total": len(comments),
+                "relevant_comment_count": relevant,
+                "visible_ids": ids,
             }
-            author_values.discard("")
-            created = service._parse_jira_datetime(comment.get("created"))
-            if author_values.intersection(team) and (cutoff is None or (created is not None and created <= cutoff)) and (not is_v2 or (start_cutoff is not None and created is not None and created >= start_cutoff)):
-                relevant += 1
-                ids.append(comment_id)
-                staged_comments.append((jira_issue_id, comment_id, comment.get("created")))
-        output["issues"][jira_issue_id] = {
-            "comment_total": len(comments),
-            "relevant_comment_count": relevant,
-            "visible_ids": ids,
+        else:
+            historical = historical_issues.get(jira_issue_id) or {}
+            summary = service.summarize_relevant_comments(
+                historical.get("_assignee_timeline") or {},
+                comments,
+                start_date,
+                complete_date,
+            )
+            ids = summary["visible_ids"]
+
+        comments_by_id = {
+            str(comment.get("id") or ""): comment for comment in comments
         }
+        for comment_id in ids:
+            staged_comments.append(
+                (jira_issue_id, comment_id, (comments_by_id.get(comment_id) or {}).get("created"))
+            )
+        output["issues"][jira_issue_id] = summary
     enriched = []
     for jira_issue_id, _issue_key, payload in materialized_rows:
         issue = dict(payload)

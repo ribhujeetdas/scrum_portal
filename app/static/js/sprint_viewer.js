@@ -596,9 +596,19 @@
     return link;
   }
 
-  function renderGroupedAccordion(groups) {
+  function expandedAssigneeKeys() {
+    return new Set(
+      Array.from(assigneeAccordion.querySelectorAll(".accordion-collapse.show"))
+        .map((collapse) => collapse.closest(".accordion-item")?.querySelector(".accordion-button")?.dataset.assigneeKey)
+        .filter(Boolean)
+    );
+  }
+
+  function renderGroupedAccordion(groups, expandedKeys = new Set()) {
     assigneeAccordion.replaceChildren();
     (groups || []).forEach((group, idx) => {
+      const assigneeKey = String(group.principal_id || group.assignee_eid || idx);
+      const expanded = expandedKeys.has(assigneeKey);
       const headerId = `heading_${idx}`;
       const collapseId = `collapse_${idx}`;
       const item = document.createElement("div");
@@ -608,11 +618,12 @@
       header.className = "accordion-header";
       header.id = headerId;
       const button = document.createElement("button");
-      button.className = "accordion-button collapsed";
+      button.className = `accordion-button${expanded ? "" : " collapsed"}`;
       button.type = "button";
+      button.dataset.assigneeKey = assigneeKey;
       button.setAttribute("data-bs-toggle", "collapse");
       button.setAttribute("data-bs-target", `#${collapseId}`);
-      button.setAttribute("aria-expanded", "false");
+      button.setAttribute("aria-expanded", expanded ? "true" : "false");
       button.setAttribute("aria-controls", collapseId);
       addText(button, group.assignee_name || "Unassigned");
       const spSum = group.sp_sum ?? 0;
@@ -621,7 +632,7 @@
 
       const collapse = document.createElement("div");
       collapse.id = collapseId;
-      collapse.className = "accordion-collapse collapse";
+      collapse.className = `accordion-collapse collapse${expanded ? " show" : ""}`;
       collapse.setAttribute("aria-labelledby", headerId);
       collapse.setAttribute("data-bs-parent", "#assigneeAccordion");
       const body = document.createElement("div");
@@ -767,6 +778,62 @@
     }
   }
 
+  async function startCommentsRequest(bid, sid) {
+    try {
+      return await postJson("/api/automation/sprint-viewer/issues", {
+        board_id: bid,
+        sprint_id: sid,
+        component: "comments"
+      });
+    } catch (error) {
+      return { ok: false, error: "Network/Unexpected error while loading relevant comments." };
+    }
+  }
+
+  function renderCommentsResult(data, bid, sid) {
+    if (!data || !data.ok) {
+      showAlert("warning", `Issues remain available. Relevant comments failed: ${errorMessage(data, "Unknown error")}`);
+      return false;
+    }
+    if (!currentReportData || currentReportData.boardId !== bid || currentReportData.sprintId !== sid) {
+      return false;
+    }
+
+    const updates = new Map();
+    (data.issues || []).forEach((issue) => {
+      if (issue.issue_id != null) updates.set(`id:${issue.issue_id}`, issue);
+      if (issue.issue_key) updates.set(`key:${issue.issue_key}`, issue);
+    });
+    const expanded = expandedAssigneeKeys();
+    const groups = (currentReportData.issueData.groups || []).map((group) => {
+      let relevantTotal = 0;
+      let evaluated = 0;
+      const issues = (group.issues || []).map((issue) => {
+        const update = updates.get(`id:${issue.issue_id}`) || updates.get(`key:${issue.issue_key}`);
+        const merged = update ? { ...issue, ...update } : issue;
+        if (merged.relevant_comment_count != null) {
+          relevantTotal += Number(merged.relevant_comment_count) || 0;
+          evaluated += 1;
+        }
+        return merged;
+      });
+      return {
+        ...group,
+        issues,
+        relevant_comment_count: evaluated ? relevantTotal : null
+      };
+    });
+    currentReportData.issueData.groups = groups;
+    currentReportData.issueData.stats = {
+      ...(currentReportData.issueData.stats || {}),
+      ...(data.stats || {})
+    };
+    renderStats(currentReportData.issueData.stats);
+    renderGroupedAccordion(groups, expanded);
+    applyScopeStars(currentReportData.metrics?.scope_added_keys || []);
+    return true;
+  }
+
   function renderMetricsResult(data, bid, sid) {
     if (!data || !data.ok) {
       showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
@@ -825,7 +892,6 @@
     resetResults();
     setFetchButtonMode("start-over");
     lockUi();
-    const metricsPromise = startMetricsRequest(bid, sid);
     let issuesLoaded = false;
     try {
       const data = await postJson("/api/automation/sprint-viewer/issues", {
@@ -854,17 +920,24 @@
       renderWorkTypeMix(data.work_type_mix);
       renderGroupedAccordion(data.groups || []);
       resultsCard.classList.remove("d-none");
-      showAlert("success", "Issues fetched successfully. Metrics are calculating...");
+      showAlert("success", "Issues fetched successfully. Relevant comments and metrics are loading in the background...");
       showMetricsLoading();
       issuesLoaded = true;
     } catch (error) {
       showAlert("danger", "Network/Unexpected error while fetching sprint issues.");
       setFetchButtonMode("fetch");
     } finally {
-      // Tickets and navigation become usable as soon as core data is ready.
-      // Metrics continue independently and cannot keep the page overlay active.
+      // Tickets and navigation become usable before slower enrichment starts.
+      // Comments and metrics never keep the page overlay active.
       unlockUi();
     }
+    if (!issuesLoaded || fetchToken !== activeFetchToken) return;
+    const metricsPromise = startMetricsRequest(bid, sid);
+    void startCommentsRequest(bid, sid).then((commentsData) => {
+      if (issuesLoaded && fetchToken === activeFetchToken) {
+        renderCommentsResult(commentsData, bid, sid);
+      }
+    });
     const metricsData = await metricsPromise;
     if (!issuesLoaded || fetchToken !== activeFetchToken) return;
     renderMetricsResult(metricsData, bid, sid);

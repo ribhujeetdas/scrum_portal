@@ -380,11 +380,68 @@ def sprint_viewer_get_sprints():
     )
 
 
+def _direct_comment_results(
+    service: SprintViewerService,
+    pat: str,
+    sprint_row: UserBoardSprint,
+    sprint_id: int,
+):
+    raw = service.fetch_all_issues_for_sprint(sprint_id, pat)
+    issues_raw = raw["issues"]
+    complete_date = sprint_row.complete_date
+    start_date = sprint_row.activated_date or sprint_row.start_date
+    resolver = service.build_identity_resolver(issues_raw)
+    extracted = [
+        service.extract_issue_fields(
+            issue,
+            sprint_complete_date=complete_date,
+            resolver=resolver,
+        )
+        for issue in issues_raw
+    ]
+    extracted_by_id = {str(issue.get("issue_id") or ""): issue for issue in extracted}
+    updates: list[dict] = []
+    for issue in issues_raw:
+        issue_id = str(issue.get("id") or "")
+        issue_key = str(issue.get("key") or issue_id)
+        if not issue_id or not issue_key:
+            continue
+        timeline = service.fetch_issue_assignee_timeline(issue_key, pat)
+        comments = service._fetch_all_comments_for_issue(issue_key, pat)
+        summary = service.summarize_relevant_comments(
+            timeline,
+            comments,
+            start_date,
+            complete_date,
+        )
+        update = {
+            "issue_id": issue_id,
+            "issue_key": issue_key,
+            "comment_total": summary["comment_total"],
+            "relevant_comment_count": summary["relevant_comment_count"],
+            "comment_coverage": summary["coverage"],
+        }
+        updates.append(update)
+        if issue_id in extracted_by_id:
+            extracted_by_id[issue_id].update(update)
+
+    standard_issues = [issue for issue in extracted if not issue.get("is_subtask")]
+    return json_ok(
+        component="comments",
+        issues=updates,
+        stats=service.compute_issue_quality_stats(standard_issues),
+        time_basis="assignee at comment time within activation/start through actual close",
+    )
+
+
 def sprint_viewer_fetch_issues():
     try:
         payload = require_json_object(request.get_json(silent=True))
         board_id_int = positive_jira_id(payload.get("board_id"), "Board ID")
         sprint_id_int = positive_jira_id(payload.get("sprint_id"), "Sprint ID")
+        component = str(payload.get("component") or "core").strip().lower()
+        if component not in {"core", "comments"}:
+            raise InputValidationError("component must be core or comments.")
     except InputValidationError as exc:
         return json_error(str(exc), status_code=400, code="INVALID_INPUT")
 
@@ -458,6 +515,8 @@ def sprint_viewer_fetch_issues():
 
     try:
         service = _sprint_service()
+        if component == "comments":
+            return _direct_comment_results(service, pat, sprint_row, sprint_id_int)
         raw = service.fetch_all_issues_for_sprint(sprint_id_int, pat)
         issues_raw = raw["issues"]
         sprint_meta = {
@@ -481,9 +540,6 @@ def sprint_viewer_fetch_issues():
             )
             for issue in issues_raw
         ]
-        service.apply_relevant_comment_counts(
-            extracted, sprint_complete_date=sprint_complete_date
-        )
         grouped = service.group_issues_by_assignee(extracted)
         standard_issues = [issue for issue in extracted if not issue.get("is_subtask")]
         total_sp = service.sum_story_points(standard_issues)
@@ -666,6 +722,18 @@ def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
                 sprint_id,
                 request_id=getattr(g, "request_id", None),
             )
+        if not created and not rebuild and not payload.get("snapshot_id") and snapshot.calculation_version == 1:
+            comments_component = component_map(snapshot.id).get("comments")
+            if comments_component and comments_component.state == "ready":
+                _component, comments_revision = published_output(snapshot.id, "comments")
+                expected_basis = "visible comments by the assignee at comment time within activation/start through actual close"
+                if (comments_revision.output or {}).get("time_basis") != expected_basis:
+                    scope, snapshot, created = queue_snapshot_rebuild(
+                        current_user,
+                        board_id,
+                        sprint_id,
+                        request_id=getattr(g, "request_id", None),
+                    )
         if created:
             limited = consume_current_user_limit("sprint_import")
             if limited is not None:
