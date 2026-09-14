@@ -114,7 +114,15 @@ function appendTypeName(cell, type, color, unestimated) {
   }
 }
 
-function appendMatrixCell(row, points, count, pointPct, unestimated = 0, total = false) {
+function appendMatrixCell(
+  row,
+  points,
+  count,
+  pointPct,
+  unestimated = 0,
+  percentageLabel = "of developer pts",
+  showUnavailablePercentage = false
+) {
   const cell = document.createElement("td");
   cell.className = "sv-matrix-value";
   if (points === null && count === null) {
@@ -126,7 +134,8 @@ function appendMatrixCell(row, points, count, pointPct, unestimated = 0, total =
   primary.textContent = points === null ? "—" : `${formatNumber(points)} pts`;
   const secondary = document.createElement("span");
   const parts = [count === null ? "issues unavailable" : `${formatNumber(count, 0)} ${count === 1 ? "issue" : "issues"}`];
-  if (!total && pointPct !== null) parts.push(`${formatPercent(pointPct)} of developer pts`);
+  if (pointPct !== null) parts.push(`${formatPercent(pointPct)} ${percentageLabel}`);
+  else if (showUnavailablePercentage) parts.push(`— ${percentageLabel}`);
   if (finiteNumber(unestimated) > 0) parts.push(`${formatNumber(unestimated, 0)} unestimated`);
   secondary.textContent = parts.join(" · ");
   cell.append(primary, secondary);
@@ -211,8 +220,15 @@ export function renderCore(data, jiraBaseUrl, expanded = new Set(), scopeKeys = 
     head.appendChild(headRow); table.appendChild(head);
     const tbody = document.createElement("tbody"); table.appendChild(tbody); body.appendChild(table); collapse.appendChild(body);
     let rendered = false;
-    const render = () => { if (!rendered) { rendered = true; expanded.add(groupId); appendRows(tbody, group.issues || [], jiraBaseUrl, scopeKeys); } };
-    collapse.addEventListener("show.bs.collapse", render, { once: true });
+    const render = () => {
+      expanded.add(groupId);
+      if (!rendered) {
+        rendered = true;
+        appendRows(tbody, group.issues || [], jiraBaseUrl, scopeKeys);
+      }
+    };
+    collapse.addEventListener("show.bs.collapse", render);
+    collapse.addEventListener("hide.bs.collapse", () => expanded.delete(groupId));
     if (expanded.has(groupId)) render();
     item.append(header, collapse); accordion.appendChild(item);
   });
@@ -308,7 +324,26 @@ export function renderWorkType(mix) {
   setText("workTypeTotalPoints", formatNumber(totalPoints));
 
   const pointBar = byId("workTypePointBar");
+  const pointLegend = byId("workTypePointLegend");
   pointBar.replaceChildren();
+  pointLegend.replaceChildren();
+  const distributionLabels = [];
+  overallEntries.forEach(([type, bucket], index) => {
+    const points = finiteNumber(bucket?.pts);
+    const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
+    const value = points === null ? "—" : `${formatNumber(points)} pts · ${formatPercent(pct)}`;
+    distributionLabels.push(`${type}: ${value}`);
+    const legendItem = document.createElement("span");
+    legendItem.className = "sv-point-legend-item";
+    const marker = document.createElement("span");
+    marker.className = "sv-type-marker";
+    marker.style.setProperty("--sv-type-color", typeColor(type, index));
+    const label = document.createElement("strong");
+    label.textContent = type;
+    legendItem.append(marker, label, document.createTextNode(` · ${value}`));
+    pointLegend.appendChild(legendItem);
+  });
+  pointBar.setAttribute("aria-label", `Point distribution by Jira issue type. ${distributionLabels.join("; ")}`);
   if (totalPoints !== null && totalPoints > 0) {
     overallEntries.forEach(([type, bucket], index) => {
       const points = finiteNumber(bucket?.pts);
@@ -320,7 +355,7 @@ export function renderWorkType(mix) {
       segment.style.setProperty("--sv-type-color", typeColor(type, index));
       segment.title = `${type}: ${formatNumber(points)} pts (${formatPercent(pct)})`;
       segment.setAttribute("aria-label", segment.title);
-      segment.textContent = pct >= 12 ? `${type} ${formatPercent(pct)}` : "";
+      segment.textContent = pct >= 18 ? `${type} · ${formatNumber(points)} pts · ${formatPercent(pct)}` : "";
       pointBar.appendChild(segment);
     });
   } else {
@@ -333,7 +368,9 @@ export function renderWorkType(mix) {
   }
 
   const overall = byId("workTypeOverall");
+  const overallTotal = byId("workTypeOverallTotal");
   overall.replaceChildren();
+  overallTotal.replaceChildren();
   overallEntries.forEach(([type, bucket], index) => {
     const row = document.createElement("tr");
     const nameCell = document.createElement("td");
@@ -347,6 +384,16 @@ export function renderWorkType(mix) {
     textCell(row, formatPercent(bucketPercent(bucket, "issue_pct", count, totalCount)), "text-end");
     overall.appendChild(row);
   });
+  const totalRow = document.createElement("tr");
+  const totalLabel = document.createElement("th");
+  totalLabel.scope = "row";
+  totalLabel.textContent = "Total";
+  totalRow.appendChild(totalLabel);
+  textCell(totalRow, formatNumber(totalPoints), "text-end");
+  textCell(totalRow, totalPoints !== null && totalPoints > 0 ? "100%" : "—", "text-end");
+  textCell(totalRow, formatNumber(totalCount, 0), "text-end");
+  textCell(totalRow, totalCount !== null && totalCount > 0 ? "100%" : "—", "text-end");
+  overallTotal.appendChild(totalRow);
 
   const head = byId("workTypeByDeveloperHead");
   head.replaceChildren();
@@ -380,7 +427,10 @@ export function renderWorkType(mix) {
     const assigneePoints = finiteNumber(assignee.total_pts) ?? sumBuckets(assigneeEntries, "pts");
     const assigneeCount = finiteNumber(assignee.total_count) ?? sumBuckets(assigneeEntries, "count");
     const assigneeUnestimated = finiteNumber(assignee.unestimated_count) ?? sumBuckets(assigneeEntries, "unestimated_count");
-    appendMatrixCell(row, assigneePoints, assigneeCount, null, assigneeUnestimated, true);
+    const sprintPointPct = assigneePoints !== null && totalPoints !== null && totalPoints > 0
+      ? (assigneePoints / totalPoints) * 100
+      : null;
+    appendMatrixCell(row, assigneePoints, assigneeCount, sprintPointPct, assigneeUnestimated, "of sprint points", true);
     types.forEach((type) => {
       const bucket = assignee.types?.[type];
       if (!bucket) {
@@ -392,6 +442,17 @@ export function renderWorkType(mix) {
       }
     });
     tbody.appendChild(row);
+  });
+}
+
+export function initMetricHelp(root = document) {
+  const Tooltip = window.bootstrap?.Tooltip;
+  if (!Tooltip) return;
+  root.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((control) => {
+    Tooltip.getOrCreateInstance(control, {
+      container: "body",
+      customClass: "sv-metric-tooltip",
+    });
   });
 }
 

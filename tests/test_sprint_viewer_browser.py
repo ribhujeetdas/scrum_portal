@@ -87,33 +87,97 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
     }
     core_payload = {
         "ok": True,
-        "total": 1,
-        "standard_total": 1,
-        "total_sp": 5,
+        "total": 2,
+        "standard_total": 2,
+        "total_sp": 0,
         "sprint": {"name": "Sprint 202", "goal": "Ship safely"},
         "stats": {},
-        "work_type_mix": {"overall": {}, "by_assignee": []},
-        "groups": [{
-            "principal_id": "key:KEY123",
-            "assignee_eid": "E123",
-            "assignee_name": "Test User",
-            "issue_count": 1,
-            "sp_sum": 5,
-            "issues": [{
-                "issue_id": "1",
-                "issue_key": "ABC-1",
-                "summary": "Ticket first",
-                "issue_type": "Story",
-                "status": "Done",
-                "story_points": 5,
+        "work_type_mix": {
+            "totals": {"count": 2, "pts": 0, "estimated_count": 2, "unestimated_count": 0},
+            "overall": {
+                "Story": {"count": 1, "pts": 0, "issue_pct": 50},
+                "Defect": {"count": 1, "pts": 0, "issue_pct": 50},
+            },
+            "by_assignee": [
+                {
+                    "assignee_eid": "E123",
+                    "assignee_name": "Test User",
+                    "total_count": 1,
+                    "total_pts": 0,
+                    "types": {"Story": {"count": 1, "pts": 0}},
+                },
+                {
+                    "assignee_eid": "E456",
+                    "assignee_name": "Second User",
+                    "total_count": 1,
+                    "total_pts": 0,
+                    "types": {"Defect": {"count": 1, "pts": 0}},
+                },
+            ],
+        },
+        "groups": [
+            {
+                "principal_id": "key:KEY123",
                 "assignee_eid": "E123",
                 "assignee_name": "Test User",
-                "principal_id": "key:KEY123",
-                "historical_fallback": True,
-            }],
-        }],
+                "issue_count": 1,
+                "sp_sum": 0,
+                "issues": [{
+                    "issue_id": "1",
+                    "issue_key": "ABC-1",
+                    "summary": "Ticket first",
+                    "issue_type": "Story",
+                    "status": "Done",
+                    "story_points": 0,
+                    "assignee_eid": "E123",
+                    "assignee_name": "Test User",
+                    "principal_id": "key:KEY123",
+                    "historical_fallback": True,
+                }],
+            },
+            {
+                "principal_id": "key:E456",
+                "assignee_eid": "E456",
+                "assignee_name": "Second User",
+                "issue_count": 1,
+                "sp_sum": 0,
+                "issues": [{
+                    "issue_id": "2",
+                    "issue_key": "ABC-2",
+                    "summary": "Second ticket",
+                    "issue_type": "Defect",
+                    "status": "In Progress",
+                    "story_points": 0,
+                    "assignee_eid": "E456",
+                    "assignee_name": "Second User",
+                    "principal_id": "key:E456",
+                    "historical_fallback": False,
+                }],
+            },
+        ],
         "next_cursor": None,
     }
+    completed = {
+        **core_ready,
+        "state": "ready",
+        "response_revision": 3,
+        "components": {
+            "core": {"state": "ready", "revision": 7},
+            "history": {"state": "unavailable", "revision": None},
+            "comments": {"state": "ready", "revision": 8},
+            "metrics": {"state": "ready", "revision": 9},
+        },
+        "access": {"core": "granted", "metrics": "granted", "history": "unavailable", "comments": "granted"},
+    }
+    comments_component = {
+        "ok": True,
+        "data": {
+            "issues": {"1": {"comment_total": 2, "relevant_comment_count": 1}},
+            "stats": {"relevant_comment_count": 1, "zero_relevant_comment_count": 1, "zero_relevant_comment_pct": 50},
+        },
+    }
+    metrics_component = {"ok": True, "data": {}}
+    release_enrichment = {"value": False}
 
     def fulfill(route):
         url = route.request.url
@@ -124,9 +188,13 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
         elif method == "POST" and url.endswith("/api/automation/sprint-viewer/issues"):
             body = pending
         elif "/status?" in url:
-            body = core_ready
+            body = completed if release_enrichment["value"] else core_ready
         elif f"/snapshots/{snapshot_id}/issues?" in url:
             body = core_payload
+        elif f"/snapshots/{snapshot_id}/components/comments?" in url:
+            body = comments_component
+        elif f"/snapshots/{snapshot_id}/components/metrics?" in url:
+            body = metrics_component
         else:
             body = {"ok": False, "error": {"message": "Unexpected browser fixture request"}}
         route.fulfill(status=200 if body.get("ok") else 500, headers=headers, body=json.dumps(body))
@@ -152,15 +220,40 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
         page.locator("#fetchIssuesBtn").click()
 
         page.locator("#totalIssues").wait_for(state="visible")
-        assert page.locator("#totalIssues").inner_text() == "1"
+        assert page.locator("#totalIssues").inner_text() == "2"
         assert page.locator("#fetchIssuesBtn").is_enabled()
         assert page.locator("#fetchIssuesBtn").inner_text().strip() == "Start Over"
         assert page.locator("#committedFmt").inner_text() == "…"
-        assert page.locator("#workTypeUnavailable").is_visible()
-        assert "No work-type data" in page.locator("#workTypeUnavailable").inner_text()
+        assert page.locator("#workTypeContent").is_visible()
+        assert "Story · 0 pts · —" in page.locator("#workTypePointLegend").text_content()
+        assert "Defect · 0 pts · —" in page.locator("#workTypePointLegend").text_content()
+        assert page.locator("#workTypeOverallTotal").inner_text().split() == ["Total", "0", "—", "2", "100%"]
+        assert "0 pts\n1 issue · — of sprint points" == page.locator(
+            "#workTypeByDeveloper .sv-matrix-value:nth-child(2)"
+        ).first.inner_text()
         assert page.locator("#estimationCoverageValue").inner_text() == "—"
+        assert page.locator("#sprintViewTitle").inner_text() == "Sprint View"
+        assert page.locator("#statsBox .sv-health-help").count() == 6
+        assert page.locator("#statsBox .sv-health-help").first.evaluate(
+            "el => Boolean(window.bootstrap.Tooltip.getInstance(el))"
+        )
         assert "Calculating metrics" in page.locator("#sprintViewerProgress").inner_text()
         assert page.locator("#loadingOverlay").get_attribute("aria-hidden") == "true"
+
+        accordion_buttons = page.locator("#assigneeAccordion .accordion-button")
+        accordion_buttons.nth(0).click()
+        accordion_buttons.nth(1).click()
+        page.wait_for_function(
+            "document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 2"
+        )
+        release_enrichment["value"] = True
+        page.wait_for_function("document.getElementById('relevantCommentCount').textContent === '1'")
+        assert page.locator("#assigneeAccordion .accordion-collapse.show").count() == 2
+        page.locator("#assigneeAccordion .accordion-button").nth(0).click()
+        page.wait_for_function(
+            "document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 1"
+        )
+        assert page.locator("#assigneeAccordion .accordion-collapse").nth(1).get_attribute("class").endswith("show")
         assert not page_errors
         assert not console_errors
 

@@ -31,6 +31,20 @@
   const assigneeAccordion = document.getElementById("assigneeAccordion");
   let currentReportData = null;
   let activeFetchToken = 0;
+  const expandedAssigneeState = new Set();
+
+  function initMetricHelp() {
+    const Tooltip = window.bootstrap?.Tooltip;
+    if (!Tooltip) return;
+    page.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((control) => {
+      Tooltip.getOrCreateInstance(control, {
+        container: "body",
+        customClass: "sv-metric-tooltip",
+      });
+    });
+  }
+
+  initMetricHelp();
 
   function $(id) {
     return document.getElementById(id);
@@ -133,6 +147,7 @@
 
   function resetResults() {
     currentReportData = null;
+    expandedAssigneeState.clear();
     setReportDownloadReady(false);
     resultsCard.classList.add("d-none");
     metricsBox.classList.add("d-none");
@@ -662,11 +677,7 @@
   }
 
   function expandedAssigneeKeys() {
-    return new Set(
-      Array.from(assigneeAccordion.querySelectorAll(".accordion-collapse.show"))
-        .map((collapse) => collapse.closest(".accordion-item")?.querySelector(".accordion-button")?.dataset.assigneeKey)
-        .filter(Boolean)
-    );
+    return new Set(expandedAssigneeState);
   }
 
   function renderGroupedAccordion(groups, expandedKeys = new Set()) {
@@ -699,7 +710,8 @@
       collapse.id = collapseId;
       collapse.className = `accordion-collapse collapse${expanded ? " show" : ""}`;
       collapse.setAttribute("aria-labelledby", headerId);
-      collapse.setAttribute("data-bs-parent", "#assigneeAccordion");
+      collapse.addEventListener("show.bs.collapse", () => expandedAssigneeState.add(assigneeKey));
+      collapse.addEventListener("hide.bs.collapse", () => expandedAssigneeState.delete(assigneeKey));
       const body = document.createElement("div");
       body.className = "accordion-body";
       const eid = document.createElement("div");
@@ -852,7 +864,15 @@
     }
   }
 
-  function appendMatrixCell(row, points, count, pointPct, unestimated = 0, total = false) {
+  function appendMatrixCell(
+    row,
+    points,
+    count,
+    pointPct,
+    unestimated = 0,
+    percentageLabel = "of developer pts",
+    showUnavailablePercentage = false
+  ) {
     const cell = document.createElement("td");
     cell.className = "sv-matrix-value";
     if (points === null && count === null) {
@@ -864,7 +884,8 @@
     primary.textContent = points === null ? "—" : `${formatNumber(points)} pts`;
     const secondary = document.createElement("span");
     const parts = [count === null ? "issues unavailable" : `${formatNumber(count, 0)} ${count === 1 ? "issue" : "issues"}`];
-    if (!total && pointPct !== null) parts.push(`${formatPercent(pointPct)} of developer pts`);
+    if (pointPct !== null) parts.push(`${formatPercent(pointPct)} ${percentageLabel}`);
+    else if (showUnavailablePercentage) parts.push(`— ${percentageLabel}`);
     if (finiteNumber(unestimated) > 0) parts.push(`${formatNumber(unestimated, 0)} unestimated`);
     secondary.textContent = parts.join(" · ");
     cell.append(primary, secondary);
@@ -905,7 +926,26 @@
     setText("workTypeTotalPoints", formatNumber(totalPoints));
 
     const pointBar = $("workTypePointBar");
+    const pointLegend = $("workTypePointLegend");
     pointBar.replaceChildren();
+    pointLegend.replaceChildren();
+    const distributionLabels = [];
+    overallEntries.forEach(([type, bucket], index) => {
+      const points = finiteNumber(bucket?.pts);
+      const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
+      const value = points === null ? "—" : `${formatNumber(points)} pts · ${formatPercent(pct)}`;
+      distributionLabels.push(`${type}: ${value}`);
+      const legendItem = document.createElement("span");
+      legendItem.className = "sv-point-legend-item";
+      const marker = document.createElement("span");
+      marker.className = "sv-type-marker";
+      marker.style.setProperty("--sv-type-color", typeColor(type, index));
+      const label = document.createElement("strong");
+      label.textContent = type;
+      legendItem.append(marker, label, document.createTextNode(` · ${value}`));
+      pointLegend.appendChild(legendItem);
+    });
+    pointBar.setAttribute("aria-label", `Point distribution by Jira issue type. ${distributionLabels.join("; ")}`);
     if (totalPoints !== null && totalPoints > 0) {
       overallEntries.forEach(([type, bucket], index) => {
         const points = finiteNumber(bucket?.pts);
@@ -917,7 +957,7 @@
         segment.style.setProperty("--sv-type-color", typeColor(type, index));
         segment.title = `${type}: ${formatNumber(points)} pts (${formatPercent(pct)})`;
         segment.setAttribute("aria-label", segment.title);
-        segment.textContent = pct >= 12 ? `${type} ${formatPercent(pct)}` : "";
+        segment.textContent = pct >= 18 ? `${type} · ${formatNumber(points)} pts · ${formatPercent(pct)}` : "";
         pointBar.appendChild(segment);
       });
     } else {
@@ -930,7 +970,9 @@
     }
 
     const overall = $("workTypeOverall");
+    const overallTotal = $("workTypeOverallTotal");
     overall.replaceChildren();
+    overallTotal.replaceChildren();
     overallEntries.forEach(([type, bucket], index) => {
       const row = document.createElement("tr");
       const nameCell = document.createElement("td");
@@ -944,6 +986,16 @@
       addCell(row, formatPercent(bucketPercent(bucket, "issue_pct", count, totalCount)), "text-end");
       overall.appendChild(row);
     });
+    const totalRow = document.createElement("tr");
+    const totalLabel = document.createElement("th");
+    totalLabel.scope = "row";
+    totalLabel.textContent = "Total";
+    totalRow.appendChild(totalLabel);
+    addCell(totalRow, formatNumber(totalPoints), "text-end");
+    addCell(totalRow, totalPoints !== null && totalPoints > 0 ? "100%" : "—", "text-end");
+    addCell(totalRow, formatNumber(totalCount, 0), "text-end");
+    addCell(totalRow, totalCount !== null && totalCount > 0 ? "100%" : "—", "text-end");
+    overallTotal.appendChild(totalRow);
 
     const head = $("workTypeByDeveloperHead");
     head.replaceChildren();
@@ -978,7 +1030,10 @@
       const assigneeCount = finiteNumber(assignee.total_count) ?? sumBuckets(assigneeEntries, "count");
       const assigneeUnestimated = finiteNumber(assignee.unestimated_count)
         ?? sumBuckets(assigneeEntries, "unestimated_count");
-      appendMatrixCell(tr, assigneePoints, assigneeCount, null, assigneeUnestimated, true);
+      const sprintPointPct = assigneePoints !== null && totalPoints !== null && totalPoints > 0
+        ? (assigneePoints / totalPoints) * 100
+        : null;
+      appendMatrixCell(tr, assigneePoints, assigneeCount, sprintPointPct, assigneeUnestimated, "of sprint points", true);
       types.forEach((type) => {
         const bucket = assignee.types?.[type];
         if (!bucket) {

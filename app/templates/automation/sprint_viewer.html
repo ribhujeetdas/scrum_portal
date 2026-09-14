@@ -113,36 +113,54 @@
       </div>
       <div class="sv-health-grid">
         <article class="sv-health-item">
-          <span class="sv-health-label">Estimation coverage</span>
+          <span class="sv-health-label">
+            Estimation coverage
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Estimated standard issues divided by all standard issues, multiplied by 100." aria-label="How estimation coverage is calculated">?</button>
+          </span>
           <strong id="estimationCoverageValue" class="sv-health-value">—</strong>
           <span class="sv-health-meta"><span id="estimatedIssueCount">—</span> of <span id="estimationTotalCount">—</span> estimated · <span id="unestimatedCount">—</span> unestimated</span>
           <span id="unestimatedPct" class="visually-hidden">—</span>
         </article>
         <article class="sv-health-item">
-          <span class="sv-health-label">Ownership coverage</span>
+          <span class="sv-health-label">
+            Ownership coverage
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Assigned standard issues divided by all standard issues, multiplied by 100." aria-label="How ownership coverage is calculated">?</button>
+          </span>
           <strong id="ownershipCoverageValue" class="sv-health-value">—</strong>
           <span class="sv-health-meta"><span id="assignedIssueCount">—</span> of <span id="ownershipTotalCount">—</span> assigned · <span id="unassignedCount">—</span> unassigned</span>
           <span id="unassignedPct" class="visually-hidden">—</span>
         </article>
         <article class="sv-health-item">
-          <span class="sv-health-label">Defect load</span>
+          <span class="sv-health-label">
+            Defect load
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Bug and Defect issue count and mapped points. Percentages use all standard issues and all standard-issue points as their denominators." aria-label="How defect load is calculated">?</button>
+          </span>
           <strong class="sv-health-value"><span id="bugSp">—</span> pts</strong>
           <span class="sv-health-meta"><span id="bugCount">—</span> issues (<span id="bugPct">—</span>%) · <span id="bugPointPct">—</span>% of points</span>
         </article>
         <article class="sv-health-item">
-          <span class="sv-health-label">Comment coverage</span>
+          <span class="sv-health-label">
+            Comment coverage
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Evaluated standard issues with at least one relevant comment divided by all evaluated standard issues, multiplied by 100." aria-label="How comment coverage is calculated">?</button>
+          </span>
           <strong id="commentCoverageValue" class="sv-health-value">Calculating…</strong>
           <span id="commentCoverageMeta" class="sv-health-meta">Relevant comments are loading in the background</span>
           <span id="zeroRelevantCommentCount" class="visually-hidden">—</span>
           <span id="zeroRelevantCommentPct" class="visually-hidden">—</span>
         </article>
         <article class="sv-health-item">
-          <span class="sv-health-label">Relevant comments</span>
+          <span class="sv-health-label">
+            Relevant comments
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Comments written by the assignee effective at the comment time, from sprint start through the sprint's actual close." aria-label="How relevant comments are identified">?</button>
+          </span>
           <strong id="relevantCommentCount" class="sv-health-value">Calculating…</strong>
           <span id="relevantCommentsMeta" class="sv-health-meta">By the assigned developer during the sprint window</span>
         </article>
         <article class="sv-health-item">
-          <span class="sv-health-label">Carryover</span>
+          <span class="sv-health-label">
+            Carryover
+            <button type="button" class="metric-help sv-health-help" data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" title="Standard issues whose Jira sprint history references more than one sprint, together with their mapped points." aria-label="How carryover is calculated">?</button>
+          </span>
           <strong class="sv-health-value"><span id="carryoverPts">—</span> pts</strong>
           <span class="sv-health-meta"><span id="carryoverCount">—</span> issues carried into the sprint</span>
         </article>
@@ -200,6 +218,7 @@
         <div class="sv-distribution-block">
           <div class="sv-subsection-label">Point distribution</div>
           <div id="workTypePointBar" class="sv-point-bar" role="img" aria-label="Point distribution by Jira issue type"></div>
+          <div id="workTypePointLegend" class="sv-point-legend" aria-label="Point distribution values"></div>
         </div>
 
         <div class="table-responsive">
@@ -214,6 +233,7 @@
               </tr>
             </thead>
             <tbody id="workTypeOverall"></tbody>
+            <tfoot id="workTypeOverallTotal"></tfoot>
           </table>
         </div>
 
@@ -229,7 +249,15 @@
       </div>
     </section>
 
-    <div class="accordion" id="assigneeAccordion"></div>
+    <section id="sprintViewBox" class="sv-panel" aria-labelledby="sprintViewTitle">
+      <div class="sv-section-heading">
+        <div>
+          <h2 id="sprintViewTitle" class="h6 mb-1">Sprint View</h2>
+          <p class="sv-section-description mb-0">Developer-level issue details</p>
+        </div>
+      </div>
+      <div class="accordion accordion-flush" id="assigneeAccordion"></div>
+    </section>
   </div>
 </div>
 

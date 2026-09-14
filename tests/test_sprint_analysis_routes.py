@@ -302,16 +302,16 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
     app.config.update(SPRINT_VIEWER_MODE='direct', SPRINT_VIEWER_V2_ENABLED=False)
     core = {
         'ok': True,
-        'total': 3,
-        'standard_total': 2,
-        'total_sp': 8,
+        'total': 5,
+        'standard_total': 4,
+        'total_sp': 72,
         'sprint': {'name': 'Closed sprint', 'start_date': '2026-01-05T00:00:00Z', 'complete_date': '2026-01-15T00:00:00Z'},
         'stats': {
             'unestimated_count': 0,
             'unestimated_pct': 0,
             'bug_count': 1,
-            'bug_sp': 3,
-            'bug_pct': 50,
+            'bug_sp': 2,
+            'bug_pct': 25,
             'unassigned_count': 0,
             'unassigned_pct': 0,
             'relevant_comment_count': None,
@@ -321,43 +321,76 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
             'carryover_sp': 0,
         },
         'work_type_mix': {
-            'totals': {'count': 3, 'pts': 10, 'estimated_count': 3, 'unestimated_count': 0},
+            'totals': {'count': 5, 'pts': 75, 'estimated_count': 5, 'unestimated_count': 0},
             'overall': {
-                'Story': {'count': 1, 'pts': 5, 'issue_pct': 33.3, 'points_pct': 50},
-                'Defect': {'count': 1, 'pts': 3, 'issue_pct': 33.3, 'points_pct': 30},
-                'Sub-task': {'count': 1, 'pts': 2, 'issue_pct': 33.3, 'points_pct': 20},
+                'Story': {'count': 1, 'pts': 45, 'issue_pct': 20, 'points_pct': 60},
+                'Task': {'count': 2, 'pts': 25, 'issue_pct': 40, 'points_pct': 33.3},
+                'Defect': {'count': 1, 'pts': 2, 'issue_pct': 20, 'points_pct': 2.7},
+                'Sub-task': {'count': 1, 'pts': 3, 'issue_pct': 20, 'points_pct': 4},
             },
-            'by_assignee': [{
+            'by_assignee': [
+                {
+                    'assignee_eid': 'B',
+                    'assignee_name': 'Developer B',
+                    'total_count': 3,
+                    'total_pts': 50,
+                    'estimated_count': 3,
+                    'unestimated_count': 0,
+                    'types': {
+                        'Story': {'count': 1, 'pts': 45, 'points_pct': 90},
+                        'Defect': {'count': 1, 'pts': 2, 'points_pct': 4},
+                        'Sub-task': {'count': 1, 'pts': 3, 'points_pct': 6},
+                    },
+                },
+                {
+                    'assignee_eid': 'C',
+                    'assignee_name': 'Developer C',
+                    'total_count': 2,
+                    'total_pts': 25,
+                    'estimated_count': 2,
+                    'unestimated_count': 0,
+                    'types': {
+                        'Task': {'count': 2, 'pts': 25, 'points_pct': 100},
+                    },
+                },
+            ],
+        },
+        'groups': [
+            {
+                'principal_id': 'key:B',
                 'assignee_eid': 'B',
                 'assignee_name': 'Developer B',
-                'total_count': 3,
-                'total_pts': 10,
-                'estimated_count': 3,
-                'unestimated_count': 0,
-                'types': {
-                    'Story': {'count': 1, 'pts': 5, 'points_pct': 50},
-                    'Defect': {'count': 1, 'pts': 3, 'points_pct': 30},
-                    'Sub-task': {'count': 1, 'pts': 2, 'points_pct': 20},
-                },
-            }],
-        },
-        'groups': [{
-            'principal_id': 'key:B',
-            'assignee_eid': 'B',
-            'assignee_name': 'Developer B',
-            'issue_count': 1,
-            'sp_sum': 5,
-            'relevant_comment_count': None,
-            'issues': [{
-                'issue_id': '2',
-                'issue_key': 'TEST-2',
-                'summary': 'Core renders first',
-                'issue_type': 'Story',
-                'status': 'Done',
-                'story_points': 5,
+                'issue_count': 1,
+                'sp_sum': 45,
                 'relevant_comment_count': None,
-            }],
-        }],
+                'issues': [{
+                    'issue_id': '2',
+                    'issue_key': 'TEST-2',
+                    'summary': 'Core renders first',
+                    'issue_type': 'Story',
+                    'status': 'Done',
+                    'story_points': 45,
+                    'relevant_comment_count': None,
+                }],
+            },
+            {
+                'principal_id': 'key:C',
+                'assignee_eid': 'C',
+                'assignee_name': 'Developer C',
+                'issue_count': 1,
+                'sp_sum': 25,
+                'relevant_comment_count': None,
+                'issues': [{
+                    'issue_id': '3',
+                    'issue_key': 'TEST-3',
+                    'summary': 'Second developer stays open',
+                    'issue_type': 'Task',
+                    'status': 'In Progress',
+                    'story_points': 25,
+                    'relevant_comment_count': None,
+                }],
+            },
+        ],
     }
     comments = {
         'ok': True,
@@ -419,28 +452,74 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
         page.wait_for_function('window.__commentsRequested === true && window.__metricsRequested === true')
         assert page.locator('#workTypeMixBox').is_visible()
         assert page.locator('#workBreakdownTitle').inner_text() == 'Sprint Work Breakdown'
-        assert page.locator('#workTypeTotalCount').inner_text() == '3'
-        assert page.locator('#workTypeTotalPoints').inner_text() == '10'
-        assert page.locator('#workTypePointBar .sv-point-segment').count() == 3
+        assert page.locator('#workTypeTotalCount').inner_text() == '5'
+        assert page.locator('#workTypeTotalPoints').inner_text() == '75'
+        assert page.locator('#workTypePointBar .sv-point-segment').count() == 4
+        assert page.locator('#workTypePointBar .sv-point-segment').first.inner_text() == 'Story · 45 pts · 60%'
+        legend_text = page.locator('#workTypePointLegend').text_content()
+        assert 'Story · 45 pts · 60%' in legend_text
+        assert 'Task · 25 pts · 33.3%' in legend_text
+        assert 'Defect · 2 pts · 2.7%' in legend_text
+        assert 'Sub-task · 3 pts · 4%' in legend_text
         assert 'Sub-task' in page.locator('#workTypeOverall').inner_text()
         assert '% of points' in page.locator('.sv-breakdown-table thead').inner_text()
+        assert page.locator('#workTypeOverallTotal').inner_text().split() == ['Total', '75', '100%', '5', '100%']
         assert 'Developer B' in page.locator('#workTypeByDeveloper').inner_text()
-        assert '50% of developer pts' in page.locator('#workTypeByDeveloper').inner_text()
+        developer_totals = page.locator('#workTypeByDeveloper .sv-matrix-value:nth-child(2)')
+        assert '50 pts\n3 issues · 66.7% of sprint points' == developer_totals.nth(0).inner_text()
+        assert '25 pts\n2 issues · 33.3% of sprint points' == developer_totals.nth(1).inner_text()
+        spacing = page.locator('.sv-developer-breakdown').evaluate(
+            '(el) => ({marginTop: parseFloat(getComputedStyle(el).marginTop), borderTopWidth: getComputedStyle(el).borderTopWidth})'
+        )
+        assert spacing['marginTop'] >= 19
+        assert spacing['borderTopWidth'] == '0px'
+        assert page.locator('#sprintViewTitle').inner_text() == 'Sprint View'
+        assert page.locator('#sprintViewBox .sv-section-description').inner_text() == 'Developer-level issue details'
         assert page.locator('#estimationCoverageValue').inner_text() == '100%'
-        assert page.locator('#bugSp').inner_text() == '3'
+        assert page.locator('#bugSp').inner_text() == '2'
+        health_help = page.locator('#statsBox .sv-health-help')
+        assert health_help.count() == 6
+        health_help.nth(0).hover()
+        page.locator('.tooltip.show .tooltip-inner').wait_for()
+        assert 'Estimated standard issues divided by all standard issues' in page.locator('.tooltip.show .tooltip-inner').inner_text()
+        page.mouse.move(0, 0)
+        page.locator('.tooltip.show').wait_for(state='hidden')
+        health_formulas = [
+            'Estimated standard issues divided by all standard issues',
+            'Assigned standard issues divided by all standard issues',
+            'Bug and Defect issue count and mapped points',
+            'Evaluated standard issues with at least one relevant comment',
+            'assignee effective at the comment time',
+            'Jira sprint history references more than one sprint',
+        ]
+        for index, formula in enumerate(health_formulas):
+            health_help.nth(index).focus()
+            page.wait_for_function(
+                '(formula) => document.querySelector(".tooltip.show .tooltip-inner")?.textContent.includes(formula)',
+                arg=formula,
+            )
+            health_help.nth(index).blur()
+            page.locator('.tooltip.show').wait_for(state='hidden')
         assert page.locator('#loadingOverlay').evaluate('(el) => getComputedStyle(el).display') == 'none'
         assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == 'Unavailable'
 
-        page.locator('#assigneeAccordion .accordion-button').click()
-        page.locator('#assigneeAccordion .accordion-collapse.show').wait_for()
+        accordion_buttons = page.locator('#assigneeAccordion .accordion-button')
+        accordion_buttons.nth(0).click()
+        accordion_buttons.nth(1).click()
+        page.wait_for_function("document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 2")
         page.evaluate('window.__releaseComments()')
         page.wait_for_function("document.getElementById('relevantCommentCount').textContent === '2'")
         assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == '2'
-        assert page.locator('#assigneeAccordion .accordion-collapse').get_attribute('class').endswith('show')
+        assert page.locator('#assigneeAccordion .accordion-collapse.show').count() == 2
+        page.locator('#assigneeAccordion .accordion-button').nth(0).click()
+        page.wait_for_function("document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 1")
+        assert page.locator('#assigneeAccordion .accordion-collapse').nth(1).get_attribute('class').endswith('show')
 
         page.evaluate('window.__releaseMetrics()')
         page.locator('#metricsUnavailableMessage').wait_for(state='visible')
         assert page.locator('#committedFmt').inner_text() == '—'
+        developer_table_wrap = page.locator('.sv-developer-breakdown .table-responsive')
+        assert developer_table_wrap.evaluate('(el) => getComputedStyle(el).overflowX') == 'auto'
         assert not page_errors
         assert not console_errors
     finally:

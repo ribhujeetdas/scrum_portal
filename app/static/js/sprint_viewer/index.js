@@ -1,6 +1,7 @@
 import { getJson, pollDelay, postJson } from "./api.js";
 import { beginAction, createSprintState, disposeAction, isCurrent } from "./state.js";
 import {
+  initMetricHelp,
   renderCore,
   renderMetrics,
   renderStats,
@@ -35,6 +36,7 @@ function groupIssues(issues) {
 export function initSprintViewer(page, apiFetch) {
   if (page.dataset.sprintViewerInitialized === "true") return disposeCurrent || (() => {});
   page.dataset.sprintViewerInitialized = "true";
+  initMetricHelp(page);
   const state = createSprintState();
   const boards = JSON.parse(page.getAttribute("data-boards") || "{}");
   const jiraBaseUrl = page.getAttribute("data-jira-base-url") || "";
@@ -188,7 +190,7 @@ export function initSprintViewer(page, apiFetch) {
       sprintId: Number(sprint.value), sprintName: sprint.selectedOptions[0]?.textContent || "",
     };
     const generation = beginAction(state, selection);
-    resetResults(); fetchButton.textContent = "Start Over"; fetchButton.disabled = false;
+    expanded.clear(); resetResults(); fetchButton.textContent = "Start Over"; fetchButton.disabled = false;
     showProgress("Checking Jira access and loading tickets…");
     try {
       const { payload } = await postJson(apiFetch, "/api/automation/sprint-viewer/issues", {
@@ -243,13 +245,13 @@ export function initSprintViewer(page, apiFetch) {
     finally { download.textContent = "Download Report"; download.disabled = false; }
   }
 
-  project.addEventListener("change", () => { beginAction(state, null); resetResults(); populateBoards(); fetchButton.textContent = "Fetch Issues"; });
-  board.addEventListener("change", () => { beginAction(state, null); resetResults(); sprint.replaceChildren(option("", "-- Select Sprint --")); updateControls(); if (board.value) loadSprints(false); });
-  sprint.addEventListener("change", () => { resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); });
+  project.addEventListener("change", () => { beginAction(state, null); expanded.clear(); resetResults(); populateBoards(); fetchButton.textContent = "Fetch Issues"; });
+  board.addEventListener("change", () => { beginAction(state, null); expanded.clear(); resetResults(); sprint.replaceChildren(option("", "-- Select Sprint --")); updateControls(); if (board.value) loadSprints(false); });
+  sprint.addEventListener("change", () => { expanded.clear(); resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); });
   refresh.addEventListener("click", () => loadSprints(true));
   fetchButton.addEventListener("click", () => {
     if (fetchButton.textContent.trim() === "Start Over") {
-      if (window.confirm("Start over and clear the displayed sprint report?")) { disposeAction(state); resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); }
+      if (window.confirm("Start over and clear the displayed sprint report?")) { disposeAction(state); expanded.clear(); resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); }
     } else startReport();
   });
   retryMetrics?.addEventListener("click", retryMetricFailure);
