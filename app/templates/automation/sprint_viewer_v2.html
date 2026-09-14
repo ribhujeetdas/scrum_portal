@@ -2,32 +2,132 @@
 {% block title %}Past sprint analysis{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='css/sprint_viewer_v2.css') }}">{% endblock %}
 {% block content %}
-<main id="sprintViewerV2" data-feature-script-src="{{ url_for('static', filename='js/sprint_viewer_v2.js') }}" data-boards="{{ boards_by_project|tojson|forceescape }}">
-  <section class="sv2-control-card">
-    <header class="sv2-header"><div><p class="sv2-eyebrow">SPRINT VIEWER</p><h1>Past sprint analysis</h1><p>Closed sprints · Recorded facts and team review</p></div><button id="svRefresh" type="button">Refresh sprint list</button></header>
-    <div class="sv2-selectors" aria-label="Closed sprint selection">
-      <label>Project<select id="svProject"><option value="">Select project</option>{% for pk in projects %}<option value="{{ pk }}">{{ pk }}</option>{% endfor %}</select></label>
-      <label>Board<select id="svBoard"><option value="">Select board</option></select></label>
-      <label class="sv2-grow">Closed sprint<select id="svSprint"><option value="">Select closed sprint</option></select></label>
-      <button id="svAnalyze" type="button" disabled>Analyze</button><button id="svRebuild" type="button" disabled>Rebuild analysis</button><button id="svExport" type="button" disabled>Export CSV</button>
+<div id="sprintViewerV2" data-feature-script-src="{{ url_for('static', filename='js/sprint_viewer_v2.js') }}" data-boards="{{ boards_by_project|tojson|forceescape }}">
+  <header class="portal-page-header">
+    <h1 class="h3 portal-page-title">Past sprint analysis</h1>
+    <p class="portal-page-subtitle">Closed sprints · Recorded facts and team review</p>
+  </header>
+
+  <section class="card shadow-sm mb-4 sv2-control-card">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <h2 class="h5 mb-0">Sprint selection</h2>
+        <button id="svRefresh" class="btn btn-outline-secondary btn-sm" type="button">Refresh sprint list</button>
+      </div>
+
+      <div class="row g-3" aria-label="Closed sprint selection">
+        <div class="col-md-3">
+          <label class="form-label" for="svProject">Project</label>
+          <select id="svProject" class="form-select">
+            <option value="">Select project</option>
+            {% for pk in projects %}<option value="{{ pk }}">{{ pk }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="svBoard">Board</label>
+          <select id="svBoard" class="form-select"><option value="">Select board</option></select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="svSprint">Closed sprint</label>
+          <select id="svSprint" class="form-select"><option value="">Select closed sprint</option></select>
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <button id="svAnalyze" class="btn btn-primary" type="button" disabled>Analyze</button>
+        <button id="svRebuild" class="btn btn-outline-secondary" type="button" disabled>Rebuild analysis</button>
+        <button id="svExport" class="btn btn-outline-secondary" type="button" disabled>Export CSV</button>
+      </div>
+
+      <p class="form-text mt-3 mb-0">Catalogue includes sprints starting in the current and prior calendar years.</p>
+      <p id="svMessage" class="sv2-message sv2-message-info" role="status" aria-live="polite">Select a board to review its closed sprints.</p>
     </div>
-    <p class="sv2-muted">Catalogue includes sprints starting in the current and prior calendar years.</p>
-    <p id="svMessage" class="sv2-message sv2-message-info" role="status" aria-live="polite">Select a board to review its closed sprints.</p>
   </section>
-  <section id="svReport" hidden>
-    <div class="sv2-goal"><div><h2 id="svSprintName"></h2><p id="svDates"></p><p id="svGoal"></p><span id="svAssessment">Not assessed</span></div><button id="svAssess">Assess goal</button></div>
-    <div class="sv2-role"><label>View as<select id="svRole"><option value="team">Team</option><option value="developer">Developer</option><option value="po">PO / BA</option><option value="scrum">Scrum Master</option><option value="manager">Engineering Manager</option></select></label><label id="svDeveloperLabel" hidden>Historical developer<select id="svDeveloper"></select></label><label>Measure<select id="svLens"><option value="count">Issue counts</option><option value="points">Story points</option></select></label></div>
-    <p id="svRoleDescription"></p>
-    <div id="svSummary" class="sv2-summary" aria-label="Shared sprint totals"></div>
-    <div id="svTabs" role="tablist" aria-label="Analysis sections">{% for key, title in [('overview','Overview'),('suggestions','Suggestions'),('flow','Flow & Quality'),('trends','Trends'),('retro','Retrospective')] %}<button id="svTab-{{ key }}" role="tab" aria-controls="svPanel-{{ key }}" aria-selected="{{ 'true' if key == 'overview' else 'false' }}" tabindex="{{ '0' if key == 'overview' else '-1' }}" data-tab="{{ key }}">{{ title }}</button>{% endfor %}</div>
-    <section id="svPanel-overview" role="tabpanel" aria-labelledby="svTab-overview"><h2 id="svRoleHeading"></h2><div id="svRoleMetrics" class="sv2-leading"></div><div id="svRoleEvidence"></div><h3>Original plan outcome</h3><div id="svOutcome"></div></section>
-    <section id="svPanel-suggestions" role="tabpanel" aria-labelledby="svTab-suggestions" hidden><h2>Suggestions</h2><p>Recorded facts and optional next steps</p><label>Disposition<select id="svDisposition"><option>Open</option><option>Action created</option><option>Dismissed</option></select></label><label>Category<select id="svCategory"><option value="">All categories</option>{% for category in ['flow','scope','planning','quality','actions'] %}<option>{{ category }}</option>{% endfor %}</select></label><div id="svSuggestions"></div></section>
-    <section id="svPanel-flow" role="tabpanel" aria-labelledby="svTab-flow" hidden><h2>Flow & Quality</h2><p>Elapsed calendar time, not working effort. Blocking can overlap other stages.</p><div id="svFlow" class="sv2-leading"></div><p id="svStages"></p><div id="svDaily"></div></section>
-    <section id="svPanel-trends" role="tabpanel" aria-labelledby="svTab-trends" hidden><h2>Comparable sprint history</h2><div id="svTrends"></div></section>
-    <section id="svPanel-retro" role="tabpanel" aria-labelledby="svTab-retro" hidden><h2>Retrospective</h2><p>Private to you. Human records are entered after the sprint; they do not change frozen Jira evidence.</p><button id="svNewAction">Create action</button><button id="svContext">Record team context</button><div id="svActions"></div></section>
-    <section class="sv2-issues"><h2>Sprint issues</h2><p>Historical values use the sprint boundary. Values labelled “at collection” show the saved Jira value when historical evidence is unavailable.</p><div class="sv2-filters"><label>Issue focus<select id="svFocus"><option value="all">All work</option><option value="original">Original plan</option><option value="added">Added</option><option value="removed">Removed</option><option value="unfinished">Unfinished at close</option><option value="stories">Stories</option><option value="developer">Selected developer</option><option value="reopened">Reopened</option><option value="unestimated">Unestimated</option></select></label><label>Search key or summary<input id="svSearch" type="search" maxlength="200"></label><label>Group by<select id="svGroup"><option value="">None</option><option value="assignee">Developer at close / removal</option><option value="feature">Feature</option><option value="application">Application</option><option value="status">Closing status</option></select></label><label>Feature<input id="svFeature" maxlength="200" placeholder="Exact feature key"></label><label>Application<input id="svApplication" maxlength="200" placeholder="Exact application ID"></label><label>Issue type<input id="svIssueType" maxlength="100" placeholder="Exact type"></label><label>Boundary status<input id="svStatus" maxlength="100" placeholder="Exact status ID"></label><label>Sort<select id="svSort"><option value="issue_key">Issue key</option><option value="summary">Summary</option><option value="issue_type">Type</option><option value="status">Status</option></select></label><button id="svClear">Clear filters</button></div><p id="svFilterStatus" aria-live="polite"></p><div class="sv2-table-region" role="region" aria-label="Historical issue table" tabindex="0"><table><thead><tr><th>Key / summary</th><th>Type</th><th>Assignee at boundary</th><th>Scope / outcome</th><th>Status at boundary</th><th>Start / entry points</th><th>Feature</th><th>Sprint-window comments</th></tr></thead><tbody id="svIssues"></tbody></table></div><div class="sv2-pagination"><button id="svPagePrev">Previous page</button><span id="svPageInfo"></span><button id="svPageNext">Next page</button></div></section>
+
+  <section id="svReport" class="card shadow-sm mb-4" hidden>
+    <div class="card-body">
+      <div class="sv2-goal">
+        <div>
+          <h2 id="svSprintName" class="h5 mb-2"></h2>
+          <p id="svDates" class="mb-1"></p>
+          <p id="svGoal" class="mb-2"></p>
+          <span id="svAssessment">Not assessed</span>
+        </div>
+        <button id="svAssess" class="btn btn-outline-secondary" type="button">Assess goal</button>
+      </div>
+
+      <div class="sv2-role">
+        <label>View as<select id="svRole" class="form-select"><option value="team">Team</option><option value="developer">Developer</option><option value="po">PO / BA</option><option value="scrum">Scrum Master</option><option value="manager">Engineering Manager</option></select></label>
+        <label id="svDeveloperLabel" hidden>Historical developer<select id="svDeveloper" class="form-select"></select></label>
+        <label>Measure<select id="svLens" class="form-select"><option value="count">Issue counts</option><option value="points">Story points</option></select></label>
+      </div>
+      <p id="svRoleDescription"></p>
+      <div id="svSummary" class="sv2-summary" aria-label="Shared sprint totals"></div>
+
+      <div id="svTabs" class="nav nav-tabs" role="tablist" aria-label="Analysis sections">
+        {% for key, title in [('overview','Overview'),('suggestions','Suggestions'),('flow','Flow & Quality'),('trends','Trends'),('retro','Retrospective')] %}
+          <button id="svTab-{{ key }}" class="nav-link" role="tab" aria-controls="svPanel-{{ key }}" aria-selected="{{ 'true' if key == 'overview' else 'false' }}" tabindex="{{ '0' if key == 'overview' else '-1' }}" data-tab="{{ key }}" type="button">{{ title }}</button>
+        {% endfor %}
+      </div>
+
+      <section id="svPanel-overview" role="tabpanel" aria-labelledby="svTab-overview">
+        <h2 id="svRoleHeading"></h2>
+        <div id="svRoleMetrics" class="sv2-leading"></div>
+        <div id="svRoleEvidence"></div>
+        <h3>Original plan outcome</h3>
+        <div id="svOutcome"></div>
+      </section>
+      <section id="svPanel-suggestions" role="tabpanel" aria-labelledby="svTab-suggestions" hidden>
+        <h2>Suggestions</h2>
+        <p>Recorded facts and optional next steps</p>
+        <label>Disposition<select id="svDisposition" class="form-select"><option>Open</option><option>Action created</option><option>Dismissed</option></select></label>
+        <label>Category<select id="svCategory" class="form-select"><option value="">All categories</option>{% for category in ['flow','scope','planning','quality','actions'] %}<option>{{ category }}</option>{% endfor %}</select></label>
+        <div id="svSuggestions"></div>
+      </section>
+      <section id="svPanel-flow" role="tabpanel" aria-labelledby="svTab-flow" hidden>
+        <h2>Flow &amp; Quality</h2>
+        <p>Elapsed calendar time, not working effort. Blocking can overlap other stages.</p>
+        <div id="svFlow" class="sv2-leading"></div>
+        <p id="svStages"></p>
+        <div id="svDaily"></div>
+      </section>
+      <section id="svPanel-trends" role="tabpanel" aria-labelledby="svTab-trends" hidden><h2>Comparable sprint history</h2><div id="svTrends"></div></section>
+      <section id="svPanel-retro" role="tabpanel" aria-labelledby="svTab-retro" hidden>
+        <h2>Retrospective</h2>
+        <p>Private to you. Human records are entered after the sprint; they do not change frozen Jira evidence.</p>
+        <button id="svNewAction" class="btn btn-primary" type="button">Create action</button>
+        <button id="svContext" class="btn btn-outline-secondary" type="button">Record team context</button>
+        <div id="svActions"></div>
+      </section>
+
+      <section class="sv2-issues">
+        <h2>Sprint issues</h2>
+        <p>Historical values use the sprint boundary. Values labelled “at collection” show the saved Jira value when historical evidence is unavailable.</p>
+        <div class="sv2-filters">
+          <label>Issue focus<select id="svFocus" class="form-select"><option value="all">All work</option><option value="original">Original plan</option><option value="added">Added</option><option value="removed">Removed</option><option value="unfinished">Unfinished at close</option><option value="stories">Stories</option><option value="developer">Selected developer</option><option value="reopened">Reopened</option><option value="unestimated">Unestimated</option></select></label>
+          <label>Search key or summary<input id="svSearch" class="form-control" type="search" maxlength="200"></label>
+          <label>Group by<select id="svGroup" class="form-select"><option value="">None</option><option value="assignee">Developer at close / removal</option><option value="feature">Feature</option><option value="application">Application</option><option value="status">Closing status</option></select></label>
+          <label>Feature<input id="svFeature" class="form-control" maxlength="200" placeholder="Exact feature key"></label>
+          <label>Application<input id="svApplication" class="form-control" maxlength="200" placeholder="Exact application ID"></label>
+          <label>Issue type<input id="svIssueType" class="form-control" maxlength="100" placeholder="Exact type"></label>
+          <label>Boundary status<input id="svStatus" class="form-control" maxlength="100" placeholder="Exact status ID"></label>
+          <label>Sort<select id="svSort" class="form-select"><option value="issue_key">Issue key</option><option value="summary">Summary</option><option value="issue_type">Type</option><option value="status">Status</option></select></label>
+          <button id="svClear" class="btn btn-outline-secondary" type="button">Clear filters</button>
+        </div>
+        <p id="svFilterStatus" aria-live="polite"></p>
+        <div class="sv2-table-region" role="region" aria-label="Historical issue table" tabindex="0">
+          <table><thead><tr><th>Key / summary</th><th>Type</th><th>Assignee at boundary</th><th>Scope / outcome</th><th>Status at boundary</th><th>Start / entry points</th><th>Feature</th><th>Sprint-window comments</th></tr></thead><tbody id="svIssues"></tbody></table>
+        </div>
+        <div class="sv2-pagination">
+          <button id="svPagePrev" class="btn btn-outline-secondary" type="button">Previous page</button>
+          <span id="svPageInfo"></span>
+          <button id="svPageNext" class="btn btn-outline-secondary" type="button">Next page</button>
+        </div>
+      </section>
+    </div>
   </section>
-  <dialog id="svDrawer"><form method="dialog"><button class="sv2-close" aria-label="Close issue details">Close</button></form><div id="svDrawerContent"></div></dialog>
-  <dialog id="svEdit"><h2 id="svEditTitle"></h2><form id="svEditForm"><div id="svEditFields"></div><p id="svEditError" role="alert"></p><button type="submit">Save</button><button type="button" id="svEditCancel">Cancel</button></form></dialog>
-</main>
+
+  <dialog id="svDrawer"><form method="dialog"><button class="btn btn-outline-secondary btn-sm sv2-close" aria-label="Close issue details">Close</button></form><div id="svDrawerContent"></div></dialog>
+  <dialog id="svEdit"><h2 id="svEditTitle"></h2><form id="svEditForm"><div id="svEditFields"></div><p id="svEditError" role="alert"></p><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-outline-secondary" type="button" id="svEditCancel">Cancel</button></form></dialog>
+</div>
 {% endblock %}

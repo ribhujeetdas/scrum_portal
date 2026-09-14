@@ -21,6 +21,19 @@ body {
   line-height: var(--portal-line-height);
 }
 
+.portal-page-header {
+  margin-bottom: 1rem;
+}
+
+.portal-page-title {
+  margin: 0;
+}
+
+.portal-page-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--bs-secondary-color);
+}
+
 .sidebar {
   width: 280px;
   min-height: 100vh;
