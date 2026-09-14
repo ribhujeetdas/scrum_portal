@@ -175,10 +175,32 @@
   }
 
   function fmtCountSp(count, sp) {
-    const safeCount = count ?? 0;
-    const safeSp = sp ?? 0;
-    const spText = typeof safeSp === "number" ? safeSp.toFixed(2) : safeSp;
-    return `${safeCount} # (${spText} pts)`;
+    const safeCount = finiteNumber(count);
+    const safeSp = finiteNumber(sp);
+    if (safeCount === null || safeSp === null) return "—";
+    return `${formatNumber(safeCount)} issues (${formatNumber(safeSp)} pts)`;
+  }
+
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function formatNumber(value, maximumFractionDigits = 2) {
+    const number = finiteNumber(value);
+    if (number === null) return "—";
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(number);
+  }
+
+  function formatPercent(value) {
+    const number = finiteNumber(value);
+    return number === null ? "—" : `${formatNumber(number, 1)}%`;
+  }
+
+  function setText(id, value) {
+    const element = $(id);
+    if (element) element.textContent = value;
   }
 
   function selectedText(select) {
@@ -551,24 +573,67 @@
     }
   }
 
-  function renderStats(stats) {
-    if (!stats) {
-      statsBox.classList.add("d-none");
-      return;
-    }
+  function renderStats(stats, context = {}, options = {}) {
+    const values = stats && typeof stats === "object" ? stats : {};
     statsBox.classList.remove("d-none");
-    $("unestimatedCount").textContent = stats.unestimated_count ?? 0;
-    $("unestimatedPct").textContent = stats.unestimated_pct ?? 0;
-    $("bugCount").textContent = stats.bug_count ?? 0;
-    $("bugPct").textContent = stats.bug_pct ?? 0;
-    $("bugSp").textContent = stats.bug_sp ?? 0;
-    $("unassignedCount").textContent = stats.unassigned_count ?? 0;
-    $("unassignedPct").textContent = stats.unassigned_pct ?? 0;
-    $("zeroRelevantCommentCount").textContent = stats.zero_relevant_comment_count ?? "—";
-    $("zeroRelevantCommentPct").textContent = stats.zero_relevant_comment_pct ?? "—";
-    $("relevantCommentCount").textContent = stats.relevant_comment_count ?? "—";
-    $("carryoverCount").textContent = stats.carryover_count ?? 0;
-    $("carryoverPts").textContent = stats.carryover_sp ?? 0;
+
+    const total = finiteNumber(context.standard_total);
+    const totalPoints = finiteNumber(context.total_sp);
+    const unestimated = finiteNumber(values.unestimated_count);
+    const unestimatedPct = finiteNumber(values.unestimated_pct);
+    const estimated = total !== null && unestimated !== null ? Math.max(total - unestimated, 0) : null;
+    const estimationCoverage = total && estimated !== null ? (estimated / total) * 100 : null;
+    setText("estimationCoverageValue", formatPercent(estimationCoverage));
+    setText("estimatedIssueCount", formatNumber(estimated, 0));
+    setText("estimationTotalCount", formatNumber(total, 0));
+    setText("unestimatedCount", formatNumber(unestimated, 0));
+    setText("unestimatedPct", formatNumber(unestimatedPct, 1));
+
+    const unassigned = finiteNumber(values.unassigned_count);
+    const unassignedPct = finiteNumber(values.unassigned_pct);
+    const assigned = total !== null && unassigned !== null ? Math.max(total - unassigned, 0) : null;
+    const ownershipCoverage = total && assigned !== null ? (assigned / total) * 100 : null;
+    setText("ownershipCoverageValue", formatPercent(ownershipCoverage));
+    setText("assignedIssueCount", formatNumber(assigned, 0));
+    setText("ownershipTotalCount", formatNumber(total, 0));
+    setText("unassignedCount", formatNumber(unassigned, 0));
+    setText("unassignedPct", formatNumber(unassignedPct, 1));
+
+    const defectCount = finiteNumber(values.bug_count);
+    const defectPoints = finiteNumber(values.bug_sp);
+    const defectIssuePct = finiteNumber(values.bug_pct);
+    const defectPointPct = totalPoints === null || defectPoints === null
+      ? null
+      : totalPoints > 0 ? (defectPoints / totalPoints) * 100 : 0;
+    setText("bugCount", formatNumber(defectCount, 0));
+    setText("bugSp", formatNumber(defectPoints));
+    setText("bugPct", formatNumber(defectIssuePct, 1));
+    setText("bugPointPct", formatNumber(defectPointPct, 1));
+
+    const zeroRelevant = finiteNumber(values.zero_relevant_comment_count);
+    const zeroRelevantPct = finiteNumber(values.zero_relevant_comment_pct);
+    const relevantComments = finiteNumber(values.relevant_comment_count);
+    if (options.commentsUnavailable) {
+      setText("commentCoverageValue", "Unavailable");
+      setText("commentCoverageMeta", "Relevant-comment metrics could not be loaded");
+      setText("relevantCommentCount", "Unavailable");
+      setText("relevantCommentsMeta", "Issue and work-breakdown data is still available");
+    } else if (zeroRelevant === null || zeroRelevantPct === null || relevantComments === null) {
+      setText("commentCoverageValue", "Calculating…");
+      setText("commentCoverageMeta", "Relevant comments are loading in the background");
+      setText("relevantCommentCount", "Calculating…");
+      setText("relevantCommentsMeta", "By the assigned developer during the sprint window");
+    } else {
+      setText("commentCoverageValue", formatPercent(Math.max(100 - zeroRelevantPct, 0)));
+      setText("commentCoverageMeta", `${formatNumber(zeroRelevant, 0)} issues need a relevant comment · ${formatPercent(zeroRelevantPct)} gap`);
+      setText("relevantCommentCount", formatNumber(relevantComments, 0));
+      setText("relevantCommentsMeta", "By the assigned developer during the sprint window");
+    }
+    setText("zeroRelevantCommentCount", formatNumber(zeroRelevant, 0));
+    setText("zeroRelevantCommentPct", formatNumber(zeroRelevantPct, 1));
+
+    setText("carryoverCount", formatNumber(values.carryover_count, 0));
+    setText("carryoverPts", formatNumber(values.carryover_sp));
   }
 
   function addText(parent, text, className) {
@@ -694,63 +759,237 @@
 
   function showMetricsLoading() {
     metricsBox.classList.remove("d-none");
+    $("metricsUnavailableMessage")?.classList.add("d-none");
     [
       "committedFmt", "deliveredFmt", "spilloverFmt", "scopeAddedFmt", "descopeFmt",
       "completedOriginalFmt", "scopeNetFmt", "scopePct", "predictabilityPct",
       "totalDeliveryPct", "scopeChangePct"
     ].forEach((id) => {
-      $(id).textContent = "...";
+      $(id).textContent = "…";
     });
     $("scopePct").style.color = "";
   }
 
   function renderMetrics(metrics) {
-    if (!metrics) {
-      metricsBox.classList.add("d-none");
+    const values = metrics && typeof metrics === "object" ? metrics : {};
+    const hasMetrics = [
+      "committed_count", "committed_sp", "completed_original_count", "completed_original_sp",
+      "delivered_count", "delivered_sp", "spillover_count", "spillover_sp",
+    ].some((key) => finiteNumber(values[key]) !== null);
+    metricsBox.classList.remove("d-none");
+    $("metricsUnavailableMessage")?.classList.toggle("d-none", hasMetrics);
+    $("committedFmt").textContent = fmtCountSp(values.committed_count, values.committed_sp);
+    $("completedOriginalFmt").textContent = fmtCountSp(values.completed_original_count, values.completed_original_sp);
+    $("deliveredFmt").textContent = fmtCountSp(values.delivered_count, values.delivered_sp);
+    $("spilloverFmt").textContent = fmtCountSp(values.spillover_count, values.spillover_sp);
+    $("scopeAddedFmt").textContent = fmtCountSp(values.scope_added_count, values.scope_added_sp);
+    $("descopeFmt").textContent = fmtCountSp(values.descope_count, values.descope_sp);
+    $("scopeNetFmt").textContent = fmtCountSp(values.scope_net_count, values.scope_net_sp);
+    $("scopePct").textContent = formatNumber(values.scope_pct, 1);
+    $("predictabilityPct").textContent = formatNumber(values.predictability_pct, 1);
+    $("totalDeliveryPct").textContent = formatNumber(values.total_delivery_vs_commitment_pct, 1);
+    $("scopeChangePct").textContent = formatNumber(values.scope_change_pct, 1);
+    $("scopePct").style.color = values.scope_red ? "var(--bs-danger)" : "";
+  }
+
+  const workTypeColors = {
+    story: "#0d6efd",
+    task: "#198754",
+    bug: "#dc3545",
+    defect: "#dc3545",
+    subtask: "#6c757d",
+    "sub-task": "#6c757d",
+    "sub task": "#6c757d",
+  };
+  const fallbackTypeColors = ["#6f42c1", "#0dcaf0", "#fd7e14", "#20c997", "#495057"];
+
+  function typeColor(type, index) {
+    return workTypeColors[String(type || "").trim().toLowerCase()] || fallbackTypeColors[index % fallbackTypeColors.length];
+  }
+
+  function sortedWorkTypes(workTypeMix) {
+    const names = new Set(Object.keys(workTypeMix?.overall || {}));
+    (workTypeMix?.by_assignee || []).forEach((row) => {
+      Object.keys(row?.types || {}).forEach((name) => names.add(name));
+    });
+    const preferred = new Map([
+      ["story", 0], ["task", 1], ["bug", 2], ["defect", 2],
+      ["sub-task", 3], ["subtask", 3], ["sub task", 3], ["unknown", 99],
+    ]);
+    return Array.from(names).sort((left, right) => {
+      const leftRank = preferred.get(String(left).toLowerCase()) ?? 10;
+      const rightRank = preferred.get(String(right).toLowerCase()) ?? 10;
+      return leftRank - rightRank || String(left).localeCompare(String(right));
+    });
+  }
+
+  function sumBuckets(entries, key) {
+    if (!entries.length) return 0;
+    const values = entries.map(([, bucket]) => finiteNumber(bucket?.[key]));
+    return values.some((value) => value === null) ? null : values.reduce((sum, value) => sum + value, 0);
+  }
+
+  function bucketPercent(bucket, key, value, total) {
+    const supplied = finiteNumber(bucket?.[key]);
+    if (supplied !== null) return supplied;
+    if (value === null || total === null || total <= 0) return null;
+    return (value / total) * 100;
+  }
+
+  function appendTypeName(cell, type, color, unestimated) {
+    const label = document.createElement("span");
+    label.className = "sv-type-name";
+    const marker = document.createElement("span");
+    marker.className = "sv-type-marker";
+    marker.style.setProperty("--sv-type-color", color);
+    label.append(marker, document.createTextNode(type));
+    cell.appendChild(label);
+    if (finiteNumber(unestimated) > 0) {
+      const note = document.createElement("span");
+      note.className = "sv-unestimated-note";
+      note.textContent = `${formatNumber(unestimated, 0)} unestimated`;
+      cell.appendChild(note);
+    }
+  }
+
+  function appendMatrixCell(row, points, count, pointPct, unestimated = 0, total = false) {
+    const cell = document.createElement("td");
+    cell.className = "sv-matrix-value";
+    if (points === null && count === null) {
+      cell.textContent = "—";
+      row.appendChild(cell);
       return;
     }
-    metricsBox.classList.remove("d-none");
-    $("committedFmt").textContent = fmtCountSp(metrics.committed_count, metrics.committed_sp);
-    $("completedOriginalFmt").textContent = fmtCountSp(metrics.completed_original_count, metrics.completed_original_sp);
-    $("deliveredFmt").textContent = fmtCountSp(metrics.delivered_count, metrics.delivered_sp);
-    $("spilloverFmt").textContent = fmtCountSp(metrics.spillover_count, metrics.spillover_sp);
-    $("scopeAddedFmt").textContent = fmtCountSp(metrics.scope_added_count, metrics.scope_added_sp);
-    $("descopeFmt").textContent = fmtCountSp(metrics.descope_count, metrics.descope_sp);
-    $("scopeNetFmt").textContent = fmtCountSp(metrics.scope_net_count, metrics.scope_net_sp);
-    $("scopePct").textContent = metrics.scope_pct ?? 0;
-    $("predictabilityPct").textContent = metrics.predictability_pct ?? 0;
-    $("totalDeliveryPct").textContent = metrics.total_delivery_vs_commitment_pct ?? 0;
-    $("scopeChangePct").textContent = metrics.scope_change_pct ?? 0;
-    $("scopePct").style.color = metrics.scope_red ? "red" : "";
+    const primary = document.createElement("strong");
+    primary.textContent = points === null ? "—" : `${formatNumber(points)} pts`;
+    const secondary = document.createElement("span");
+    const parts = [count === null ? "issues unavailable" : `${formatNumber(count, 0)} ${count === 1 ? "issue" : "issues"}`];
+    if (!total && pointPct !== null) parts.push(`${formatPercent(pointPct)} of developer pts`);
+    if (finiteNumber(unestimated) > 0) parts.push(`${formatNumber(unestimated, 0)} unestimated`);
+    secondary.textContent = parts.join(" · ");
+    cell.append(primary, secondary);
+    row.appendChild(cell);
   }
 
   function renderWorkTypeMix(workTypeMix) {
-    if (!workTypeMix) {
-      workTypeMixBox.classList.add("d-none");
+    workTypeMixBox.classList.remove("d-none");
+    const unavailable = $("workTypeUnavailable");
+    const content = $("workTypeContent");
+    const totals = $("workTypeTotals");
+    if (!workTypeMix || typeof workTypeMix !== "object") {
+      unavailable.textContent = "Work-breakdown metrics are unavailable. Sprint issues can still be reviewed below.";
+      unavailable.classList.remove("d-none");
+      content.classList.add("d-none");
+      totals.classList.add("d-none");
       return;
     }
-    workTypeMixBox.classList.remove("d-none");
+
+    const types = sortedWorkTypes(workTypeMix);
+    const overallEntries = types.map((type) => [type, workTypeMix.overall?.[type] || null]);
+    if (!types.length) {
+      unavailable.textContent = "No work-type data was returned for this sprint.";
+      unavailable.classList.remove("d-none");
+      content.classList.add("d-none");
+      totals.classList.add("d-none");
+      return;
+    }
+    unavailable.classList.add("d-none");
+    content.classList.remove("d-none");
+    totals.classList.remove("d-none");
+
+    const totalCount = finiteNumber(workTypeMix.totals?.count) ?? sumBuckets(overallEntries, "count");
+    const totalPoints = finiteNumber(workTypeMix.totals?.pts) ?? sumBuckets(overallEntries, "pts");
+    const totalUnestimated = finiteNumber(workTypeMix.totals?.unestimated_count)
+      ?? sumBuckets(overallEntries, "unestimated_count");
+    setText("workTypeTotalCount", formatNumber(totalCount, 0));
+    setText("workTypeTotalPoints", formatNumber(totalPoints));
+
+    const pointBar = $("workTypePointBar");
+    pointBar.replaceChildren();
+    if (totalPoints !== null && totalPoints > 0) {
+      overallEntries.forEach(([type, bucket], index) => {
+        const points = finiteNumber(bucket?.pts);
+        if (points === null || points <= 0) return;
+        const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
+        const segment = document.createElement("span");
+        segment.className = "sv-point-segment";
+        segment.style.width = `${Math.max(pct || 0, 0)}%`;
+        segment.style.setProperty("--sv-type-color", typeColor(type, index));
+        segment.title = `${type}: ${formatNumber(points)} pts (${formatPercent(pct)})`;
+        segment.setAttribute("aria-label", segment.title);
+        segment.textContent = pct >= 12 ? `${type} ${formatPercent(pct)}` : "";
+        pointBar.appendChild(segment);
+      });
+    } else {
+      const empty = document.createElement("span");
+      empty.className = "sv-point-bar-empty";
+      empty.textContent = totalUnestimated > 0
+        ? "Point distribution unavailable — no mapped estimates were returned."
+        : "No points were recorded for this sprint.";
+      pointBar.appendChild(empty);
+    }
+
     const overall = $("workTypeOverall");
     overall.replaceChildren();
-    Object.entries(workTypeMix.overall || {}).forEach(([type, bucket]) => {
-      const item = document.createElement("div");
-      item.className = "sv-stat";
-      const label = document.createElement("strong");
-      label.textContent = `${type}: `;
-      item.appendChild(label);
-      addText(item, `${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`);
-      overall.appendChild(item);
+    overallEntries.forEach(([type, bucket], index) => {
+      const row = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      appendTypeName(nameCell, type, typeColor(type, index), bucket?.unestimated_count);
+      row.appendChild(nameCell);
+      const points = finiteNumber(bucket?.pts);
+      const count = finiteNumber(bucket?.count);
+      addCell(row, formatNumber(points), "text-end");
+      addCell(row, formatPercent(bucketPercent(bucket, "points_pct", points, totalPoints)), "text-end");
+      addCell(row, formatNumber(count, 0), "text-end");
+      addCell(row, formatPercent(bucketPercent(bucket, "issue_pct", count, totalCount)), "text-end");
+      overall.appendChild(row);
     });
+
+    const head = $("workTypeByDeveloperHead");
+    head.replaceChildren();
+    const headRow = document.createElement("tr");
+    ["Developer", "Total", ...types].forEach((label, index) => {
+      const cell = document.createElement("th");
+      cell.scope = "col";
+      cell.textContent = label;
+      if (index > 0) cell.className = "text-end";
+      headRow.appendChild(cell);
+    });
+    head.appendChild(headRow);
 
     const tbody = $("workTypeByDeveloper");
     tbody.replaceChildren();
-    (workTypeMix.by_assignee || []).forEach((row) => {
+    const assignees = Array.isArray(workTypeMix.by_assignee) ? workTypeMix.by_assignee : [];
+    if (!assignees.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = types.length + 2;
+      cell.className = "text-muted py-3";
+      cell.textContent = "Developer breakdown is unavailable for this sprint.";
+      row.appendChild(cell);
+      tbody.appendChild(row);
+      return;
+    }
+    assignees.forEach((assignee) => {
       const tr = document.createElement("tr");
-      addCell(tr, row.assignee_name || row.assignee_eid || "Unassigned");
-      const mix = Object.entries(row.types || {})
-        .map(([type, bucket]) => `${type}: ${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`)
-        .join("; ");
-      addCell(tr, mix);
+      addCell(tr, assignee.assignee_name || assignee.assignee_eid || "Unassigned", "sv-developer-name");
+      const assigneeEntries = Object.entries(assignee.types || {});
+      const assigneePoints = finiteNumber(assignee.total_pts) ?? sumBuckets(assigneeEntries, "pts");
+      const assigneeCount = finiteNumber(assignee.total_count) ?? sumBuckets(assigneeEntries, "count");
+      const assigneeUnestimated = finiteNumber(assignee.unestimated_count)
+        ?? sumBuckets(assigneeEntries, "unestimated_count");
+      appendMatrixCell(tr, assigneePoints, assigneeCount, null, assigneeUnestimated, true);
+      types.forEach((type) => {
+        const bucket = assignee.types?.[type];
+        if (!bucket) {
+          appendMatrixCell(tr, null, null, null);
+          return;
+        }
+        const points = finiteNumber(bucket.pts);
+        const count = finiteNumber(bucket.count);
+        const pct = bucketPercent(bucket, "points_pct", points, assigneePoints);
+        appendMatrixCell(tr, points, count, pct, bucket.unestimated_count);
+      });
       tbody.appendChild(tr);
     });
   }
@@ -792,6 +1031,9 @@
 
   function renderCommentsResult(data, bid, sid) {
     if (!data || !data.ok) {
+      if (currentReportData && currentReportData.boardId === bid && currentReportData.sprintId === sid) {
+        renderStats(currentReportData.issueData.stats, currentReportData.issueData, { commentsUnavailable: true });
+      }
       showAlert("warning", `Issues remain available. Relevant comments failed: ${errorMessage(data, "Unknown error")}`);
       return false;
     }
@@ -828,16 +1070,19 @@
       ...(currentReportData.issueData.stats || {}),
       ...(data.stats || {})
     };
-    renderStats(currentReportData.issueData.stats);
+    renderStats(currentReportData.issueData.stats, currentReportData.issueData);
     renderGroupedAccordion(groups, expanded);
     applyScopeStars(currentReportData.metrics?.scope_added_keys || []);
     return true;
   }
 
   function renderMetricsResult(data, bid, sid) {
-    if (!data || !data.ok) {
-      showAlert("warning", `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`);
-      metricsBox.classList.add("d-none");
+    if (!data || !data.ok || !data.metrics || typeof data.metrics !== "object") {
+      const message = data?.ok
+        ? "Issues loaded. Sprint metrics are unavailable because no metric data was returned."
+        : `Issues loaded. Metrics failed: ${errorMessage(data, "Unknown error")}`;
+      showAlert("warning", message);
+      renderMetrics(null);
       setReportDownloadReady(false);
       return false;
     }
@@ -916,7 +1161,7 @@
       setReportDownloadReady(false);
       setTotals(data.total, data.total_sp, data.standard_total);
       renderSprintMeta(data.sprint, data.historical_fallback_count);
-      renderStats(data.stats);
+      renderStats(data.stats, data);
       renderWorkTypeMix(data.work_type_mix);
       renderGroupedAccordion(data.groups || []);
       resultsCard.classList.remove("d-none");

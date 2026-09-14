@@ -132,6 +132,10 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
         route.fulfill(status=200 if body.get("ok") else 500, headers=headers, body=json.dumps(body))
 
     page.route("**/api/automation/sprint-viewer/**", fulfill)
+    page_errors = []
+    console_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
     try:
         page.goto(f"{origin}/auth/login")
         page.locator('input[name="identifier"]').fill("user@example.com")
@@ -152,8 +156,13 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
         assert page.locator("#fetchIssuesBtn").is_enabled()
         assert page.locator("#fetchIssuesBtn").inner_text().strip() == "Start Over"
         assert page.locator("#committedFmt").inner_text() == "…"
+        assert page.locator("#workTypeUnavailable").is_visible()
+        assert "No work-type data" in page.locator("#workTypeUnavailable").inner_text()
+        assert page.locator("#estimationCoverageValue").inner_text() == "—"
         assert "Calculating metrics" in page.locator("#sprintViewerProgress").inner_text()
         assert page.locator("#loadingOverlay").get_attribute("aria-hidden") == "true"
+        assert not page_errors
+        assert not console_errors
 
         workbook_bytes = page.evaluate("""async () => {
           const module = await import('/static/js/sprint_viewer/export.js');

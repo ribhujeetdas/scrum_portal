@@ -43,6 +43,58 @@ def test_quality_stats_support_raw_jira_story_point_field():
     assert stats["unestimated_count"] == 0
 
 
+def test_quality_stats_treat_jira_defect_type_as_defect_load():
+    stats = SprintViewerService.compute_issue_quality_stats(
+        [
+            {
+                "story_points": 3,
+                "issue_type": "Defect",
+                "assignee_eid": "E456",
+            }
+        ]
+    )
+
+    assert stats["bug_count"] == 1
+    assert stats["bug_sp"] == 3.0
+
+
+def test_work_type_breakdown_includes_subtasks_and_estimation_coverage():
+    breakdown = SprintViewerService.compute_work_type_mix(
+        [
+            {
+                "story_points": 5,
+                "issue_type": "Story",
+                "assignee_eid": "E1",
+                "assignee_name": "Developer One",
+            },
+            {
+                "story_points": 3,
+                "issue_type": "Sub-task",
+                "is_subtask": True,
+                "assignee_eid": "E1",
+                "assignee_name": "Developer One",
+            },
+            {
+                "story_points": None,
+                "issue_type": "Task",
+                "assignee_eid": "UNASSIGNED",
+                "assignee_name": "Unassigned",
+            },
+        ]
+    )
+
+    assert breakdown["totals"] == {
+        "count": 3,
+        "pts": 8.0,
+        "estimated_count": 2,
+        "unestimated_count": 1,
+    }
+    assert breakdown["overall"]["Story"]["points_pct"] == 62.5
+    assert breakdown["overall"]["Sub-task"]["count"] == 1
+    assert breakdown["overall"]["Task"]["unestimated_count"] == 1
+    assert breakdown["by_assignee"][0]["total_pts"] == 8.0
+
+
 def test_scrum_metrics_use_completed_original_for_predictability():
     metrics = SprintViewerService.build_scrum_metrics(
         {

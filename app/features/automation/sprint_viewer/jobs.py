@@ -491,7 +491,9 @@ def _run_core(job: BackgroundJob, owner: str, fence: int, epoch: int) -> None:
         "groups": service.group_issues_by_assignee(extracted),
         "stats": service.compute_issue_quality_stats(standard),
         "sprint": sprint_meta,
-        "work_type_mix": service.compute_work_type_mix(standard),
+        # Work breakdown includes every returned Jira issue type, including
+        # sub-tasks. Existing point totals and Scrum metrics remain standard-only.
+        "work_type_mix": service.compute_work_type_mix(extracted),
         "historical_fallback_count": len(extracted),
         "field_availability": {"history": "pending", "comments": "pending"},
         "time_basis": {"tickets": "current Jira value; historical value pending"},

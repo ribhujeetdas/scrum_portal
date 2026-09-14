@@ -1,51 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Sprint Viewer{% endblock %}
 {% block head_extra %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sprint_viewer.css') }}">
   <link id="sprintViewerFavicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230d6efd'/%3E%3Cpath d='M18 18h28v6H18zM18 29h28v6H18zM18 40h18v6H18z' fill='white'/%3E%3Cpath d='M43 39l4 4 8-10' fill='none' stroke='%23ffc107' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 {% endblock %}
 {% block content %}
-<style>
-  .nowrap { white-space: nowrap; }
-  .nowrap a { white-space: nowrap; display: inline-block; }
-
-  /* NEW: bold * next to issue key */
-  .scope-star { margin-left: 6px; color: #d9534f; font-weight: 700; }
-
-  /* NEW: small stats grid */
-  .sv-stats {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 16px;
-    margin-top: 8px;
-  }
-  .sv-stat {
-    font-size: 13px;
-    color: #555;
-  }
-  .sv-legend {
-    margin-top: 6px;
-    font-size: 12px;
-    color: #6c757d;
-  }
-  .metric-help {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    margin-left: 4px;
-    border: 1px solid #adb5bd;
-    border-radius: 50%;
-    color: #6c757d;
-    font-size: 11px;
-    cursor: help;
-  }
-  .sv-metadata {
-    font-size: 13px;
-    color: #495057;
-  }
-</style>
-
 <div id="sprintViewerPage"
      data-feature-script-src="{{ url_for('static', filename='js/sprint_viewer.js') }}"
      data-boards="{{ boards_by_project|tojson|forceescape }}"
@@ -145,19 +104,56 @@
       </div>
     </div>
 
-    <!-- NEW: Issue hygiene stats -->
-    <div id="statsBox" class="sv-stats d-none">
-      <div class="sv-stat">Unestimated: <b><span id="unestimatedCount">0</span></b> (<span id="unestimatedPct">0</span>%)</div>
-      <div class="sv-stat">Bugs: <b><span id="bugCount">0</span></b> (<span id="bugPct">0</span>%)</div>
-      <div class="sv-stat">Bug pts: <b><span id="bugSp">0</span></b></div>
-      <div class="sv-stat">Unassigned: <b><span id="unassignedCount">0</span></b> (<span id="unassignedPct">0</span>%)</div>
-      <div class="sv-stat">No relevant comments: <b><span id="zeroRelevantCommentCount">0</span></b> (<span id="zeroRelevantCommentPct">0</span>%)</div>
-      <div class="sv-stat">Relevant comments #: <b><span id="relevantCommentCount">0</span></b></div>
-      <div class="sv-stat">Carryover #: <b><span id="carryoverCount">0</span></b> (<span id="carryoverPts">0</span> pts)</div>
-    </div>
+    <section id="statsBox" class="sv-panel mb-3 d-none" aria-labelledby="sprintHealthTitle">
+      <div class="sv-section-heading">
+        <div>
+          <h2 id="sprintHealthTitle" class="h6 mb-1">Sprint Health</h2>
+          <p class="sv-section-description mb-0">Planning coverage and delivery signals for standard issues.</p>
+        </div>
+      </div>
+      <div class="sv-health-grid">
+        <article class="sv-health-item">
+          <span class="sv-health-label">Estimation coverage</span>
+          <strong id="estimationCoverageValue" class="sv-health-value">—</strong>
+          <span class="sv-health-meta"><span id="estimatedIssueCount">—</span> of <span id="estimationTotalCount">—</span> estimated · <span id="unestimatedCount">—</span> unestimated</span>
+          <span id="unestimatedPct" class="visually-hidden">—</span>
+        </article>
+        <article class="sv-health-item">
+          <span class="sv-health-label">Ownership coverage</span>
+          <strong id="ownershipCoverageValue" class="sv-health-value">—</strong>
+          <span class="sv-health-meta"><span id="assignedIssueCount">—</span> of <span id="ownershipTotalCount">—</span> assigned · <span id="unassignedCount">—</span> unassigned</span>
+          <span id="unassignedPct" class="visually-hidden">—</span>
+        </article>
+        <article class="sv-health-item">
+          <span class="sv-health-label">Defect load</span>
+          <strong class="sv-health-value"><span id="bugSp">—</span> pts</strong>
+          <span class="sv-health-meta"><span id="bugCount">—</span> issues (<span id="bugPct">—</span>%) · <span id="bugPointPct">—</span>% of points</span>
+        </article>
+        <article class="sv-health-item">
+          <span class="sv-health-label">Comment coverage</span>
+          <strong id="commentCoverageValue" class="sv-health-value">Calculating…</strong>
+          <span id="commentCoverageMeta" class="sv-health-meta">Relevant comments are loading in the background</span>
+          <span id="zeroRelevantCommentCount" class="visually-hidden">—</span>
+          <span id="zeroRelevantCommentPct" class="visually-hidden">—</span>
+        </article>
+        <article class="sv-health-item">
+          <span class="sv-health-label">Relevant comments</span>
+          <strong id="relevantCommentCount" class="sv-health-value">Calculating…</strong>
+          <span id="relevantCommentsMeta" class="sv-health-meta">By the assigned developer during the sprint window</span>
+        </article>
+        <article class="sv-health-item">
+          <span class="sv-health-label">Carryover</span>
+          <strong class="sv-health-value"><span id="carryoverPts">—</span> pts</strong>
+          <span class="sv-health-meta"><span id="carryoverCount">—</span> issues carried into the sprint</span>
+        </article>
+      </div>
+    </section>
 
     <!-- UPDATED: metrics show count + pts and added more single-sprint metrics -->
     <div id="metricsBox" class="border rounded p-2 mb-3 d-none">
+      <div id="metricsUnavailableMessage" class="alert alert-warning py-2 px-3 mb-2 d-none" role="status">
+        Sprint metrics are unavailable. The issue and work-breakdown data below is still usable.
+      </div>
       <div class="row g-2">
         <div class="col-md-3"><strong>Original Commitment</strong><span class="metric-help" title="Original committed work = completed original + incomplete original + removed after sprint start, excluding added-after-start items.">?</span>: <span id="committedFmt">0</span></div>
         <div class="col-md-3"><strong>Completed from Commitment</strong><span class="metric-help" title="Completed original committed pts / original committed pts. This excludes mid-sprint added scope.">?</span>: <span id="completedOriginalFmt">0</span></div>
@@ -184,16 +180,54 @@
       <button id="retryMetricsBtn" type="button" class="btn btn-outline-secondary btn-sm mt-2 d-none">Retry metrics</button>
     </div>
 
-    <div id="workTypeMixBox" class="border rounded p-2 mb-3 d-none">
-      <div class="fw-semibold mb-2">Work Type Mix <span class="metric-help" title="Count and pts by Jira issue type for standard issue types only.">?</span></div>
-      <div id="workTypeOverall" class="sv-stats"></div>
-      <div class="table-responsive mt-2">
-        <table class="table table-sm table-striped align-middle mb-0">
-          <thead><tr><th>Developer</th><th>Type Mix</th></tr></thead>
-          <tbody id="workTypeByDeveloper"></tbody>
-        </table>
+    <section id="workTypeMixBox" class="sv-panel mb-3 d-none" aria-labelledby="workBreakdownTitle">
+      <div class="sv-section-heading">
+        <div>
+          <div class="d-flex align-items-center">
+            <h2 id="workBreakdownTitle" class="h6 mb-0">Sprint Work Breakdown</h2>
+            <span class="metric-help" title="Count, mapped Jira points, and percentage by Jira issue type. This descriptive breakdown includes sub-tasks; sprint velocity totals remain standard-issue only.">?</span>
+          </div>
+          <p class="sv-section-description mb-0">Distribution across every Jira issue type returned for this sprint.</p>
+        </div>
+        <div id="workTypeTotals" class="sv-breakdown-total" aria-live="polite">
+          <strong><span id="workTypeTotalCount">—</span> issues</strong>
+          <span><span id="workTypeTotalPoints">—</span> pts</span>
+        </div>
       </div>
-    </div>
+
+      <div id="workTypeUnavailable" class="sv-empty-state d-none" role="status"></div>
+      <div id="workTypeContent">
+        <div class="sv-distribution-block">
+          <div class="sv-subsection-label">Point distribution</div>
+          <div id="workTypePointBar" class="sv-point-bar" role="img" aria-label="Point distribution by Jira issue type"></div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle sv-breakdown-table mb-0">
+            <thead>
+              <tr>
+                <th scope="col">Work type</th>
+                <th scope="col" class="text-end">Points</th>
+                <th scope="col" class="text-end">% of points</th>
+                <th scope="col" class="text-end">Issues</th>
+                <th scope="col" class="text-end">% of issues</th>
+              </tr>
+            </thead>
+            <tbody id="workTypeOverall"></tbody>
+          </table>
+        </div>
+
+        <div class="sv-developer-breakdown">
+          <div class="sv-subsection-label">Developer work distribution</div>
+          <div class="table-responsive">
+            <table id="workTypeByDeveloperTable" class="table table-sm align-middle sv-developer-matrix mb-0">
+              <thead id="workTypeByDeveloperHead"></thead>
+              <tbody id="workTypeByDeveloper"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <div class="accordion" id="assigneeAccordion"></div>
   </div>

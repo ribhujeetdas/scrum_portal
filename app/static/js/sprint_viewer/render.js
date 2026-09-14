@@ -34,6 +34,105 @@ function textCell(row, value, className = "") {
   row.appendChild(cell);
 }
 
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatNumber(value, maximumFractionDigits = 2) {
+  const number = finiteNumber(value);
+  if (number === null) return "—";
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(number);
+}
+
+function formatPercent(value) {
+  const number = finiteNumber(value);
+  return number === null ? "—" : `${formatNumber(number, 1)}%`;
+}
+
+function setText(id, value) {
+  const element = byId(id);
+  if (element) element.textContent = value;
+}
+
+const workTypeColors = {
+  story: "#0d6efd",
+  task: "#198754",
+  bug: "#dc3545",
+  defect: "#dc3545",
+  subtask: "#6c757d",
+  "sub-task": "#6c757d",
+  "sub task": "#6c757d",
+};
+const fallbackTypeColors = ["#6f42c1", "#0dcaf0", "#fd7e14", "#20c997", "#495057"];
+
+function typeColor(type, index) {
+  return workTypeColors[String(type || "").trim().toLowerCase()] || fallbackTypeColors[index % fallbackTypeColors.length];
+}
+
+function sortedWorkTypes(mix) {
+  const names = new Set(Object.keys(mix?.overall || {}));
+  (mix?.by_assignee || []).forEach((row) => Object.keys(row?.types || {}).forEach((name) => names.add(name)));
+  const preferred = new Map([
+    ["story", 0], ["task", 1], ["bug", 2], ["defect", 2],
+    ["sub-task", 3], ["subtask", 3], ["sub task", 3], ["unknown", 99],
+  ]);
+  return Array.from(names).sort((left, right) => {
+    const leftRank = preferred.get(String(left).toLowerCase()) ?? 10;
+    const rightRank = preferred.get(String(right).toLowerCase()) ?? 10;
+    return leftRank - rightRank || String(left).localeCompare(String(right));
+  });
+}
+
+function sumBuckets(entries, key) {
+  if (!entries.length) return 0;
+  const values = entries.map(([, bucket]) => finiteNumber(bucket?.[key]));
+  return values.some((value) => value === null) ? null : values.reduce((sum, value) => sum + value, 0);
+}
+
+function bucketPercent(bucket, key, value, total) {
+  const supplied = finiteNumber(bucket?.[key]);
+  if (supplied !== null) return supplied;
+  if (value === null || total === null || total <= 0) return null;
+  return (value / total) * 100;
+}
+
+function appendTypeName(cell, type, color, unestimated) {
+  const label = document.createElement("span");
+  label.className = "sv-type-name";
+  const marker = document.createElement("span");
+  marker.className = "sv-type-marker";
+  marker.style.setProperty("--sv-type-color", color);
+  label.append(marker, document.createTextNode(type));
+  cell.appendChild(label);
+  if (finiteNumber(unestimated) > 0) {
+    const note = document.createElement("span");
+    note.className = "sv-unestimated-note";
+    note.textContent = `${formatNumber(unestimated, 0)} unestimated`;
+    cell.appendChild(note);
+  }
+}
+
+function appendMatrixCell(row, points, count, pointPct, unestimated = 0, total = false) {
+  const cell = document.createElement("td");
+  cell.className = "sv-matrix-value";
+  if (points === null && count === null) {
+    cell.textContent = "—";
+    row.appendChild(cell);
+    return;
+  }
+  const primary = document.createElement("strong");
+  primary.textContent = points === null ? "—" : `${formatNumber(points)} pts`;
+  const secondary = document.createElement("span");
+  const parts = [count === null ? "issues unavailable" : `${formatNumber(count, 0)} ${count === 1 ? "issue" : "issues"}`];
+  if (!total && pointPct !== null) parts.push(`${formatPercent(pointPct)} of developer pts`);
+  if (finiteNumber(unestimated) > 0) parts.push(`${formatNumber(unestimated, 0)} unestimated`);
+  secondary.textContent = parts.join(" · ");
+  cell.append(primary, secondary);
+  row.appendChild(cell);
+}
+
 function issueLink(key, jiraBaseUrl) {
   const link = document.createElement("a");
   link.href = `${jiraBaseUrl}/browse/${encodeURIComponent(key)}`;
@@ -89,8 +188,8 @@ export function renderCore(data, jiraBaseUrl, expanded = new Set(), scopeKeys = 
   byId("sprintActualEndDate").textContent = String(sprint.complete_date || "-").slice(0, 10);
   byId("sprintGoal").textContent = sprint.goal || "-";
   byId("sprintMetaBox").classList.remove("d-none");
-  renderStats(data.stats || {});
-  renderWorkType(data.work_type_mix || {});
+  renderStats(data.stats, data);
+  renderWorkType(data.work_type_mix);
   const accordion = byId("assigneeAccordion");
   accordion.replaceChildren();
   (data.groups || []).forEach((group, index) => {
@@ -119,46 +218,213 @@ export function renderCore(data, jiraBaseUrl, expanded = new Set(), scopeKeys = 
   });
 }
 
-export function renderStats(stats) {
+export function renderStats(stats, context = {}, options = {}) {
+  const values = stats && typeof stats === "object" ? stats : {};
   byId("statsBox").classList.remove("d-none");
-  const mapping = {
-    unestimatedCount: "unestimated_count", unestimatedPct: "unestimated_pct",
-    bugCount: "bug_count", bugPct: "bug_pct", bugSp: "bug_sp",
-    unassignedCount: "unassigned_count", unassignedPct: "unassigned_pct",
-    zeroRelevantCommentCount: "zero_relevant_comment_count",
-    zeroRelevantCommentPct: "zero_relevant_comment_pct",
-    relevantCommentCount: "relevant_comment_count", carryoverCount: "carryover_count", carryoverPts: "carryover_sp",
-  };
-  Object.entries(mapping).forEach(([id, key]) => { byId(id).textContent = stats[key] ?? "—"; });
+  const total = finiteNumber(context.standard_total);
+  const totalPoints = finiteNumber(context.total_sp);
+  const unestimated = finiteNumber(values.unestimated_count);
+  const unestimatedPct = finiteNumber(values.unestimated_pct);
+  const estimated = total !== null && unestimated !== null ? Math.max(total - unestimated, 0) : null;
+  setText("estimationCoverageValue", formatPercent(total && estimated !== null ? (estimated / total) * 100 : null));
+  setText("estimatedIssueCount", formatNumber(estimated, 0));
+  setText("estimationTotalCount", formatNumber(total, 0));
+  setText("unestimatedCount", formatNumber(unestimated, 0));
+  setText("unestimatedPct", formatNumber(unestimatedPct, 1));
+
+  const unassigned = finiteNumber(values.unassigned_count);
+  const unassignedPct = finiteNumber(values.unassigned_pct);
+  const assigned = total !== null && unassigned !== null ? Math.max(total - unassigned, 0) : null;
+  setText("ownershipCoverageValue", formatPercent(total && assigned !== null ? (assigned / total) * 100 : null));
+  setText("assignedIssueCount", formatNumber(assigned, 0));
+  setText("ownershipTotalCount", formatNumber(total, 0));
+  setText("unassignedCount", formatNumber(unassigned, 0));
+  setText("unassignedPct", formatNumber(unassignedPct, 1));
+
+  const defectCount = finiteNumber(values.bug_count);
+  const defectPoints = finiteNumber(values.bug_sp);
+  const defectPointPct = totalPoints === null || defectPoints === null
+    ? null
+    : totalPoints > 0 ? (defectPoints / totalPoints) * 100 : 0;
+  setText("bugCount", formatNumber(defectCount, 0));
+  setText("bugSp", formatNumber(defectPoints));
+  setText("bugPct", formatNumber(values.bug_pct, 1));
+  setText("bugPointPct", formatNumber(defectPointPct, 1));
+
+  const zeroRelevant = finiteNumber(values.zero_relevant_comment_count);
+  const zeroRelevantPct = finiteNumber(values.zero_relevant_comment_pct);
+  const relevantComments = finiteNumber(values.relevant_comment_count);
+  if (options.commentsUnavailable) {
+    setText("commentCoverageValue", "Unavailable");
+    setText("commentCoverageMeta", "Relevant-comment metrics could not be loaded");
+    setText("relevantCommentCount", "Unavailable");
+    setText("relevantCommentsMeta", "Issue and work-breakdown data is still available");
+  } else if (zeroRelevant === null || zeroRelevantPct === null || relevantComments === null) {
+    setText("commentCoverageValue", "Calculating…");
+    setText("commentCoverageMeta", "Relevant comments are loading in the background");
+    setText("relevantCommentCount", "Calculating…");
+    setText("relevantCommentsMeta", "By the assigned developer during the sprint window");
+  } else {
+    setText("commentCoverageValue", formatPercent(Math.max(100 - zeroRelevantPct, 0)));
+    setText("commentCoverageMeta", `${formatNumber(zeroRelevant, 0)} issues need a relevant comment · ${formatPercent(zeroRelevantPct)} gap`);
+    setText("relevantCommentCount", formatNumber(relevantComments, 0));
+    setText("relevantCommentsMeta", "By the assigned developer during the sprint window");
+  }
+  setText("zeroRelevantCommentCount", formatNumber(zeroRelevant, 0));
+  setText("zeroRelevantCommentPct", formatNumber(zeroRelevantPct, 1));
+  setText("carryoverCount", formatNumber(values.carryover_count, 0));
+  setText("carryoverPts", formatNumber(values.carryover_sp));
 }
 
 export function renderWorkType(mix) {
-  const box = byId("workTypeMixBox"); box.classList.remove("d-none");
-  const overall = byId("workTypeOverall"); overall.replaceChildren();
-  Object.entries(mix.overall || {}).forEach(([name, bucket]) => { const el = document.createElement("div"); el.className = "sv-stat"; el.textContent = `${name}: ${bucket.count ?? 0} #, ${bucket.pts ?? 0} pts`; overall.appendChild(el); });
-  const tbody = byId("workTypeByDeveloper"); tbody.replaceChildren();
-  (mix.by_assignee || []).forEach((item) => { const row = document.createElement("tr"); textCell(row, item.assignee_name || item.assignee_eid); textCell(row, Object.entries(item.types || {}).map(([name, bucket]) => `${name}: ${bucket.count} #, ${bucket.pts} pts`).join("; ")); tbody.appendChild(row); });
+  const box = byId("workTypeMixBox");
+  box.classList.remove("d-none");
+  const unavailable = byId("workTypeUnavailable");
+  const content = byId("workTypeContent");
+  const totals = byId("workTypeTotals");
+  if (!mix || typeof mix !== "object") {
+    unavailable.textContent = "Work-breakdown metrics are unavailable. Sprint issues can still be reviewed below.";
+    unavailable.classList.remove("d-none");
+    content.classList.add("d-none");
+    totals.classList.add("d-none");
+    return;
+  }
+  const types = sortedWorkTypes(mix);
+  const overallEntries = types.map((type) => [type, mix.overall?.[type] || null]);
+  if (!types.length) {
+    unavailable.textContent = "No work-type data was returned for this sprint.";
+    unavailable.classList.remove("d-none");
+    content.classList.add("d-none");
+    totals.classList.add("d-none");
+    return;
+  }
+  unavailable.classList.add("d-none");
+  content.classList.remove("d-none");
+  totals.classList.remove("d-none");
+  const totalCount = finiteNumber(mix.totals?.count) ?? sumBuckets(overallEntries, "count");
+  const totalPoints = finiteNumber(mix.totals?.pts) ?? sumBuckets(overallEntries, "pts");
+  const totalUnestimated = finiteNumber(mix.totals?.unestimated_count) ?? sumBuckets(overallEntries, "unestimated_count");
+  setText("workTypeTotalCount", formatNumber(totalCount, 0));
+  setText("workTypeTotalPoints", formatNumber(totalPoints));
+
+  const pointBar = byId("workTypePointBar");
+  pointBar.replaceChildren();
+  if (totalPoints !== null && totalPoints > 0) {
+    overallEntries.forEach(([type, bucket], index) => {
+      const points = finiteNumber(bucket?.pts);
+      if (points === null || points <= 0) return;
+      const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
+      const segment = document.createElement("span");
+      segment.className = "sv-point-segment";
+      segment.style.width = `${Math.max(pct || 0, 0)}%`;
+      segment.style.setProperty("--sv-type-color", typeColor(type, index));
+      segment.title = `${type}: ${formatNumber(points)} pts (${formatPercent(pct)})`;
+      segment.setAttribute("aria-label", segment.title);
+      segment.textContent = pct >= 12 ? `${type} ${formatPercent(pct)}` : "";
+      pointBar.appendChild(segment);
+    });
+  } else {
+    const empty = document.createElement("span");
+    empty.className = "sv-point-bar-empty";
+    empty.textContent = totalUnestimated > 0
+      ? "Point distribution unavailable — no mapped estimates were returned."
+      : "No points were recorded for this sprint.";
+    pointBar.appendChild(empty);
+  }
+
+  const overall = byId("workTypeOverall");
+  overall.replaceChildren();
+  overallEntries.forEach(([type, bucket], index) => {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    appendTypeName(nameCell, type, typeColor(type, index), bucket?.unestimated_count);
+    row.appendChild(nameCell);
+    const points = finiteNumber(bucket?.pts);
+    const count = finiteNumber(bucket?.count);
+    textCell(row, formatNumber(points), "text-end");
+    textCell(row, formatPercent(bucketPercent(bucket, "points_pct", points, totalPoints)), "text-end");
+    textCell(row, formatNumber(count, 0), "text-end");
+    textCell(row, formatPercent(bucketPercent(bucket, "issue_pct", count, totalCount)), "text-end");
+    overall.appendChild(row);
+  });
+
+  const head = byId("workTypeByDeveloperHead");
+  head.replaceChildren();
+  const headRow = document.createElement("tr");
+  ["Developer", "Total", ...types].forEach((label, index) => {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = label;
+    if (index > 0) cell.className = "text-end";
+    headRow.appendChild(cell);
+  });
+  head.appendChild(headRow);
+
+  const tbody = byId("workTypeByDeveloper");
+  tbody.replaceChildren();
+  const assignees = Array.isArray(mix.by_assignee) ? mix.by_assignee : [];
+  if (!assignees.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = types.length + 2;
+    cell.className = "text-muted py-3";
+    cell.textContent = "Developer breakdown is unavailable for this sprint.";
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+  assignees.forEach((assignee) => {
+    const row = document.createElement("tr");
+    textCell(row, assignee.assignee_name || assignee.assignee_eid || "Unassigned", "sv-developer-name");
+    const assigneeEntries = Object.entries(assignee.types || {});
+    const assigneePoints = finiteNumber(assignee.total_pts) ?? sumBuckets(assigneeEntries, "pts");
+    const assigneeCount = finiteNumber(assignee.total_count) ?? sumBuckets(assigneeEntries, "count");
+    const assigneeUnestimated = finiteNumber(assignee.unestimated_count) ?? sumBuckets(assigneeEntries, "unestimated_count");
+    appendMatrixCell(row, assigneePoints, assigneeCount, null, assigneeUnestimated, true);
+    types.forEach((type) => {
+      const bucket = assignee.types?.[type];
+      if (!bucket) {
+        appendMatrixCell(row, null, null, null);
+      } else {
+        const points = finiteNumber(bucket.pts);
+        const count = finiteNumber(bucket.count);
+        appendMatrixCell(row, points, count, bucketPercent(bucket, "points_pct", points, assigneePoints), bucket.unestimated_count);
+      }
+    });
+    tbody.appendChild(row);
+  });
 }
 
 export function renderMetrics(metrics) {
+  const metricValues = metrics && typeof metrics === "object" ? metrics : {};
   byId("metricsBox").classList.remove("d-none");
-  const pair = (count, points) => (count == null || points == null ? "—" : `${count} # (${Number(points).toFixed(2)} pts)`);
-  const values = {
-    committedFmt: pair(metrics.committed_count, metrics.committed_sp),
-    completedOriginalFmt: pair(metrics.completed_original_count, metrics.completed_original_sp),
-    deliveredFmt: pair(metrics.delivered_count, metrics.delivered_sp),
-    spilloverFmt: pair(metrics.spillover_count, metrics.spillover_sp),
-    scopeAddedFmt: pair(metrics.scope_added_count, metrics.scope_added_sp),
-    descopeFmt: pair(metrics.descope_count, metrics.descope_sp),
-    scopeNetFmt: pair(metrics.scope_net_count, metrics.scope_net_sp),
-    scopePct: metrics.scope_pct ?? "—", predictabilityPct: metrics.predictability_pct ?? "—",
-    totalDeliveryPct: metrics.total_delivery_vs_commitment_pct ?? "—", scopeChangePct: metrics.scope_change_pct ?? "—",
+  const hasMetrics = [
+    "committed_count", "committed_sp", "completed_original_count", "completed_original_sp",
+    "delivered_count", "delivered_sp", "spillover_count", "spillover_sp",
+  ].some((key) => finiteNumber(metricValues[key]) !== null);
+  byId("metricsUnavailableMessage")?.classList.toggle("d-none", hasMetrics);
+  const pair = (count, points) => (
+    finiteNumber(count) === null || finiteNumber(points) === null
+      ? "—"
+      : `${formatNumber(count, 0)} issues (${formatNumber(points)} pts)`
+  );
+  const rendered = {
+    committedFmt: pair(metricValues.committed_count, metricValues.committed_sp),
+    completedOriginalFmt: pair(metricValues.completed_original_count, metricValues.completed_original_sp),
+    deliveredFmt: pair(metricValues.delivered_count, metricValues.delivered_sp),
+    spilloverFmt: pair(metricValues.spillover_count, metricValues.spillover_sp),
+    scopeAddedFmt: pair(metricValues.scope_added_count, metricValues.scope_added_sp),
+    descopeFmt: pair(metricValues.descope_count, metricValues.descope_sp),
+    scopeNetFmt: pair(metricValues.scope_net_count, metricValues.scope_net_sp),
+    scopePct: formatNumber(metricValues.scope_pct, 1), predictabilityPct: formatNumber(metricValues.predictability_pct, 1),
+    totalDeliveryPct: formatNumber(metricValues.total_delivery_vs_commitment_pct, 1), scopeChangePct: formatNumber(metricValues.scope_change_pct, 1),
   };
-  Object.entries(values).forEach(([id, value]) => { byId(id).textContent = value; });
-  const basis = byId("metricTimeBasis"); if (basis) basis.textContent = metrics.time_basis || "Jira points at collection time";
+  Object.entries(rendered).forEach(([id, value]) => { byId(id).textContent = value; });
+  const basis = byId("metricTimeBasis"); if (basis) basis.textContent = metricValues.time_basis || "Jira points at collection time";
 }
 
 export function setMetricsPending() {
   byId("metricsBox").classList.remove("d-none");
+  byId("metricsUnavailableMessage")?.classList.add("d-none");
   ["committedFmt", "completedOriginalFmt", "deliveredFmt", "spilloverFmt", "scopeAddedFmt", "descopeFmt", "scopeNetFmt", "scopePct", "predictabilityPct", "totalDeliveryPct", "scopeChangePct"].forEach((id) => { byId(id).textContent = "…"; });
 }

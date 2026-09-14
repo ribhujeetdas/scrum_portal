@@ -302,12 +302,45 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
     app.config.update(SPRINT_VIEWER_MODE='direct', SPRINT_VIEWER_V2_ENABLED=False)
     core = {
         'ok': True,
-        'total': 1,
-        'standard_total': 1,
-        'total_sp': 5,
+        'total': 3,
+        'standard_total': 2,
+        'total_sp': 8,
         'sprint': {'name': 'Closed sprint', 'start_date': '2026-01-05T00:00:00Z', 'complete_date': '2026-01-15T00:00:00Z'},
-        'stats': {'relevant_comment_count': None, 'zero_relevant_comment_count': None, 'zero_relevant_comment_pct': None},
-        'work_type_mix': {'overall': {'Story': {'count': 1, 'pts': 5}}, 'by_assignee': []},
+        'stats': {
+            'unestimated_count': 0,
+            'unestimated_pct': 0,
+            'bug_count': 1,
+            'bug_sp': 3,
+            'bug_pct': 50,
+            'unassigned_count': 0,
+            'unassigned_pct': 0,
+            'relevant_comment_count': None,
+            'zero_relevant_comment_count': None,
+            'zero_relevant_comment_pct': None,
+            'carryover_count': 0,
+            'carryover_sp': 0,
+        },
+        'work_type_mix': {
+            'totals': {'count': 3, 'pts': 10, 'estimated_count': 3, 'unestimated_count': 0},
+            'overall': {
+                'Story': {'count': 1, 'pts': 5, 'issue_pct': 33.3, 'points_pct': 50},
+                'Defect': {'count': 1, 'pts': 3, 'issue_pct': 33.3, 'points_pct': 30},
+                'Sub-task': {'count': 1, 'pts': 2, 'issue_pct': 33.3, 'points_pct': 20},
+            },
+            'by_assignee': [{
+                'assignee_eid': 'B',
+                'assignee_name': 'Developer B',
+                'total_count': 3,
+                'total_pts': 10,
+                'estimated_count': 3,
+                'unestimated_count': 0,
+                'types': {
+                    'Story': {'count': 1, 'pts': 5, 'points_pct': 50},
+                    'Defect': {'count': 1, 'pts': 3, 'points_pct': 30},
+                    'Sub-task': {'count': 1, 'pts': 2, 'points_pct': 20},
+                },
+            }],
+        },
         'groups': [{
             'principal_id': 'key:B',
             'assignee_eid': 'B',
@@ -332,7 +365,7 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
         'issues': [{'issue_id': '2', 'issue_key': 'TEST-2', 'comment_total': 6, 'relevant_comment_count': 2, 'comment_coverage': 'complete'}],
         'stats': {'relevant_comment_count': 2, 'zero_relevant_comment_count': 0, 'zero_relevant_comment_pct': 0},
     }
-    metrics = {'ok': True, 'metrics': {'committed_count': 1, 'committed_sp': 5, 'scope_added_keys': []}}
+    metrics = {'ok': True}
     init_script = f"""
       (() => {{
         const originalFetch = window.fetch.bind(window);
@@ -367,6 +400,10 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     origin = f'http://127.0.0.1:{server.server_port}'
+    page_errors = []
+    console_errors = []
+    page.on('pageerror', lambda error: page_errors.append(str(error)))
+    page.on('console', lambda message: console_errors.append(message.text) if message.type == 'error' else None)
     try:
         page.goto(origin + '/auth/login')
         page.locator('input[name="identifier"]').fill('test@example.com')
@@ -381,7 +418,16 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
 
         page.wait_for_function('window.__commentsRequested === true && window.__metricsRequested === true')
         assert page.locator('#workTypeMixBox').is_visible()
-        assert 'Story' in page.locator('#workTypeOverall').inner_text()
+        assert page.locator('#workBreakdownTitle').inner_text() == 'Sprint Work Breakdown'
+        assert page.locator('#workTypeTotalCount').inner_text() == '3'
+        assert page.locator('#workTypeTotalPoints').inner_text() == '10'
+        assert page.locator('#workTypePointBar .sv-point-segment').count() == 3
+        assert 'Sub-task' in page.locator('#workTypeOverall').inner_text()
+        assert '% of points' in page.locator('.sv-breakdown-table thead').inner_text()
+        assert 'Developer B' in page.locator('#workTypeByDeveloper').inner_text()
+        assert '50% of developer pts' in page.locator('#workTypeByDeveloper').inner_text()
+        assert page.locator('#estimationCoverageValue').inner_text() == '100%'
+        assert page.locator('#bugSp').inner_text() == '3'
         assert page.locator('#loadingOverlay').evaluate('(el) => getComputedStyle(el).display') == 'none'
         assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == 'Unavailable'
 
@@ -393,7 +439,10 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
         assert page.locator('#assigneeAccordion .accordion-collapse').get_attribute('class').endswith('show')
 
         page.evaluate('window.__releaseMetrics()')
-        page.wait_for_function("document.getElementById('committedFmt').textContent.includes('1 #')")
+        page.locator('#metricsUnavailableMessage').wait_for(state='visible')
+        assert page.locator('#committedFmt').inner_text() == '—'
+        assert not page_errors
+        assert not console_errors
     finally:
         page.goto('about:blank')
         server.shutdown()

@@ -3,6 +3,7 @@ import { beginAction, createSprintState, disposeAction, isCurrent } from "./stat
 import {
   renderCore,
   renderMetrics,
+  renderStats,
   resetResults,
   setMetricsPending,
   showMessage,
@@ -113,9 +114,9 @@ export function initSprintViewer(page, apiFetch) {
     if (!isCurrent(state, generation) || !payload.ok) return;
     state.fetchedComponents.set(key, revision);
     if (key === "metrics") {
-      state.metrics = payload.data;
+      state.metrics = payload.data && typeof payload.data === "object" ? payload.data : null;
       renderMetrics(state.metrics);
-      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics.scope_added_keys || []));
+      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []));
     } else if (key === "history") {
       Object.entries(payload.data?.issues || {}).forEach(([id, historical]) => {
         const existing = state.issues.get(id); if (existing) state.issues.set(id, { ...existing, ...historical });
@@ -140,7 +141,10 @@ export function initSprintViewer(page, apiFetch) {
         await fetchComponent(key, state.components[key].revision, generation);
       }
     }
-    const metricFailed = ["metrics", "original_commitment", "completed_original", "total_completed", "added_scope", "removed_scope"].find((key) => state.components[key]?.state === "failed");
+    const metricFailed = ["metrics", "original_commitment", "completed_original", "total_completed", "added_scope", "removed_scope"].find((key) => ["failed", "unavailable"].includes(state.components[key]?.state));
+    const commentsUnavailable = ["failed", "unavailable"].includes(state.components.comments?.state);
+    if (state.core && commentsUnavailable) renderStats(state.core.stats, state.core, { commentsUnavailable: true });
+    if (state.core && metricFailed && !state.metrics) renderMetrics(null);
     retryMetrics?.classList.toggle("d-none", !metricFailed);
     download.disabled = !(status.export_ready && state.metrics && state.issues.size);
     if (state.core && !state.metrics) showProgress(metricFailed ? "Metrics could not be loaded. Retry is available." : "Calculating metrics…");
@@ -159,7 +163,13 @@ export function initSprintViewer(page, apiFetch) {
       await applyStatus(payload, generation);
       const terminalAccess = ["granted", "denied", "unavailable"].includes(payload.access?.core);
       const terminalData = payload.state === "ready" || payload.state === "failed";
-      if (!(terminalData && terminalAccess && state.metrics)) {
+      const metricRevision = state.components.metrics?.revision;
+      const metricFailed = ["metrics", "original_commitment", "completed_original", "total_completed", "added_scope", "removed_scope"]
+        .some((key) => ["failed", "unavailable"].includes(state.components[key]?.state));
+      const metricTerminal = Boolean(state.metrics)
+        || Boolean(metricFailed)
+        || (state.components.metrics?.state === "ready" && state.fetchedComponents.get("metrics") === metricRevision);
+      if (!(terminalData && terminalAccess && metricTerminal)) {
         state.timer = window.setTimeout(() => poll(generation), pollDelay(unchangedPolls, retryAfter));
       }
     } catch (error) {

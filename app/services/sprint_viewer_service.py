@@ -749,7 +749,7 @@ class SprintViewerService:
             if sp is None or str(sp).strip() == "":
                 unestimated_count += 1
 
-            if (it.get("issue_type") or "").lower() == "bug":
+            if (it.get("issue_type") or "").strip().lower() in {"bug", "defect"}:
                 bug_count += 1
                 try:
                     bug_sp += float(sp) if sp is not None else 0.0
@@ -801,17 +801,31 @@ class SprintViewerService:
     @staticmethod
     def compute_work_type_mix(extracted_issues: list[dict]) -> dict:
         def blank_bucket() -> dict:
-            return {"count": 0, "pts": 0.0}
+            return {
+                "count": 0,
+                "pts": 0.0,
+                "estimated_count": 0,
+                "unestimated_count": 0,
+            }
 
         overall: dict[str, dict] = {}
         by_assignee: dict[str, dict] = {}
 
         for issue in extracted_issues:
             issue_type = (issue.get("issue_type") or "Unknown").strip() or "Unknown"
-            pts = SprintViewerService._safe_float(issue.get("story_points"))
+            raw_pts = issue.get("story_points")
+            try:
+                pts = float(raw_pts)
+                has_estimate = math.isfinite(pts)
+            except (TypeError, ValueError):
+                pts = 0.0
+                has_estimate = False
+            if not has_estimate:
+                pts = 0.0
             overall.setdefault(issue_type, blank_bucket())
             overall[issue_type]["count"] += 1
             overall[issue_type]["pts"] += pts
+            overall[issue_type]["estimated_count" if has_estimate else "unestimated_count"] += 1
 
             assignee = issue.get("assignee_eid") or "UNASSIGNED"
             assignee_name = issue.get("assignee_name") or "Unassigned"
@@ -828,16 +842,60 @@ class SprintViewerService:
             by_assignee[assignee_key]["types"].setdefault(issue_type, blank_bucket())
             by_assignee[assignee_key]["types"][issue_type]["count"] += 1
             by_assignee[assignee_key]["types"][issue_type]["pts"] += pts
+            by_assignee[assignee_key]["types"][issue_type][
+                "estimated_count" if has_estimate else "unestimated_count"
+            ] += 1
 
+        total_count = sum(bucket["count"] for bucket in overall.values())
+        total_pts = sum(bucket["pts"] for bucket in overall.values())
+        total_estimated = sum(bucket["estimated_count"] for bucket in overall.values())
+        total_unestimated = sum(bucket["unestimated_count"] for bucket in overall.values())
         for bucket in overall.values():
             bucket["pts"] = round(bucket["pts"], 2)
+            bucket["issue_pct"] = (
+                round((bucket["count"] / total_count) * 100.0, 1)
+                if total_count
+                else 0.0
+            )
+            bucket["points_pct"] = (
+                round((bucket["pts"] / total_pts) * 100.0, 1)
+                if total_pts
+                else None
+            )
         for assignee in by_assignee.values():
+            assignee["total_count"] = sum(
+                bucket["count"] for bucket in assignee["types"].values()
+            )
+            assignee["total_pts"] = round(
+                sum(bucket["pts"] for bucket in assignee["types"].values()),
+                2,
+            )
+            assignee["estimated_count"] = sum(
+                bucket["estimated_count"] for bucket in assignee["types"].values()
+            )
+            assignee["unestimated_count"] = sum(
+                bucket["unestimated_count"] for bucket in assignee["types"].values()
+            )
             for bucket in assignee["types"].values():
                 bucket["pts"] = round(bucket["pts"], 2)
+                bucket["issue_pct"] = round(
+                    (bucket["count"] / assignee["total_count"]) * 100.0,
+                    1,
+                ) if assignee["total_count"] else 0.0
+                bucket["points_pct"] = round(
+                    (bucket["pts"] / assignee["total_pts"]) * 100.0,
+                    1,
+                ) if assignee["total_pts"] else None
 
         return {
             "overall": dict(sorted(overall.items())),
             "by_assignee": sorted(by_assignee.values(), key=lambda row: row["assignee_name"]),
+            "totals": {
+                "count": total_count,
+                "pts": round(total_pts, 2),
+                "estimated_count": total_estimated,
+                "unestimated_count": total_unestimated,
+            },
         }
 
     # ---------------------------

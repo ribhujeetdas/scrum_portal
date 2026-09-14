@@ -544,7 +544,9 @@ def sprint_viewer_fetch_issues():
         standard_issues = [issue for issue in extracted if not issue.get("is_subtask")]
         total_sp = service.sum_story_points(standard_issues)
         stats = service.compute_issue_quality_stats(standard_issues)
-        work_type_mix = service.compute_work_type_mix(standard_issues)
+        # Work breakdown is descriptive rather than a velocity total, so include
+        # sub-tasks while keeping all existing Scrum metrics standard-issue only.
+        work_type_mix = service.compute_work_type_mix(extracted)
         historical_fallback_count = sum(
             1 for issue in extracted if issue.get("historical_fallback")
         )
