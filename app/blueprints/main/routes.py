@@ -156,12 +156,30 @@ def client_log():
         except Exception:
             return ""
 
+    def clean_path(value):
+        try:
+            return urlsplit(clean(value, 500)).path[:300]
+        except Exception:
+            return ""
+
+    def clean_status(value):
+        try:
+            status = int(value)
+        except (TypeError, ValueError):
+            return None
+        return status if 100 <= status <= 599 else None
+
     current_app.logger.info(
         "client event",
         extra={
             "event": "client.event",
             "client_event": clean(payload.get("event"), 80),
+            "client_error_code": clean(payload.get("errorCode"), 80),
             "client_message": clean(payload.get("message"), 500),
+            "client_method": clean(payload.get("method"), 12).upper(),
+            "client_path": clean_path(payload.get("path")),
+            "client_request_id": clean(payload.get("requestId"), 64),
+            "client_status_code": clean_status(payload.get("statusCode")),
             "client_url": clean_url(payload.get("url")),
             "client_user_agent": clean(payload.get("userAgent"), 300),
         },

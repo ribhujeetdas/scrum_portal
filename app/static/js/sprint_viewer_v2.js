@@ -26,7 +26,17 @@
 
   function button(text, fn) { const b = node("button", text); b.type = "button"; b.addEventListener("click", fn); return b; }
 
-  function message(text) { $("Message").textContent = text; }
+  function message(text, kind = "info") {
+
+    const box = $("Message");
+
+    box.textContent = text;
+
+    box.className = `sv2-message sv2-message-${kind}`;
+
+    box.setAttribute("role", kind === "danger" ? "alert" : "status");
+
+  }
 
   function unavailable(text) { return node("p", `Unavailable — ${text}`, "sv2-empty"); }
 
@@ -54,9 +64,37 @@
 
     const response = await api(url, options);
 
-    const result = await response.json();
+    const requestId = response.headers.get("X-Request-ID") || "";
 
-    if (!response.ok) { const error = new Error(result.error?.message || `Request failed (${response.status})`); error.status = response.status; throw error; }
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+
+      const errorCode = result?.error?.code || "HTTP_ERROR";
+
+      const serverRequestId = result?.request_id || requestId;
+
+      const detail = result?.error?.message || `The server returned HTTP ${response.status}.`;
+
+      const reference = serverRequestId ? ` Request ID: ${serverRequestId}.` : "";
+
+      const error = new Error(`${detail} Error: ${errorCode}.${reference}`);
+
+      error.status = response.status; error.code = errorCode; error.requestId = serverRequestId;
+
+      throw error;
+
+    }
+
+    if (!result) {
+
+      const error = new Error(`The server returned an invalid response.${requestId ? ` Request ID: ${requestId}.` : ""}`);
+
+      error.status = response.status; error.code = "INVALID_RESPONSE"; error.requestId = requestId;
+
+      throw error;
+
+    }
 
     return result;
 
@@ -66,7 +104,7 @@
 
     if (error.name === "AbortError") return;
 
-    message(error.message);
+    message(error.message, "danger");
 
     if ([401, 403, 404].includes(error.status)) { $("Report").hidden = true; state.analysis = null; $("Issues").replaceChildren(); clearTimeout(pollTimer); }
 

@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 import uuid
 
-from flask import current_app, flash, redirect, render_template, request, url_for
+from flask import current_app, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy.orm import selectinload
 
@@ -50,7 +50,7 @@ def _trace_api(msg: str, *args) -> None:
 def _get_user_pat() -> str:
     if not current_user.jira_pat_enc:
         raise ValueError(
-            "Enterprise Agile Jira PAT is not set. Please set it in Profile."
+            "Enterprise Agile Jira PAT is not set. Add it in Settings > Integrations."
         )
     return crypto_service().decrypt(current_user.jira_pat_enc)
 
@@ -113,6 +113,56 @@ def _view_access_fresh(view: ReportView) -> bool:
     return datetime.now(UTC) <= expires
 
 
+def _access_denied(
+    *,
+    operation: str,
+    code: str,
+    message: str,
+    context: dict | None = None,
+):
+    current_app.logger.warning(
+        "Sprint Viewer access denied",
+        extra={
+            "event": "automation.sprint_viewer.access_denied",
+            "feature": "sprint_viewer",
+            "operation": operation,
+            "error_code": code,
+            "context": context or {},
+        },
+    )
+    return json_error(
+        message,
+        status_code=403,
+        code=code,
+        retryable=False,
+    )
+
+
+def _pat_required(operation: str, context: dict | None = None):
+    return _access_denied(
+        operation=operation,
+        code="JIRA_PAT_REQUIRED",
+        message=(
+            "Add a valid Jira PAT in Settings > Integrations, then return here "
+            "and try again."
+        ),
+        context=context,
+    )
+
+
+def _snapshot_denial(exc: SnapshotAccessDenied) -> tuple[str, str]:
+    reason = str(exc)
+    if reason == "Jira source is disabled":
+        return "JIRA_SOURCE_DISABLED", "The Jira integration is disabled. Check Settings > Integrations and try again."
+    if reason == "Three sprint imports are already in progress for this user":
+        return "SPRINT_IMPORT_LIMIT", "Three sprint imports are already running. Wait for one to finish, then try again."
+    if reason == "Client action ID is already bound to another report":
+        return "REPORT_ACTION_CONFLICT", "This report request is no longer valid. Refresh the page and try again."
+    if reason == "Selected board is not saved for this user":
+        return "BOARD_NOT_SAVED", "Selected board does not belong to your saved projects. Update Projects & Boards in Settings, then reselect it."
+    return "REPORT_ACCESS_DENIED", "Access to this sprint report was denied. Reselect the board and sprint, then try again."
+
+
 def sprint_viewer_page():
     projects = (
         UserProject.query.options(selectinload(UserProject.boards))
@@ -163,9 +213,11 @@ def sprint_viewer_get_sprints():
         return json_error("Project key is required.", status_code=400)
 
     if not _board_belongs_to_user_and_project(current_user.id, project_key, board_id_int):
-        return json_error(
-            "Selected board does not belong to selected project for this user.",
-            status_code=403,
+        return _access_denied(
+            operation="get_sprints",
+            code="BOARD_NOT_SAVED",
+            message="Selected board does not belong to selected project for this user. Update Projects & Boards in Settings, then reselect it.",
+            context={"board_id": board_id_int, "project_key": project_key},
         )
 
     try:
@@ -179,9 +231,30 @@ def sprint_viewer_get_sprints():
             feature="sprint_viewer",
             operation="get_sprints",
         )
-        return json_error(safe_error_message("validate Jira access"), status_code=403)
+        return _access_denied(
+            operation="get_sprints",
+            code="JIRA_ACCESS_DENIED",
+            message="Jira rejected this account or PAT. Verify the PAT in Settings > Integrations and confirm access to the selected board.",
+            context={"board_id": board_id_int, "project_key": project_key},
+        )
+    except ValueError:
+        return _pat_required("get_sprints", {"board_id": board_id_int, "project_key": project_key})
     except Exception as exc:
-        return json_error(str(exc), status_code=403)
+        log_handled_exception(
+            "Sprint Viewer could not read the stored Jira credential",
+            exc,
+            event="automation.sprint_viewer.credential_read_failed",
+            feature="sprint_viewer",
+            operation="get_sprints",
+            level=logging.ERROR,
+            context={"board_id": board_id_int, "project_key": project_key},
+        )
+        return _access_denied(
+            operation="get_sprints",
+            code="JIRA_CREDENTIAL_UNREADABLE",
+            message="The saved Jira PAT cannot be read on this installation. Save the PAT again in Settings > Integrations, then retry.",
+            context={"board_id": board_id_int, "project_key": project_key},
+        )
 
     _trace_api(
         "SprintViewer/sprints request user=%s project=%s board=%s refresh=%s",
@@ -316,9 +389,11 @@ def sprint_viewer_fetch_issues():
         return json_error(str(exc), status_code=400, code="INVALID_INPUT")
 
     if not _board_belongs_to_user(current_user.id, board_id_int):
-        return json_error(
-            "Selected board does not belong to your saved projects.",
-            status_code=403,
+        return _access_denied(
+            operation="fetch_issues",
+            code="BOARD_NOT_SAVED",
+            message="Selected board does not belong to your saved projects. Update Projects & Boards in Settings, then reselect it.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
         )
     sprint_row = UserBoardSprint.query.filter_by(
         user_id=current_user.id,
@@ -349,9 +424,30 @@ def sprint_viewer_fetch_issues():
             feature="sprint_viewer",
             operation="fetch_issues",
         )
-        return json_error(safe_error_message("validate Jira access"), status_code=403)
+        return _access_denied(
+            operation="fetch_issues",
+            code="JIRA_ACCESS_DENIED",
+            message="Jira rejected this account or PAT. Verify the PAT in Settings > Integrations and confirm access to the selected sprint.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
+    except ValueError:
+        return _pat_required("fetch_issues", {"board_id": board_id_int, "sprint_id": sprint_id_int})
     except Exception as exc:
-        return json_error(str(exc), status_code=403)
+        log_handled_exception(
+            "Sprint Viewer could not read the stored Jira credential",
+            exc,
+            event="automation.sprint_viewer.credential_read_failed",
+            feature="sprint_viewer",
+            operation="fetch_issues",
+            level=logging.ERROR,
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
+        return _access_denied(
+            operation="fetch_issues",
+            code="JIRA_CREDENTIAL_UNREADABLE",
+            message="The saved Jira PAT cannot be read on this installation. Save the PAT again in Settings > Integrations, then retry.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
 
     _trace_api(
         "SprintViewer/issues request user=%s board=%s sprint=%s",
@@ -450,9 +546,11 @@ def sprint_viewer_fetch_metrics():
         )
 
     if not _board_belongs_to_user(current_user.id, board_id_int):
-        return json_error(
-            "Selected board does not belong to your saved projects.",
-            status_code=403,
+        return _access_denied(
+            operation="fetch_metrics",
+            code="BOARD_NOT_SAVED",
+            message="Selected board does not belong to your saved projects. Update Projects & Boards in Settings, then reselect it.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
         )
     if UserBoardSprint.query.filter_by(
         user_id=current_user.id, board_id=board_id_int, sprint_id=sprint_id_int
@@ -481,9 +579,30 @@ def sprint_viewer_fetch_metrics():
             feature="sprint_viewer",
             operation="fetch_metrics",
         )
-        return json_error(safe_error_message("validate Jira access"), status_code=403)
+        return _access_denied(
+            operation="fetch_metrics",
+            code="JIRA_ACCESS_DENIED",
+            message="Jira rejected this account or PAT. Verify the PAT in Settings > Integrations and confirm access to the selected sprint.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
+    except ValueError:
+        return _pat_required("fetch_metrics", {"board_id": board_id_int, "sprint_id": sprint_id_int})
     except Exception as exc:
-        return json_error(str(exc), status_code=403)
+        log_handled_exception(
+            "Sprint Viewer could not read the stored Jira credential",
+            exc,
+            event="automation.sprint_viewer.credential_read_failed",
+            feature="sprint_viewer",
+            operation="fetch_metrics",
+            level=logging.ERROR,
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
+        return _access_denied(
+            operation="fetch_metrics",
+            code="JIRA_CREDENTIAL_UNREADABLE",
+            message="The saved Jira PAT cannot be read on this installation. Save the PAT again in Settings > Integrations, then retry.",
+            context={"board_id": board_id_int, "sprint_id": sprint_id_int},
+        )
 
     _trace_api(
         "SprintViewer/metrics request user=%s board=%s sprint=%s total_sp=%.2f total_count=%s",
@@ -530,7 +649,7 @@ def sprint_viewer_fetch_metrics():
 def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
     try:
         if not current_user.jira_pat_enc:
-            raise SnapshotAccessDenied("A Jira PAT is required")
+            return _pat_required("fetch_issues", {"board_id": board_id, "sprint_id": sprint_id})
         action_id = _client_action(payload)
         rebuild = strict_boolean(payload.get("rebuild"), "rebuild")
         select_snapshot = queue_snapshot_rebuild if rebuild else get_or_create_snapshot
@@ -545,7 +664,7 @@ def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
                 current_user,
                 board_id,
                 sprint_id,
-                request_id=getattr(request, "request_id", None),
+                request_id=getattr(g, "request_id", None),
             )
         if created:
             limited = consume_current_user_limit("sprint_import")
@@ -556,7 +675,7 @@ def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
             scope,
             snapshot,
             action_id,
-            request_id=getattr(request, "request_id", None),
+            request_id=getattr(g, "request_id", None),
         )
         db.session.commit()
         return json_accepted(**serialize_status(snapshot, view))
@@ -565,7 +684,13 @@ def _snapshot_fetch_issues(payload: dict, board_id: int, sprint_id: int):
         return json_error(str(exc), status_code=404, code="SPRINT_NOT_IN_BOARD")
     except SnapshotAccessDenied as exc:
         db.session.rollback()
-        return json_error(str(exc), status_code=403, code="REPORT_ACCESS_DENIED")
+        code, message = _snapshot_denial(exc)
+        return _access_denied(
+            operation="fetch_issues",
+            code=code,
+            message=message,
+            context={"board_id": board_id, "sprint_id": sprint_id},
+        )
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Failed to initialize sprint snapshot: %s", exc)

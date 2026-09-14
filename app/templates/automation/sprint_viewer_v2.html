@@ -3,15 +3,17 @@
 {% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='css/sprint_viewer_v2.css') }}">{% endblock %}
 {% block content %}
 <main id="sprintViewerV2" data-feature-script-src="{{ url_for('static', filename='js/sprint_viewer_v2.js') }}" data-boards="{{ boards_by_project|tojson|forceescape }}">
-  <header class="sv2-header"><div><p class="sv2-eyebrow">SPRINT VIEWER</p><h1>Past sprint analysis</h1><p>Closed sprints · Recorded facts and team review</p></div><button id="svRefresh" type="button">Refresh sprint list</button></header>
-  <section class="sv2-selectors" aria-label="Closed sprint selection">
-    <label>Project<select id="svProject"><option value="">Select project</option>{% for pk in projects %}<option value="{{ pk }}">{{ pk }}</option>{% endfor %}</select></label>
-    <label>Board<select id="svBoard"><option value="">Select board</option></select></label>
-    <label class="sv2-grow">Closed sprint<select id="svSprint"><option value="">Select closed sprint</option></select></label>
-    <button id="svAnalyze" type="button" disabled>Analyze</button><button id="svRebuild" type="button" disabled>Rebuild analysis</button><button id="svExport" type="button" disabled>Export CSV</button>
+  <section class="sv2-control-card">
+    <header class="sv2-header"><div><p class="sv2-eyebrow">SPRINT VIEWER</p><h1>Past sprint analysis</h1><p>Closed sprints · Recorded facts and team review</p></div><button id="svRefresh" type="button">Refresh sprint list</button></header>
+    <div class="sv2-selectors" aria-label="Closed sprint selection">
+      <label>Project<select id="svProject"><option value="">Select project</option>{% for pk in projects %}<option value="{{ pk }}">{{ pk }}</option>{% endfor %}</select></label>
+      <label>Board<select id="svBoard"><option value="">Select board</option></select></label>
+      <label class="sv2-grow">Closed sprint<select id="svSprint"><option value="">Select closed sprint</option></select></label>
+      <button id="svAnalyze" type="button" disabled>Analyze</button><button id="svRebuild" type="button" disabled>Rebuild analysis</button><button id="svExport" type="button" disabled>Export CSV</button>
+    </div>
+    <p class="sv2-muted">Catalogue includes sprints starting in the current and prior calendar years.</p>
+    <p id="svMessage" class="sv2-message sv2-message-info" role="status" aria-live="polite">Select a board to review its closed sprints.</p>
   </section>
-  <p class="sv2-muted">Catalogue includes sprints starting in the current and prior calendar years.</p>
-  <p id="svMessage" role="status" aria-live="polite">Select a board to review its closed sprints.</p>
   <section id="svReport" hidden>
     <div class="sv2-goal"><div><h2 id="svSprintName"></h2><p id="svDates"></p><p id="svGoal"></p><span id="svAssessment">Not assessed</span></div><button id="svAssess">Assess goal</button></div>
     <div class="sv2-role"><label>View as<select id="svRole"><option value="team">Team</option><option value="developer">Developer</option><option value="po">PO / BA</option><option value="scrum">Scrum Master</option><option value="manager">Engineering Manager</option></select></label><label id="svDeveloperLabel" hidden>Historical developer<select id="svDeveloper"></select></label><label>Measure<select id="svLens"><option value="count">Issue counts</option><option value="points">Story points</option></select></label></div>

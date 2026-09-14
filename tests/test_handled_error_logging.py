@@ -27,8 +27,8 @@ class HandledErrorLoggingTestConfig(Config):
     SPRINT_VIEWER_SNAPSHOT_USER_IDS = ""
 
 
-def _create_test_app(tmp_path):
-    class TestConfig(HandledErrorLoggingTestConfig):
+def _create_test_app(tmp_path, base_config=HandledErrorLoggingTestConfig):
+    class TestConfig(base_config):
         LOG_DIR = str(tmp_path)
 
     return create_app(TestConfig)
@@ -170,6 +170,42 @@ def test_sprint_viewer_service_error_is_logged_with_stacktrace(tmp_path, monkeyp
     assert record["error_type"] == "SprintViewerServiceError"
     assert "Traceback" in record["exception"]
     assert "super-secret" not in json.dumps(record)
+
+
+def test_sprint_viewer_missing_pat_is_actionable_and_logged(tmp_path):
+    class SnapshotConfig(HandledErrorLoggingTestConfig):
+        SPRINT_VIEWER_MODE = "snapshot"
+        SPRINT_VIEWER_V2_ENABLED = True
+
+    app = _create_test_app(tmp_path, SnapshotConfig)
+    with app.app_context():
+        db.create_all()
+        _add_user_project_and_board()
+
+    client = app.test_client()
+    _login(client)
+    response = client.post(
+        "/automation/sprint-viewer/issues",
+        json={"board_id": 101, "sprint_id": 202},
+        headers={"X-Request-ID": "missing-pat-123"},
+    )
+
+    assert response.status_code == 403
+    data = response.get_json()
+    assert data["error"]["code"] == "JIRA_PAT_REQUIRED"
+    assert "Settings" in data["error"]["message"]
+    assert data["request_id"] == "missing-pat-123"
+
+    records = _read_json_lines(tmp_path / "test-app.log")
+    record = next(
+        item
+        for item in records
+        if item.get("event") == "automation.sprint_viewer.access_denied"
+    )
+    assert record["request_id"] == "missing-pat-123"
+    assert record["error_code"] == "JIRA_PAT_REQUIRED"
+    assert record["operation"] == "fetch_issues"
+    assert record["context"] == {"board_id": 101, "sprint_id": 202}
 
 
 class FailingIssueLinksService:

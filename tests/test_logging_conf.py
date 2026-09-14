@@ -75,3 +75,31 @@ def test_request_completion_log_contains_correlation_fields(tmp_path):
     assert completion["status_code"] == 200
     assert isinstance(completion["duration_ms"], int)
 
+
+def test_client_http_error_log_contains_server_diagnostics(tmp_path):
+    app = _create_test_app(tmp_path)
+
+    response = app.test_client().post(
+        "/api/client-log",
+        json={
+            "event": "fetch.http_error",
+            "message": "POST /automation/sprint-viewer/issues -> HTTP 403",
+            "url": "http://localhost/automation/sprint-viewer?secret=discarded",
+            "userAgent": "Test Browser",
+            "method": "POST",
+            "path": "/automation/sprint-viewer/issues",
+            "statusCode": 403,
+            "errorCode": "JIRA_PAT_REQUIRED",
+            "requestId": "server-denied-123",
+        },
+    )
+
+    assert response.status_code == 200
+    records = _read_json_lines(tmp_path / "test-app.log")
+    record = next(item for item in records if item.get("client_event") == "fetch.http_error")
+    assert record["client_method"] == "POST"
+    assert record["client_path"] == "/automation/sprint-viewer/issues"
+    assert record["client_status_code"] == 403
+    assert record["client_error_code"] == "JIRA_PAT_REQUIRED"
+    assert record["client_request_id"] == "server-denied-123"
+    assert "secret=discarded" not in json.dumps(record)

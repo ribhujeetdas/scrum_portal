@@ -52,6 +52,8 @@ Summary cards can use the original viewer's authorized ScriptRunner results when
 | Original UI | Both mode and v2 flag, allowlist membership, and restart of the correct web process. Check the launcher's UI-selection message. |
 | Redirect to Settings | Add an enabled project and board for the signed-in account. |
 | New heading but no report | Select a closed sprint and click **Analyze**, check the user PAT in Settings, and confirm the worker is running. |
+| Analyze returns HTTP 403 | Read the visible error code and request ID. `JIRA_PAT_REQUIRED` means this laptop/account needs a PAT saved in **Settings > Integrations**. `JIRA_CREDENTIAL_UNREADABLE` commonly means a copied database contains a PAT encrypted with a different `FERNET_KEY`; save the PAT again on the current installation. Use the request ID to correlate the browser message with the server log. |
+| UI looks unstyled or different on another laptop | Bootstrap is bundled under `/static/vendor/bootstrap/`. Restart the web process, hard-refresh the page, and confirm `/static/vendor/bootstrap/bootstrap.min.css` and `/static/vendor/bootstrap/bootstrap.bundle.min.js` return HTTP 200. |
 | Import stays pending | Checks back off and pause after two minutes; **Analyze** checks again without forcing a rebuild. Inspect `logs/worker-dev.stderr.log`, `logs/worker-dev.stdout.log`, and `/health/worker`. |
 | Missing review table/schema error | Stop processes, back up, and run `setup-db --apply`; `setup-db --check` should report revision `d48e6b9c0d03`. |
 | Historical metrics unavailable | Check history permission, changelog completeness and validated mapping/workflow coverage; enabling the UI does not validate Jira data. |

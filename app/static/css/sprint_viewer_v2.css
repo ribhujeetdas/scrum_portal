@@ -1,6 +1,7 @@
-#sprintViewerV2{--ink:#172b4d;--muted:#59677e;--line:#e1e6ee;--accent:#465bd8;color:var(--ink);font:16px/1.6 system-ui,sans-serif;background:#f5f7fa;padding:24px;max-width:1500px;margin:auto}
-#sprintViewerV2 h1{font-size:32px;margin:0}#sprintViewerV2 h2{font-size:23px;margin:16px 0}#sprintViewerV2 h3{font-size:18px;margin:16px 0 8px}
+#sprintViewerV2{--ink:#172b4d;--muted:#59677e;--line:#e1e6ee;--accent:#465bd8;color:var(--ink);font-family:var(--portal-font-family);font-size:var(--portal-font-size);line-height:var(--portal-line-height);max-width:1500px;margin:auto}
+#sprintViewerV2 h1{font-size:1.75rem;font-weight:500;line-height:1.2;margin:0}#sprintViewerV2 h2{font-size:1.25rem;line-height:1.2;margin:16px 0}#sprintViewerV2 h3{font-size:1rem;line-height:1.2;margin:16px 0 8px}
 .sv2-header,.sv2-goal,.sv2-pagination{display:flex;justify-content:space-between;align-items:center;gap:16px}.sv2-header p{margin:4px 0 16px}.sv2-eyebrow{letter-spacing:.12em;font-weight:700;font-size:14px;color:var(--accent)}
+.sv2-control-card{padding:16px;margin-bottom:24px;background:#fff;border:1px solid rgba(0,0,0,.175);border-radius:.375rem;box-shadow:0 .125rem .25rem rgba(0,0,0,.075)}
 .sv2-selectors,.sv2-role,.sv2-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.sv2-grow{flex:1}.sv2-muted,#svDates,.sv2-card small{color:var(--muted)}
 #sprintViewerV2 label{display:inline-flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600;margin:0 8px 8px 0}#sprintViewerV2 button,#sprintViewerV2 select,#sprintViewerV2 input,#sprintViewerV2 textarea{font:inherit;border:1px solid var(--line);border-radius:8px;min-height:44px;padding:8px 12px;background:white;color:var(--ink)}
 #sprintViewerV2 button{cursor:pointer}#sprintViewerV2 button:hover{border-color:var(--accent)}#sprintViewerV2 button:disabled{opacity:.5;cursor:default}#sprintViewerV2 :focus-visible{outline:3px solid var(--accent);outline-offset:2px}
@@ -29,5 +30,6 @@ body:has(#sprintViewerV2)>div.d-flex>main{min-width:0}
 
 #sprintViewerV2 select,#sprintViewerV2 input,#sprintViewerV2 textarea{font-size:16px}
 #sprintViewerV2 #svAnalyze{background:var(--accent);color:white;border-color:var(--accent);font-weight:600}
+.sv2-message{margin:12px 0 0;padding:12px 14px;border:1px solid transparent;border-radius:6px;overflow-wrap:anywhere}.sv2-message-info{color:#334155;background:#f8fafc;border-color:#e2e8f0}.sv2-message-danger{color:#842029;background:#f8d7da;border-color:#f5c2c7;font-weight:600}
 
 @media(max-width:719px){.sv2-selectors .sv2-grow{flex:0 0 100%}.sv2-selectors select{width:100%}}

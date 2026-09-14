@@ -53,11 +53,44 @@
     return (error.message || String(error)).slice(0, 500);
   }
 
+  function requestPath(value) {
+    try {
+      return new URL(String(value || ""), window.location.origin).pathname.slice(0, 300);
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  async function responseErrorDetails(response) {
+    const requestId = response.headers.get("X-Request-ID") || "";
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!contentType.toLowerCase().includes("json")) {
+      return { requestId, code: "", message: "" };
+    }
+    try {
+      const payload = await response.clone().json();
+      return {
+        requestId: payload.request_id || requestId,
+        code: payload.error && typeof payload.error === "object" ? payload.error.code || "" : "",
+        message: payload.error && typeof payload.error === "object"
+          ? payload.error.message || ""
+          : (typeof payload.error === "string" ? payload.error : "")
+      };
+    } catch (_error) {
+      return { requestId, code: "", message: "" };
+    }
+  }
+
   function logClientEvent(event, details) {
     const csrfToken = getMeta("csrf-token");
     const payload = {
       event: String(event || "client.event").slice(0, 80),
       message: compactError(details && details.message ? details.message : details),
+      method: details && details.method ? String(details.method).slice(0, 12) : "",
+      path: requestPath(details && details.path ? details.path : ""),
+      statusCode: details && details.statusCode ? Number(details.statusCode) : null,
+      errorCode: details && details.errorCode ? String(details.errorCode).slice(0, 80) : "",
+      requestId: details && details.requestId ? String(details.requestId).slice(0, 64) : "",
       url: window.location.href,
       userAgent: navigator.userAgent
     };
@@ -81,8 +114,8 @@
 
   function showToast(message, kind, delay) {
     const container = document.getElementById("portalToastContainer");
-    if (!container || !window.bootstrap) {
-      return;
+    if (!container) {
+      return false;
     }
 
     const safeKind = normalizeToastKind(kind || "info");
@@ -100,12 +133,21 @@
     `;
     container.appendChild(toastEl);
 
+    if (!window.bootstrap) {
+      toastEl.classList.add("show", "portal-toast-fallback");
+      const close = toastEl.querySelector("button");
+      if (close) close.addEventListener("click", () => toastEl.remove());
+      window.setTimeout(() => toastEl.remove(), delay || 4500);
+      return true;
+    }
+
     const toast = bootstrap.Toast.getOrCreateInstance(toastEl, {
       autohide: true,
       delay: delay || 4500
     });
     toastEl.addEventListener("hidden.bs.toast", () => toastEl.remove());
     toast.show();
+    return true;
   }
 
   async function apiFetch(url, options) {
@@ -132,8 +174,21 @@
         setMeta("request-id", responseRequestId);
       }
       if (!response.ok) {
+        const details = await responseErrorDetails(response);
+        const method = String(opts.method || "GET").toUpperCase();
+        const path = requestPath(url);
+        const suffix = [
+          details.code ? `code=${details.code}` : "",
+          details.requestId ? `request_id=${details.requestId}` : "",
+          details.message ? details.message : ""
+        ].filter(Boolean).join("; ");
         logClientEvent("fetch.http_error", {
-          message: `${opts.method || "GET"} ${url} -> HTTP ${response.status}`
+          message: `${method} ${path} -> HTTP ${response.status}${suffix ? `; ${suffix}` : ""}`,
+          method,
+          path,
+          statusCode: response.status,
+          errorCode: details.code,
+          requestId: details.requestId
         });
       }
       return response;

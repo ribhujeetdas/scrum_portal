@@ -2,6 +2,25 @@
    BASE / LAYOUT
    ===================================================== */
 
+:root {
+  --portal-font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --portal-font-size: 1rem;
+  --portal-line-height: 1.5;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--portal-font-family);
+}
+
+body {
+  font-size: var(--portal-font-size);
+  line-height: var(--portal-line-height);
+}
+
 .sidebar {
   width: 280px;
   min-height: 100vh;
@@ -29,6 +48,14 @@
   z-index: 1080;
 }
 
+.portal-toast-container {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 1080;
+  padding: 1rem;
+}
+
 .portal-toast {
   min-width: 360px;
   max-width: min(520px, calc(100vw - 2rem));
@@ -43,6 +70,11 @@
 .portal-toast .toast-body {
   padding: 1rem 0.9rem 1rem 1.1rem;
   line-height: 1.35;
+}
+
+.portal-toast-fallback {
+  display: block;
+  margin-bottom: 0.75rem;
 }
 
 .portal-toast-success {

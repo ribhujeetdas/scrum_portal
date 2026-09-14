@@ -294,6 +294,103 @@ def test_v2_rendered_roles_drilldown_review_and_mobile(page, analysis_app, tmp_p
         page.goto('about:blank'); server.shutdown(); thread.join(timeout=5)
 
 
+def test_v2_access_error_is_visible_with_code_and_request_id(page, analysis_app):
+    import threading
+    from werkzeug.serving import make_server
+
+    app, _, _view = analysis_app
+    server = make_server('127.0.0.1', 0, app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f'http://127.0.0.1:{server.server_port}'
+    page.route(
+        '**/automation/sprint-viewer/sprints',
+        lambda route: route.fulfill(json={
+            'ok': True,
+            'sprints': [{'id': 42, 'name': 'Closed sprint', 'state': 'closed'}],
+        }),
+    )
+    page.route(
+        '**/automation/sprint-viewer/issues',
+        lambda route: route.fulfill(
+            status=403,
+            json={
+                'ok': False,
+                'error': {
+                    'code': 'JIRA_PAT_REQUIRED',
+                    'message': 'Add a Jira PAT in Settings > Integrations, then try again.',
+                },
+                'request_id': 'server-denied-123',
+            },
+        ),
+    )
+    try:
+        page.goto(origin + '/auth/login')
+        page.locator('input[name="identifier"]').fill('test@example.com')
+        page.locator('input[name="password"]').fill('Password12345')
+        page.locator('button[type="submit"], input[type="submit"]').first.click()
+        page.goto(origin + '/automation/sprint-viewer')
+        page.select_option('#svProject', 'TEST')
+        page.select_option('#svBoard', '10')
+        page.locator('#svSprint option[value="42"]').wait_for(state='attached')
+        page.select_option('#svSprint', '42')
+        page.locator('#svAnalyze').click()
+
+        message = page.locator('#svMessage')
+        message.wait_for()
+        assert 'Settings > Integrations' in message.inner_text()
+        assert 'JIRA_PAT_REQUIRED' in message.inner_text()
+        assert 'server-denied-123' in message.inner_text()
+        assert 'sv2-message-danger' in (message.get_attribute('class') or '')
+        assert message.get_attribute('role') == 'alert'
+    finally:
+        page.goto('about:blank')
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_v2_header_typography_matches_existing_automation_card(page, analysis_app):
+    import threading
+    from werkzeug.serving import make_server
+
+    app, _, _view = analysis_app
+    server = make_server('127.0.0.1', 0, app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f'http://127.0.0.1:{server.server_port}'
+    try:
+        page.goto(origin + '/auth/login')
+        page.locator('input[name="identifier"]').fill('test@example.com')
+        page.locator('input[name="password"]').fill('Password12345')
+        page.locator('button[type="submit"], input[type="submit"]').first.click()
+
+        page.goto(origin + '/automation/rule-copier')
+        rule_font = page.locator('#ruleCopierPage').evaluate(
+            '(el) => getComputedStyle(el).fontFamily'
+        )
+        rule_heading_size = page.locator('#ruleCopierPage h3').evaluate(
+            '(el) => getComputedStyle(el).fontSize'
+        )
+
+        page.goto(origin + '/automation/sprint-viewer')
+        viewer_font = page.locator('#sprintViewerV2').evaluate(
+            '(el) => getComputedStyle(el).fontFamily'
+        )
+        viewer_heading_size = page.locator('#sprintViewerV2 h1').evaluate(
+            '(el) => getComputedStyle(el).fontSize'
+        )
+        control_card = page.locator('.sv2-control-card')
+
+        assert viewer_font == rule_font
+        assert viewer_heading_size == rule_heading_size == '28px'
+        assert control_card.evaluate('(el) => getComputedStyle(el).backgroundColor') == 'rgb(255, 255, 255)'
+        assert control_card.evaluate('(el) => getComputedStyle(el).boxShadow') != 'none'
+    finally:
+        page.goto('about:blank')
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 def test_v2_unchanged_poll_does_not_render_and_stops_after_timeout(page, analysis_app):
     import threading
     from werkzeug.serving import make_server

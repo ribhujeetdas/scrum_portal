@@ -162,10 +162,16 @@ class JsonFormatter(logging.Formatter):
 
         for key in (
             "client_event",
+            "client_error_code",
             "client_message",
+            "client_method",
+            "client_path",
+            "client_request_id",
+            "client_status_code",
             "client_url",
             "client_user_agent",
             "context",
+            "error_code",
             "error_type",
             "external_operation",
             "external_endpoint",

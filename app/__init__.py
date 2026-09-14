@@ -9,6 +9,7 @@ from flask_login import current_user
 from .config import Config
 from .extensions import db, login_manager, csrf, migrate
 from .logging_conf import configure_logging, init_request_correlation
+from .core.api import json_error, safe_error_message
 from .core.config_validation import collect_config_warnings, log_config_warnings
 from .core.config_validation import validate_startup_config
 from .core.database import configure_database, enable_and_verify_wal
@@ -153,12 +154,33 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         return response
 
     # Error handlers
+    def wants_json_error() -> bool:
+        return (
+            request.path.startswith("/api/")
+            or request.path.startswith("/automation/sprint-viewer/")
+            or request.is_json
+        )
+
     @app.errorhandler(403)
     def forbidden(_):
+        if wants_json_error():
+            return json_error(
+                "You do not have access to this resource.",
+                status_code=403,
+                code="FORBIDDEN",
+                retryable=False,
+            )
         return render_template("error.html", code=403, message="Forbidden"), 403
 
     @app.errorhandler(404)
     def not_found(_):
+        if wants_json_error():
+            return json_error(
+                "The requested resource was not found.",
+                status_code=404,
+                code="NOT_FOUND",
+                retryable=False,
+            )
         return render_template("error.html", code=404, message="Not Found"), 404
 
     @app.errorhandler(500)
@@ -169,6 +191,13 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             exc_info=(type(original), original, getattr(original, "__traceback__", None)),
             extra={"event": "error.unhandled"},
         )
+        if wants_json_error():
+            return json_error(
+                safe_error_message(),
+                status_code=500,
+                code="INTERNAL_ERROR",
+                retryable=True,
+            )
         return render_template("error.html", code=500, message="Internal Server Error"), 500
 
     # CLI: init db

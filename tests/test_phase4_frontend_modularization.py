@@ -22,6 +22,14 @@ FEATURE_JS_FILES = [
     "app/static/js/tableau_custom_view_settings.js",
 ]
 
+BOOTSTRAP_TEMPLATES = [
+    "app/templates/base.html",
+    "app/templates/auth/confirm_profile.html",
+    "app/templates/auth/login.html",
+    "app/templates/auth/set_password.html",
+    "app/templates/auth/signup.html",
+]
+
 
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
@@ -67,6 +75,26 @@ def test_phase4_feature_fetches_use_canonical_api_routes():
         assert f'"{legacy_path}' not in combined
         assert f"'{legacy_path}" not in combined
         assert f"`{legacy_path}" not in combined
+
+
+def test_shared_bootstrap_assets_are_local_and_offline_safe():
+    for path in BOOTSTRAP_TEMPLATES:
+        source = read(path)
+        assert "cdn.jsdelivr.net/npm/bootstrap" not in source, path
+        assert "vendor/bootstrap/bootstrap.min.css" in source, path
+        assert "vendor/bootstrap/bootstrap.bundle.min.js" in source, path
+
+    assert (ROOT / "app/static/vendor/bootstrap/bootstrap.min.css").is_file()
+    assert (ROOT / "app/static/vendor/bootstrap/bootstrap.bundle.min.js").is_file()
+
+
+def test_sprint_viewer_v2_uses_shared_typography_tokens():
+    app_css = read("app/static/css/app.css")
+    viewer_css = read("app/static/css/sprint_viewer_v2.css")
+
+    assert "--portal-font-family" in app_css
+    assert "font-family:var(--portal-font-family)" in viewer_css.replace(" ", "")
+    assert "font:16px/1.6 system-ui" not in viewer_css
 
 
 def test_sprint_viewer_report_download_waits_for_metrics():
