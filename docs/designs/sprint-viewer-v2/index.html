@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprint Viewer · Design preview</title>
+  <link rel="stylesheet" href="preview.css?v=past-only-4">
+  <link rel="stylesheet" href="role-review.css?v=past-only-4">
+  <script defer src="sample-data.js?v=past-only-4"></script><script defer src="role-review.js?v=past-only-4"></script><script defer src="preview.js?v=past-only-4"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to sprint review</a>
+  <header class="portal"><strong>Scrum Portal</strong><span>Sprint Viewer <i>/</i> <span>Design preview · Sample data</span></span></header>
+  <main id="main">
+    <div class="page-heading"><div><h1 id="sprint-title">Sprint 24</h1><p id="sprint-subtitle">Past sprint analysis · Payments platform · 17–28 Aug 2026</p></div><div class="selectors"><label>Project<select aria-label="Project"><option>PAY</option></select></label><label>Board<select aria-label="Board"><option>Payments</option></select></label><label>Sprint<select id="sprint-selector" aria-label="Sprint"><option>24 · Closed</option></select></label><button class="primary" id="export">Export CSV ↓</button></div></div>
+    <div id="past-workspace">
+    <div class="review-lens"><div><label class="inline-label">View as <select id="review-role"><option>Team</option><option>Developer</option><option>PO / BA</option><option>Scrum Master</option><option>Engineering Manager</option></select></label><label class="inline-label" id="review-person-label" hidden>Developer <select id="review-person"><option>Alex</option><option>Priya</option><option>Sam</option></select></label></div><p id="lens-description" role="status" aria-live="polite"></p></div>
+    <section class="summary surface" aria-label="Sprint summary">
+      <div class="goal"><div><h2>Sprint goal</h2><p>Make payment retries safe and observable.</p></div><div class="goal-actions"><span id="assessment-label" class="badge">Not assessed</span><button id="assess">Add assessment</button></div></div>
+      <div class="metrics" id="metrics"></div>
+    </section>
+    <nav class="tabs" role="tablist" aria-label="Sprint analysis">
+      <button role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview">Overview</button>
+      <button role="tab" id="tab-suggestions" aria-controls="panel-suggestions" aria-selected="false" tabindex="-1" data-tab="suggestions">Suggestions <span class="count" id="suggestion-count">3</span></button>
+      <button role="tab" id="tab-flow" aria-controls="panel-flow" aria-selected="false" tabindex="-1" data-tab="flow">Flow &amp; Quality</button>
+      <button role="tab" id="tab-trends" aria-controls="panel-trends" aria-selected="false" tabindex="-1" data-tab="trends">Trends</button>
+      <button role="tab" id="tab-retro" aria-controls="panel-retro" aria-selected="false" tabindex="-1" data-tab="retro">Retrospective</button>
+    </nav>
+    <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+      <section id="role-review" aria-label="Role-specific sprint analysis"></section>
+      <div class="overview-grid">
+        <section class="surface plan-panel"><div class="section-heading"><h2>What happened to the plan?</h2><button class="text-button" id="definitions">Definitions ⓘ</button></div><div id="plan-bar" class="plan-bar" aria-label="Original plan outcomes"></div><div class="bar-legend" id="bar-legend"></div><p class="added-line" id="added-line"></p></section>
+        <section class="surface discussions"><h2>For your next discussion</h2><div id="discussion-list"></div><button class="text-button" data-go="suggestions">View suggestions →</button></section>
+      </div>
+    </section>
+    <section role="tabpanel" id="panel-suggestions" aria-labelledby="tab-suggestions" hidden>
+      <div class="section-heading spacious"><div><h2 class="section-title">Suggestions</h2><p>Recorded facts and optional next steps.</p></div><span class="badge">Uses the page-level view</span></div>
+      <div class="suggestion-toolbar"><div class="chips" id="suggestion-states"></div><span class="muted">3 rules evaluated · Complete sample history</span></div>
+      <p class="muted" id="role-explanation"></p><div id="suggestion-list"></div>
+      <p class="footnote">Suggestions use fixed rules. No cause is inferred. Your team decides what to act on.</p>
+    </section>
+    <section role="tabpanel" id="panel-flow" aria-labelledby="tab-flow" hidden>
+      <div class="section-heading spacious"><div><h2 class="section-title">Flow &amp; Quality</h2><p>Understand elapsed time and recorded waits.</p></div><span class="badge">At sprint close</span></div>
+      <div class="surface flow-metrics" id="flow-metrics"></div>
+      <div class="overview-grid flow-grid"><section class="surface"><h2>Where completed work spent time</h2><p class="muted">Median elapsed days by stage · 21 completed issues</p><div id="stage-bars"></div><p class="footnote">Stage medians do not add up to the median cycle time.</p></section><section class="surface"><h2>Still unfinished</h2><p class="muted">6 issues at close · elapsed age from first active state</p><div id="aging"></div><button class="text-button" data-quick="unfinished">View all unfinished work →</button></section></div>
+    </section>
+    <section role="tabpanel" id="panel-trends" aria-labelledby="tab-trends" hidden>
+      <div class="section-heading spacious"><div><h2 class="section-title">Trends</h2><p>Six comparable sprints · Payments board</p></div><span class="badge">Illustrative historical samples</span></div>
+      <div class="overview-grid"><section class="surface"><h2>Completed issues</h2><p class="muted">Compare throughput with the preceding five sprints.</p><div class="trend-bars" id="trend-bars"></div><p id="trend-context" class="footnote"></p></section><section class="surface"><h2>Read the context</h2><p class="body-note">Delivery varies with the work and available capacity. Use these measures to frame a discussion.</p><dl class="context-list"><div><dt>Sprint length</dt><dd>10 working days each</dd></div><div><dt>Workflow mapping</dt><dd>Same sample configuration</dd></div><div><dt>History coverage</dt><dd>Complete sample data</dd></div><div><dt>Capacity</dt><dd>Not recorded</dd></div></dl><p class="muted">Points are not used to compare teams.</p></section></div>
+      <section class="surface trend-table"><h2>Sprint comparison</h2><div class="table-scroll" tabindex="0" aria-label="Sprint comparison table"><table><thead><tr><th>Sprint</th><th>Planned</th><th>Plan completed</th><th>Total completed</th><th>Added / removed</th><th>Cycle median</th></tr></thead><tbody id="trend-rows"></tbody></table></div></section>
+    </section>
+    <section role="tabpanel" id="panel-retro" aria-labelledby="tab-retro" hidden>
+      <div class="section-heading spacious"><div><h2 class="section-title">Retrospective</h2><p>Team decisions, with a clear next step.</p></div><button id="new-action" class="primary">+ Add action</button></div>
+      <div class="overview-grid"><section class="surface"><h2>Goal assessment</h2><p id="retro-assessment"></p><p id="retro-note" class="body-note"></p><button id="edit-assessment">Edit assessment</button></section><section class="surface"><h2>Review note</h2><label for="review-note" class="muted">Record what the team learned. This is human input.</label><textarea id="review-note" rows="3" placeholder="What helped? What should change?"></textarea><button id="save-note">Save preview note</button></section></div>
+      <section class="surface actions-panel"><div class="section-heading"><h2>Improvement actions</h2><span class="muted" id="action-count"></span></div><div id="actions"></div></section><p class="footnote">Preview edits are saved only in this browser. No Jira updates or messages are sent.</p>
+    </section>
+    <section id="work" class="surface work-panel" aria-label="Sprint work">
+      <div class="section-heading"><h2>Sprint work <span id="issue-count" class="muted"></span></h2><div class="table-view-controls"><label class="inline-label">Group by<select id="issue-group"><option value="none">None</option><option value="developer">Developer at close</option></select></label><label class="inline-label">Issue focus<select id="issue-focus"><option value="all">All issues</option><option value="person">Selected developer</option><option value="stories">Stories</option><option value="unfinished">Unfinished at close</option></select></label></div></div>
+      <div class="table-toolbar"><input type="search" id="search" aria-label="Search sprint issues" placeholder="Search issues by key, summary or assignee…"><div class="chips" id="issue-filters"></div></div>
+      <div id="filter-context" class="filter-context" hidden><span></span><button class="text-button" id="clear-filters">Clear all</button></div>
+      <div class="table-scroll" tabindex="0" aria-label="Sprint issue table"><table><thead><tr><th><button class="sort" id="sort-key">Key ↑</button></th><th>Summary</th><th>Type</th><th>Assignee at close*</th><th>Scope</th><th>At close*</th><th><abbr title="Original points at start; added points at entry">Pts</abbr></th></tr></thead><tbody id="issues"></tbody></table></div>
+      <div class="table-footer"><span id="page-label" role="status" aria-live="polite"></span><div><button id="prev-page" aria-label="Previous issue page">←</button><button id="next-page" aria-label="Next issue page">→</button></div></div>
+      <p class="coverage"><strong>Historical coverage</strong> 29 / 29 sample issues <span>·</span> At sprint close <span>·</span> *Removed issues show values at removal.</p>
+    </section>
+    </div>
+    <footer class="page-footer"><span>Preview only · Past sprint analysis · No live integrations</span><a href="REVIEW.md">Review walkthrough ↗</a><a href="../../plans/sprint-viewer-v2.md">Implementation plan ↗</a><button class="text-button" id="reset-preview">Reset preview edits</button></footer>
+  </main>
+  <dialog id="detail-dialog" class="drawer" aria-labelledby="detail-title"><button class="close" aria-label="Close issue details" data-close>×</button><div id="detail-body"></div></dialog>
+  <dialog id="edit-dialog" aria-labelledby="edit-title"><form id="edit-form"><div class="section-heading"><h2 id="edit-title"></h2><button type="button" class="close-inline" aria-label="Close form" data-close>×</button></div><div id="edit-body"></div><div class="form-actions"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save in preview</button></div></form></dialog>
+  <dialog id="definition-dialog" aria-labelledby="definition-title"><div class="section-heading"><h2 id="definition-title">How to read this sprint</h2><button class="close-inline" aria-label="Close definitions" data-close>×</button></div><p>This sample has 24 original issues and 5 added issues: 29 unique issues overall.</p><dl class="context-list"><div><dt>Original plan</dt><dd>18 done + 4 unfinished + 2 removed = 24</dd></div><div><dt>Added work</dt><dd>3 done + 2 unfinished = 5</dd></div><div><dt>Completed</dt><dd>18 original + 3 added = 21</dd></div><div><dt>Unfinished</dt><dd>4 original + 2 added = 6</dd></div><div><dt>Plan completion</dt><dd>18 / 24 = 75%</dd></div><div><dt>Point basis</dt><dd>All sample issues have 2 points at start/entry. Estimates never change in this fixture.</dd></div></dl><p>Closing status is measured on 28 Aug 2026 at 18:00 Asia/Kolkata. No subtasks or already-Done entries are included in this sample.</p><p>Actual production history coverage and metric calculations require the implementation described in the plan.</p></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

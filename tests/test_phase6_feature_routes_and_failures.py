@@ -132,9 +132,9 @@ def test_ui_pages_render_expected_feature_controls(tmp_path):
         assert expected in response.get_data(as_text=True), path
 
     rule_page = client.get("/automation/rule-copier").get_data(as_text=True)
-    assert 'id="ruleSearch"' in rule_page
     assert 'id="sourceRule"' in rule_page
-    assert 'id="refreshRulesBtn"' in rule_page
+    assert 'id="ruleSearch"' not in rule_page
+    assert 'id="refreshRulesBtn"' not in rule_page
 
 
 def test_rule_copier_lists_safe_rule_metadata_for_selected_board(tmp_path, monkeypatch):

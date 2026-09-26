@@ -33,36 +33,18 @@
         </select>
       </div>
 
-      <div class="col-md-3">
+      <div class="col-md-4">
         <label class="form-label" for="srcBoard">Board (Source)</label>
         <select id="srcBoard" class="form-select" disabled>
           <option value="">-- Select Board --</option>
         </select>
       </div>
 
-      <div class="col-md-4">
-        <div class="d-flex justify-content-between align-items-center gap-2">
-          <label class="form-label" for="ruleSearch">Automation Rule</label>
-          <button id="refreshRulesBtn" class="btn btn-link btn-sm p-0 mb-2" type="button" disabled>
-            Refresh rules
-          </button>
-        </div>
-        <input
-          id="ruleSearch"
-          type="search"
-          class="form-control mb-2"
-          placeholder="Search by rule ID or name"
-          aria-controls="sourceRule"
-          autocomplete="off"
-          disabled
-        >
-        <label class="visually-hidden" for="sourceRule">Matching automation rules</label>
+      <div class="col-md-3">
+        <label class="form-label" for="sourceRule">Automation Rule (ID — Name)</label>
         <select id="sourceRule" class="form-select" disabled>
           <option value="">-- Select source project and board --</option>
         </select>
-        <div id="ruleListStatus" class="form-text" aria-live="polite">
-          Rules load automatically after a source board is selected.
-        </div>
       </div>
 
       <div class="col-md-2">

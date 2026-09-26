@@ -12,7 +12,7 @@ from app.extensions import db
 from app.models import User, UserBoard, UserProject
 
 
-def test_rule_copier_loads_searches_and_fetches_data_center_rules(page, tmp_path):
+def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path):
     database_path = tmp_path / "rule-copier-browser.db"
 
     class BrowserConfig(Config):
@@ -89,6 +89,12 @@ def test_rule_copier_loads_searches_and_fetches_data_center_rules(page, tmp_path
                     "state": "DISABLED",
                 },
             }
+        elif url.endswith("/api/automation/rule-copier/copy"):
+            request = route.request.post_data_json
+            assert request["target_project_key"] == "ABC"
+            assert request["target_board_id"] == 101
+            assert request["rule_json"]["id"] == 202
+            body = {"ok": True, "message": "Rule copied successfully."}
         else:
             body = {"ok": False, "error": {"message": "Unexpected browser fixture request"}}
         route.fulfill(
@@ -125,22 +131,17 @@ def test_rule_copier_loads_searches_and_fetches_data_center_rules(page, tmp_path
         page.wait_for_function(
             "document.querySelectorAll('#sourceRule option').length === 4"
         )
-        assert page.locator("#ruleListStatus").inner_text() == (
-            "3 automation rules loaded from Jira Data Center."
-        )
         assert page.locator("#sourceRule option").all_inner_texts()[1:] == [
             "101 — Assign default reviewer (ENABLED)",
             "202 — Deploy readiness checks (DISABLED)",
             "303 — Notify feature owner (ENABLED)",
         ]
+        assert page.locator("#ruleSearch").count() == 0
+        control_tops = page.locator(
+            "#srcProject, #srcBoard, #sourceRule, #fetchRuleBtn"
+        ).evaluate_all("elements => elements.map(element => element.getBoundingClientRect().top)")
+        assert max(control_tops) - min(control_tops) <= 1
 
-        page.locator("#ruleSearch").fill("deploy")
-        assert page.locator("#sourceRule option").all_inner_texts()[1:] == [
-            "202 — Deploy readiness checks (DISABLED)"
-        ]
-        assert page.locator("#ruleListStatus").inner_text() == (
-            "1 of 3 automation rules match your search."
-        )
         page.select_option("#sourceRule", "202")
         assert page.locator("#fetchRuleBtn").is_enabled()
         page.locator("#fetchRuleBtn").click()
@@ -150,6 +151,17 @@ def test_rule_copier_loads_searches_and_fetches_data_center_rules(page, tmp_path
         assert page.locator("#outRuleName").inner_text() == "Deploy readiness checks"
         assert page.locator("#outRuleState").inner_text() == "DISABLED"
         assert page.locator("#confirmBtn").is_enabled()
+
+        page.locator("#confirmBtn").click()
+        page.locator("#step2").wait_for(state="visible")
+        page.select_option("#dstProject", "ABC")
+        page.locator("#dstBoard option[value='101']").wait_for(state="attached")
+        assert page.locator("#dstBoard").is_enabled()
+        page.select_option("#dstBoard", "101")
+        assert page.locator("#copyRuleBtn").is_enabled()
+        page.locator("#copyRuleBtn").click()
+        page.get_by_text("Rule copied successfully.").wait_for(state="visible")
+
         assert not page_errors
         assert not console_errors
 
