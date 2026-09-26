@@ -102,7 +102,7 @@ export function initSprintViewer(page, apiFetch) {
     state.fetchedCoreRevision = revision;
     const data = { ...first, groups: groupIssues(Array.from(state.issues.values())) };
     state.core = data;
-    renderCore(data, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []));
+    renderCore(data, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []), state.metrics);
     setMetricsPending();
     showMessage("success", "Tickets loaded. Metrics and enrichment are continuing in the background.");
     fetchButton.disabled = false;
@@ -117,19 +117,19 @@ export function initSprintViewer(page, apiFetch) {
     state.fetchedComponents.set(key, revision);
     if (key === "metrics") {
       state.metrics = payload.data && typeof payload.data === "object" ? payload.data : null;
-      renderMetrics(state.metrics);
-      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []));
+      renderMetrics(state.metrics, state.core);
+      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []), state.metrics);
     } else if (key === "history") {
       Object.entries(payload.data?.issues || {}).forEach(([id, historical]) => {
         const existing = state.issues.get(id); if (existing) state.issues.set(id, { ...existing, ...historical });
       });
-      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []));
+      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []), state.metrics);
     } else if (key === "comments") {
       Object.entries(payload.data?.issues || {}).forEach(([id, comments]) => {
         const existing = state.issues.get(id); if (existing) state.issues.set(id, { ...existing, comment_total: comments.comment_total, relevant_comment_count: comments.relevant_comment_count });
       });
       if (state.core && payload.data?.stats) state.core = { ...state.core, stats: payload.data.stats };
-      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []));
+      if (state.core) renderCore({ ...state.core, groups: groupIssues(Array.from(state.issues.values())) }, jiraBaseUrl, expanded, new Set(state.metrics?.scope_added_keys || []), state.metrics);
     }
   }
 
@@ -146,7 +146,7 @@ export function initSprintViewer(page, apiFetch) {
     const metricFailed = ["metrics", "original_commitment", "completed_original", "total_completed", "added_scope", "removed_scope"].find((key) => ["failed", "unavailable"].includes(state.components[key]?.state));
     const commentsUnavailable = ["failed", "unavailable"].includes(state.components.comments?.state);
     if (state.core && commentsUnavailable) renderStats(state.core.stats, state.core, { commentsUnavailable: true });
-    if (state.core && metricFailed && !state.metrics) renderMetrics(null);
+    if (state.core && metricFailed && !state.metrics) renderMetrics(null, state.core);
     retryMetrics?.classList.toggle("d-none", !metricFailed);
     download.disabled = !(status.export_ready && state.metrics && state.issues.size);
     if (state.core && !state.metrics) showProgress(metricFailed ? "Metrics could not be loaded. Retry is available." : "Calculating metrics…");
@@ -201,7 +201,7 @@ export function initSprintViewer(page, apiFetch) {
       await poll(generation, payload);
     } catch (error) {
       if (error.name !== "AbortError") showMessage("danger", errorText(error, "Unable to start the sprint report."));
-      fetchButton.textContent = "Fetch Issues"; updateControls(); showProgress("");
+      fetchButton.textContent = "Analyze sprint"; updateControls(); showProgress("");
     }
   }
 
@@ -242,16 +242,16 @@ export function initSprintViewer(page, apiFetch) {
       });
       worker.terminate(); downloadWorkbook(result, state.selection.sprintName);
     } catch (error) { showMessage("warning", errorText(error, "Unable to export the report.")); }
-    finally { download.textContent = "Download Report"; download.disabled = false; }
+    finally { download.textContent = "Export report"; download.disabled = false; }
   }
 
-  project.addEventListener("change", () => { beginAction(state, null); expanded.clear(); resetResults(); populateBoards(); fetchButton.textContent = "Fetch Issues"; });
+  project.addEventListener("change", () => { beginAction(state, null); expanded.clear(); resetResults(); populateBoards(); fetchButton.textContent = "Analyze sprint"; });
   board.addEventListener("change", () => { beginAction(state, null); expanded.clear(); resetResults(); sprint.replaceChildren(option("", "-- Select Sprint --")); updateControls(); if (board.value) loadSprints(false); });
-  sprint.addEventListener("change", () => { expanded.clear(); resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); });
+  sprint.addEventListener("change", () => { expanded.clear(); resetResults(); fetchButton.textContent = "Analyze sprint"; updateControls(); });
   refresh.addEventListener("click", () => loadSprints(true));
   fetchButton.addEventListener("click", () => {
     if (fetchButton.textContent.trim() === "Start Over") {
-      if (window.confirm("Start over and clear the displayed sprint report?")) { disposeAction(state); expanded.clear(); resetResults(); fetchButton.textContent = "Fetch Issues"; updateControls(); }
+      if (window.confirm("Start over and clear the displayed sprint report?")) { disposeAction(state); expanded.clear(); resetResults(); fetchButton.textContent = "Analyze sprint"; updateControls(); }
     } else startReport();
   });
   retryMetrics?.addEventListener("click", retryMetricFailure);

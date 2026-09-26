@@ -31,7 +31,7 @@ def metric_queries(board_id: int, sprint_id: int) -> dict[str, dict[str, Any]]:
         },
         "total_completed": {
             "jql": f"issueFunction in completeInSprint({board_id}, {sprint_id}) AND issuetype IN standardIssueTypes() ORDER BY id ASC",
-            "capture_keys": False,
+            "capture_keys": True,
         },
         "added_scope": {
             "jql": f"issueFunction in addedAfterSprintStart({board_id},{sprint_id}) AND issuetype IN standardIssueTypes() ORDER BY id ASC",
@@ -95,6 +95,7 @@ def build_scrum_metrics(results: Mapping[str, Mapping[str, Any]]) -> dict[str, A
         "removed_scope_pct": round(pct(removed_sp, original_sp), 1),
         "scope_change_pct": round(pct(added_sp + removed_sp, original_sp), 1),
         "scope_added_keys": list(values["added_scope"].get("keys") or []),
+        "completed_keys": list(values["total_completed"].get("keys") or []),
         "time_basis": "Jira points at collection time",
         "calculation_version": 1,
     }

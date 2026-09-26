@@ -225,23 +225,20 @@ def test_core_tickets_are_interactive_while_metrics_are_still_running(page, tmp_
         assert page.locator("#fetchIssuesBtn").inner_text().strip() == "Start Over"
         assert page.locator("#committedFmt").inner_text() == "…"
         assert page.locator("#workTypeContent").is_visible()
-        assert "Story · 0 pts · —" in page.locator("#workTypePointLegend").text_content()
-        assert "Defect · 0 pts · —" in page.locator("#workTypePointLegend").text_content()
-        assert page.locator("#workTypeOverallTotal").inner_text().split() == ["Total", "0", "—", "2", "100%"]
-        assert "0 pts\n1 issue · — of sprint points" == page.locator(
+        assert "Story" in page.locator("#workTypeCards").inner_text()
+        assert "Defect" in page.locator("#workTypeCards").inner_text()
+        assert page.locator("#workTypeTotalCount").inner_text() == "2"
+        assert page.locator("#workTypeTotalPoints").inner_text() == "0"
+        assert "0 / 0 pts · 1 / 1 issues" in page.locator(
             "#workTypeByDeveloper .sv-matrix-value:nth-child(2)"
         ).first.inner_text()
         assert page.locator("#estimationCoverageValue").inner_text() == "—"
-        assert page.locator("#sprintViewTitle").inner_text() == "Sprint View"
-        assert page.locator("#statsBox .sv-health-help").count() == 6
-        assert page.locator("#statsBox .sv-health-help").first.evaluate(
-            "el => Boolean(window.bootstrap.Tooltip.getInstance(el))"
-        )
+        assert page.locator("#sprintViewTitle").inner_text() == "Sprint view (issues at close)"
         assert "Calculating metrics" in page.locator("#sprintViewerProgress").inner_text()
         assert page.locator("#loadingOverlay").get_attribute("aria-hidden") == "true"
 
         accordion_buttons = page.locator("#assigneeAccordion .accordion-button")
-        accordion_buttons.nth(0).click()
+        assert page.locator("#assigneeAccordion .accordion-collapse.show").count() == 1
         accordion_buttons.nth(1).click()
         page.wait_for_function(
             "document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 2"

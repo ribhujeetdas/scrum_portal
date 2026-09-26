@@ -451,65 +451,35 @@ def test_previous_view_browser_keeps_core_interactive_during_background_enrichme
 
         page.wait_for_function('window.__commentsRequested === true && window.__metricsRequested === true')
         assert page.locator('#workTypeMixBox').is_visible()
-        assert page.locator('#workBreakdownTitle').inner_text() == 'Sprint Work Breakdown'
+        assert page.locator('#workBreakdownTitle').inner_text() == 'Delivery by work type'
         assert page.locator('#workTypeTotalCount').inner_text() == '5'
         assert page.locator('#workTypeTotalPoints').inner_text() == '75'
-        assert page.locator('#workTypePointBar .sv-point-segment').count() == 4
-        assert page.locator('#workTypePointBar .sv-point-segment').first.inner_text() == 'Story · 45 pts · 60%'
-        legend_text = page.locator('#workTypePointLegend').text_content()
-        assert 'Story · 45 pts · 60%' in legend_text
-        assert 'Task · 25 pts · 33.3%' in legend_text
-        assert 'Defect · 2 pts · 2.7%' in legend_text
-        assert 'Sub-task · 3 pts · 4%' in legend_text
-        assert 'Sub-task' in page.locator('#workTypeOverall').inner_text()
-        assert '% of points' in page.locator('.sv-breakdown-table thead').inner_text()
-        assert page.locator('#workTypeOverallTotal').inner_text().split() == ['Total', '75', '100%', '5', '100%']
+        assert page.locator('#workTypeDeliveredCount').inner_text() == '1'
+        assert page.locator('#workTypeDeliveredPoints').inner_text() == '45'
+        cards_text = page.locator('#workTypeCards').inner_text()
+        assert 'Story' in cards_text
+        assert 'Task' in cards_text
+        assert 'Defect' in cards_text
+        assert 'Sub-task' in cards_text
         assert 'Developer B' in page.locator('#workTypeByDeveloper').inner_text()
         developer_totals = page.locator('#workTypeByDeveloper .sv-matrix-value:nth-child(2)')
-        assert '50 pts\n3 issues · 66.7% of sprint points' == developer_totals.nth(0).inner_text()
-        assert '25 pts\n2 issues · 33.3% of sprint points' == developer_totals.nth(1).inner_text()
-        spacing = page.locator('.sv-developer-breakdown').evaluate(
-            '(el) => ({marginTop: parseFloat(getComputedStyle(el).marginTop), borderTopWidth: getComputedStyle(el).borderTopWidth})'
-        )
-        assert spacing['marginTop'] >= 19
-        assert spacing['borderTopWidth'] == '0px'
-        assert page.locator('#sprintViewTitle').inner_text() == 'Sprint View'
-        assert page.locator('#sprintViewBox .sv-section-description').inner_text() == 'Developer-level issue details'
+        assert '45 / 50 pts · 1 / 3 issues' in developer_totals.nth(0).inner_text()
+        assert '90% delivery · 100% of sprint delivery' in developer_totals.nth(0).inner_text()
+        assert '0 / 25 pts · 0 / 2 issues' in developer_totals.nth(1).inner_text()
+        assert page.locator('#sprintViewTitle').inner_text() == 'Sprint view (issues at close)'
+        assert 'Developer-level ticket details' in page.locator('#sprintViewBox .sv-section-heading p').inner_text()
         assert page.locator('#estimationCoverageValue').inner_text() == '100%'
         assert page.locator('#bugSp').inner_text() == '2'
-        health_help = page.locator('#statsBox .sv-health-help')
-        assert health_help.count() == 6
-        health_help.nth(0).hover()
-        page.locator('.tooltip.show .tooltip-inner').wait_for()
-        assert 'Estimated standard issues divided by all standard issues' in page.locator('.tooltip.show .tooltip-inner').inner_text()
-        page.mouse.move(0, 0)
-        page.locator('.tooltip.show').wait_for(state='hidden')
-        health_formulas = [
-            'Estimated standard issues divided by all standard issues',
-            'Assigned standard issues divided by all standard issues',
-            'Bug and Defect issue count and mapped points',
-            'Evaluated standard issues with at least one relevant comment',
-            'assignee effective at the comment time',
-            'Jira sprint history references more than one sprint',
-        ]
-        for index, formula in enumerate(health_formulas):
-            health_help.nth(index).focus()
-            page.wait_for_function(
-                '(formula) => document.querySelector(".tooltip.show .tooltip-inner")?.textContent.includes(formula)',
-                arg=formula,
-            )
-            health_help.nth(index).blur()
-            page.locator('.tooltip.show').wait_for(state='hidden')
         assert page.locator('#loadingOverlay').evaluate('(el) => getComputedStyle(el).display') == 'none'
-        assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == 'Unavailable'
+        assert page.locator('#assigneeAccordion tbody tr td').nth(7).inner_text() == '…'
 
         accordion_buttons = page.locator('#assigneeAccordion .accordion-button')
-        accordion_buttons.nth(0).click()
+        assert page.locator('#assigneeAccordion .accordion-collapse.show').count() == 1
         accordion_buttons.nth(1).click()
         page.wait_for_function("document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 2")
         page.evaluate('window.__releaseComments()')
         page.wait_for_function("document.getElementById('relevantCommentCount').textContent === '2'")
-        assert page.locator('#assigneeAccordion tbody tr td').nth(6).inner_text() == '2'
+        assert page.locator('#assigneeAccordion tbody tr td').nth(7).inner_text() == '2'
         assert page.locator('#assigneeAccordion .accordion-collapse.show').count() == 2
         page.locator('#assigneeAccordion .accordion-button').nth(0).click()
         page.wait_for_function("document.querySelectorAll('#assigneeAccordion .accordion-collapse.show').length === 1")

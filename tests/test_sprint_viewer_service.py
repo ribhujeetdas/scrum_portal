@@ -102,7 +102,7 @@ def test_scrum_metrics_use_completed_original_for_predictability():
         {
             "original_commitment": {"sp": 40, "count": 10},
             "completed_original": {"sp": 32, "count": 8},
-            "total_completed": {"sp": 44, "count": 11},
+            "total_completed": {"sp": 44, "count": 11, "keys": ["ABC-1", "ABC-9"]},
             "added_scope": {"sp": 12, "count": 3, "keys": ["ABC-9"]},
             "removed_scope": {"sp": 4, "count": 1},
         }
@@ -114,6 +114,7 @@ def test_scrum_metrics_use_completed_original_for_predictability():
     assert metrics["carryover_sp"] == 4.0
     assert metrics["scope_net_sp"] == 8.0
     assert metrics["scope_added_keys"] == ["ABC-9"]
+    assert metrics["completed_keys"] == ["ABC-1", "ABC-9"]
 
 
 def test_sprint_metric_searches_run_concurrently_with_isolated_clients(monkeypatch):
@@ -170,6 +171,7 @@ def test_sprint_metric_searches_run_concurrently_with_isolated_clients(monkeypat
     assert primary_client.closed is False
     assert metrics["original_commitment_sp"] == 5.0
     assert metrics["scope_added_keys"] == ["ABC-1"]
+    assert metrics["completed_keys"] == ["ABC-1"]
 
 
 def test_relevant_comments_count_assignee_or_sprint_team_before_sprint_end():
@@ -214,7 +216,7 @@ def test_historical_field_reconstruction_uses_value_at_sprint_end():
             "summary": "Story",
             "customfield_10106": 8,
             "issuetype": {"name": "Story", "subtask": False},
-            "status": {"name": "In Progress"},
+            "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
             "assignee": {"name": "E2", "displayName": "New Assignee"},
             "comment": {"total": 0, "comments": []},
         },
@@ -237,6 +239,7 @@ def test_historical_field_reconstruction_uses_value_at_sprint_end():
     )
 
     assert extracted["status"] == "To Do"
+    assert extracted["status_category_key"] == "indeterminate"
     assert extracted["assignee_eid"] == "E1"
     assert extracted["story_points"] == 5.0
     assert extracted["historical_fallback"] is False

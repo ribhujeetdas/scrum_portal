@@ -20,11 +20,54 @@ export function showProgress(message) {
 export function resetResults() {
   byId("resultsCard").classList.add("d-none");
   byId("assigneeAccordion").replaceChildren();
+  delete byId("assigneeAccordion").dataset.initialized;
   byId("metricsBox").classList.add("d-none");
   byId("workTypeMixBox").classList.add("d-none");
   byId("statsBox").classList.add("d-none");
   byId("downloadSprintReportBtn").disabled = true;
   showProgress("");
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatIst(value, includeTime = true) {
+  const parsed = parseDate(value);
+  if (!parsed) return "—";
+  const options = { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" };
+  if (includeTime) Object.assign(options, { hour: "2-digit", minute: "2-digit", hour12: true });
+  return `${new Intl.DateTimeFormat("en-IN", options).format(parsed)}${includeTime ? " IST" : ""}`;
+}
+
+function durationLabel(start, end) {
+  const first = parseDate(start); const last = parseDate(end);
+  if (!first || !last || last < first) return "—";
+  const days = Math.max(1, Math.ceil((last - first) / 86400000));
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+function completedKeys(metrics) {
+  return new Set(Array.isArray(metrics?.completed_keys) ? metrics.completed_keys : []);
+}
+
+function isCompletedIssue(issue, keys = new Set()) {
+  if (issue?.issue_key && keys.has(issue.issue_key)) return true;
+  const category = String(issue?.status_category_key || issue?.status_category || "").trim().toLowerCase();
+  if (["done", "complete", "completed"].includes(category)) return true;
+  return ["done", "closed", "resolved", "complete", "completed"].includes(String(issue?.status || "").trim().toLowerCase());
+}
+
+function summarizeIssues(issues, keys = new Set()) {
+  const summary = { assignedPoints: 0, assignedCount: 0, deliveredPoints: 0, deliveredCount: 0 };
+  (issues || []).forEach((issue) => {
+    const points = finiteNumber(issue.story_points) ?? 0;
+    summary.assignedPoints += points; summary.assignedCount += 1;
+    if (isCompletedIssue(issue, keys)) { summary.deliveredPoints += points; summary.deliveredCount += 1; }
+  });
+  return summary;
 }
 
 function textCell(row, value, className = "") {
@@ -184,54 +227,84 @@ function appendRows(tbody, issues, jiraBaseUrl, scopeKeys, start = 0) {
   if (end < issues.length) requestAnimationFrame(() => appendRows(tbody, issues, jiraBaseUrl, scopeKeys, end));
 }
 
-export function renderCore(data, jiraBaseUrl, expanded = new Set(), scopeKeys = new Set()) {
+export function renderCore(data, jiraBaseUrl, expanded = new Set(), scopeKeys = new Set(), metrics = null) {
   byId("resultsCard").classList.remove("d-none");
-  byId("totalIssues").textContent = data.total ?? 0;
-  byId("totalSp").textContent = data.total_sp ?? 0;
-  byId("standardTotal").textContent = data.standard_total ?? 0;
+  setText("totalIssues", data.total ?? 0); setText("qualityTotalIssues", data.total ?? 0);
+  setText("totalSp", data.total_sp ?? 0); setText("standardTotal", data.standard_total ?? 0);
   const sprint = data.sprint || {};
-  byId("sprintName").textContent = sprint.name || "-";
-  byId("sprintStartDate").textContent = String(sprint.start_date || "-").slice(0, 10);
-  byId("sprintActualStartDate").textContent = String(sprint.activated_date || "-").slice(0, 10);
-  byId("sprintEndDate").textContent = String(sprint.end_date || "-").slice(0, 10);
-  byId("sprintActualEndDate").textContent = String(sprint.complete_date || "-").slice(0, 10);
-  byId("sprintGoal").textContent = sprint.goal || "-";
+  setText("sprintName", sprint.name || sprint.id || "—");
+  setText("sprintStartDate", formatIst(sprint.start_date, false));
+  setText("sprintActualStartDate", formatIst(sprint.activated_date || sprint.start_date));
+  setText("sprintEndDate", formatIst(sprint.end_date, false));
+  setText("sprintActualEndDate", formatIst(sprint.complete_date || sprint.end_date));
+  setText("sprintDuration", durationLabel(sprint.activated_date || sprint.start_date, sprint.complete_date || sprint.end_date));
+  setText("sprintGoal", sprint.goal || "No sprint goal recorded");
+  const state = String(sprint.state || "closed"); setText("sprintState", state.charAt(0).toUpperCase() + state.slice(1));
+  setText("reportAsOf", `As of ${formatIst(sprint.complete_date || sprint.end_date, false)}`);
+  const fallbackCount = data.historical_fallback_count || 0;
+  setText("historicalFallbackStatus", fallbackCount ? `${fallbackCount} current-value fallback` : "Not required");
+  const fallbackNote = byId("historicalFallbackNote");
+  fallbackNote.classList.toggle("d-none", !fallbackCount);
+  if (fallbackCount) fallbackNote.textContent = `${fallbackCount} row(s) use current Jira values.`;
   byId("sprintMetaBox").classList.remove("d-none");
   renderStats(data.stats, data);
-  renderWorkType(data.work_type_mix);
+  renderWorkType(data.work_type_mix, data.groups || [], metrics);
+
   const accordion = byId("assigneeAccordion");
+  const groups = data.groups || [];
+  if (accordion.dataset.initialized !== "true" && groups.length) {
+    expanded.add(String(groups[0].principal_id || groups[0].assignee_eid || "group-0").replace(/[^a-zA-Z0-9_-]/g, "-"));
+    accordion.dataset.initialized = "true";
+  }
+  const statusFilter = byId("sprintStatusFilter");
+  const selectedStatus = statusFilter.value;
+  const statuses = [...new Set(groups.flatMap((group) => (group.issues || []).map((issue) => issue.status).filter(Boolean)))].sort();
+  statusFilter.replaceChildren();
+  const all = document.createElement("option"); all.value = ""; all.textContent = "All statuses"; statusFilter.appendChild(all);
+  statuses.forEach((status) => { const option = document.createElement("option"); option.value = status; option.textContent = status; statusFilter.appendChild(option); });
+  statusFilter.value = statuses.includes(selectedStatus) ? selectedStatus : "";
+  const keys = completedKeys(metrics); const sprintDelivered = groups.reduce((sum, group) => sum + summarizeIssues(group.issues, keys).deliveredPoints, 0);
   accordion.replaceChildren();
-  (data.groups || []).forEach((group, index) => {
+  groups.forEach((group, index) => {
     const groupId = String(group.principal_id || group.assignee_eid || `group-${index}`).replace(/[^a-zA-Z0-9_-]/g, "-");
+    const summary = summarizeIssues(group.issues, keys);
+    const mixAssignee = (data.work_type_mix?.by_assignee || []).find((row) => String(row.principal_id || "").replace(/[^a-zA-Z0-9_-]/g, "-") === groupId || String(row.assignee_eid || "") === String(group.assignee_eid || ""));
+    const assignedPoints = finiteNumber(mixAssignee?.total_pts) ?? summary.assignedPoints; const assignedCount = finiteNumber(mixAssignee?.total_count) ?? summary.assignedCount;
+    const rate = assignedPoints > 0 ? summary.deliveredPoints / assignedPoints * 100 : (assignedCount ? summary.deliveredCount / assignedCount * 100 : null);
+    const share = sprintDelivered > 0 ? summary.deliveredPoints / sprintDelivered * 100 : null;
     const item = document.createElement("div"); item.className = "accordion-item";
-    const header = document.createElement("h2"); header.className = "accordion-header";
+    const header = document.createElement("h4"); header.className = "accordion-header";
     const button = document.createElement("button");
     button.className = `accordion-button${expanded.has(groupId) ? "" : " collapsed"}`;
     button.type = "button"; button.dataset.bsToggle = "collapse"; button.dataset.bsTarget = `#sv-${groupId}`;
-    button.textContent = `${group.assignee_name || "Unassigned"} — ${group.issue_count ?? 0} issues, ${group.sp_sum ?? 0} pts`;
-    header.appendChild(button);
-    const collapse = document.createElement("div"); collapse.id = `sv-${groupId}`;
-    collapse.className = `accordion-collapse collapse${expanded.has(groupId) ? " show" : ""}`;
+    const name = document.createElement("span"); name.className = "sv-accordion-name"; name.textContent = group.assignee_name || "Unassigned";
+    const summaryNode = document.createElement("span"); summaryNode.className = "sv-accordion-summary";
+    summaryNode.innerHTML = `<span><strong>${formatNumber(summary.deliveredPoints)}</strong> / ${formatNumber(assignedPoints)} pts</span><span><strong>${formatNumber(summary.deliveredCount, 0)}</strong> / ${formatNumber(assignedCount, 0)} issues</span><span><strong>${formatPercent(rate)}</strong> delivery</span><span><strong>${formatPercent(share)}</strong> of sprint delivery</span>`;
+    button.append(name, summaryNode); header.appendChild(button);
+    const collapse = document.createElement("div"); collapse.id = `sv-${groupId}`; collapse.className = `accordion-collapse collapse${expanded.has(groupId) ? " show" : ""}`;
+    collapse.addEventListener("show.bs.collapse", () => expanded.add(groupId)); collapse.addEventListener("hide.bs.collapse", () => expanded.delete(groupId));
     const body = document.createElement("div"); body.className = "accordion-body table-responsive";
-    const table = document.createElement("table"); table.className = "table table-sm table-striped align-middle";
-    const head = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    ["Key", "Summary", "Type", "Status", "Pts", "Feature Key", "Relevant Comments", "Data"].forEach((label) => { const th = document.createElement("th"); th.textContent = label; headRow.appendChild(th); });
-    head.appendChild(headRow); table.appendChild(head);
-    const tbody = document.createElement("tbody"); table.appendChild(tbody); body.appendChild(table); collapse.appendChild(body);
-    let rendered = false;
-    const render = () => {
-      expanded.add(groupId);
-      if (!rendered) {
-        rendered = true;
-        appendRows(tbody, group.issues || [], jiraBaseUrl, scopeKeys);
-      }
-    };
-    collapse.addEventListener("show.bs.collapse", render);
-    collapse.addEventListener("hide.bs.collapse", () => expanded.delete(groupId));
-    if (expanded.has(groupId)) render();
-    item.append(header, collapse); accordion.appendChild(item);
+    const table = document.createElement("table"); table.className = "table table-sm align-middle sv-issue-table";
+    const head = document.createElement("thead"); const headRow = document.createElement("tr");
+    ["Issue key", "Summary", "Type", "Status at close", "Outcome", "Points", "Feature / Epic", "Relevant comments", "Data basis"].forEach((label) => { const th = document.createElement("th"); th.scope = "col"; th.textContent = label; headRow.appendChild(th); });
+    head.appendChild(headRow); table.appendChild(head); const tbody = document.createElement("tbody");
+    const visible = (group.issues || []).filter((issue) => !statusFilter.value || issue.status === statusFilter.value);
+    visible.forEach((issue) => {
+      const delivered = isCompletedIssue(issue, keys); const row = document.createElement("tr");
+      const keyCell = document.createElement("td"); keyCell.className = "nowrap";
+      if (issue.issue_key) { keyCell.appendChild(issueLink(issue.issue_key, jiraBaseUrl)); if (scopeKeys.has(issue.issue_key)) { const star = document.createElement("span"); star.className = "scope-star"; star.textContent = "*"; star.title = "Added after sprint start"; keyCell.appendChild(star); } }
+      row.appendChild(keyCell); textCell(row, issue.summary); textCell(row, issue.issue_type);
+      const statusCell = document.createElement("td"); const statusPill = document.createElement("span"); statusPill.className = `sv-status ${delivered ? "sv-status-done" : "sv-status-open"}`; statusPill.textContent = issue.status || "—"; statusCell.appendChild(statusPill); row.appendChild(statusCell);
+      const outcomeCell = document.createElement("td"); const outcome = document.createElement("span"); outcome.className = `sv-outcome-pill ${delivered ? "sv-outcome-completed" : "sv-outcome-unfinished"}`; outcome.textContent = delivered ? "Completed" : "Unfinished"; outcomeCell.appendChild(outcome); row.appendChild(outcomeCell);
+      textCell(row, formatNumber(issue.story_points)); const feature = document.createElement("td"); if (issue.feature_key) feature.appendChild(issueLink(issue.feature_key, jiraBaseUrl)); else feature.textContent = "—"; row.appendChild(feature);
+      textCell(row, issue.relevant_comment_count ?? "…"); textCell(row, issue.historical_fallback ? "Current fallback" : "Sprint-end", "sv-data-basis"); tbody.appendChild(row);
+    });
+    if (!visible.length) { const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 9; cell.className = "sv-filter-empty"; cell.textContent = "No tickets match the selected status."; row.appendChild(cell); tbody.appendChild(row); }
+    table.appendChild(tbody); body.appendChild(table); collapse.appendChild(body); item.append(header, collapse); accordion.appendChild(item);
   });
+  statusFilter.onchange = () => renderCore(data, jiraBaseUrl, expanded, scopeKeys, metrics);
+  byId("expandAllDevelopersBtn").onclick = () => accordion.querySelectorAll(".accordion-collapse").forEach((element) => window.bootstrap?.Collapse?.getOrCreateInstance(element, { toggle: false })?.show());
+  byId("collapseAllDevelopersBtn").onclick = () => accordion.querySelectorAll(".accordion-collapse").forEach((element) => window.bootstrap?.Collapse?.getOrCreateInstance(element, { toggle: false })?.hide());
 }
 
 export function renderStats(stats, context = {}, options = {}) {
@@ -247,6 +320,7 @@ export function renderStats(stats, context = {}, options = {}) {
   setText("estimationTotalCount", formatNumber(total, 0));
   setText("unestimatedCount", formatNumber(unestimated, 0));
   setText("unestimatedPct", formatNumber(unestimatedPct, 1));
+  setText("healthUnestimated", formatNumber(unestimated, 0));
 
   const unassigned = finiteNumber(values.unassigned_count);
   const unassignedPct = finiteNumber(values.unassigned_pct);
@@ -256,6 +330,7 @@ export function renderStats(stats, context = {}, options = {}) {
   setText("ownershipTotalCount", formatNumber(total, 0));
   setText("unassignedCount", formatNumber(unassigned, 0));
   setText("unassignedPct", formatNumber(unassignedPct, 1));
+  setText("healthUnassigned", formatNumber(unassigned, 0));
 
   const defectCount = finiteNumber(values.bug_count);
   const defectPoints = finiteNumber(values.bug_sp);
@@ -290,159 +365,50 @@ export function renderStats(stats, context = {}, options = {}) {
   setText("zeroRelevantCommentPct", formatNumber(zeroRelevantPct, 1));
   setText("carryoverCount", formatNumber(values.carryover_count, 0));
   setText("carryoverPts", formatNumber(values.carryover_sp));
+  setText("healthCarryover", `${formatNumber(values.carryover_count, 0)} issues`);
 }
 
-export function renderWorkType(mix) {
-  const box = byId("workTypeMixBox");
-  box.classList.remove("d-none");
-  const unavailable = byId("workTypeUnavailable");
-  const content = byId("workTypeContent");
-  const totals = byId("workTypeTotals");
-  if (!mix || typeof mix !== "object") {
-    unavailable.textContent = "Work-breakdown metrics are unavailable. Sprint issues can still be reviewed below.";
-    unavailable.classList.remove("d-none");
-    content.classList.add("d-none");
-    totals.classList.add("d-none");
-    return;
-  }
-  const types = sortedWorkTypes(mix);
-  const overallEntries = types.map((type) => [type, mix.overall?.[type] || null]);
-  if (!types.length) {
-    unavailable.textContent = "No work-type data was returned for this sprint.";
-    unavailable.classList.remove("d-none");
-    content.classList.add("d-none");
-    totals.classList.add("d-none");
-    return;
-  }
-  unavailable.classList.add("d-none");
-  content.classList.remove("d-none");
-  totals.classList.remove("d-none");
-  const totalCount = finiteNumber(mix.totals?.count) ?? sumBuckets(overallEntries, "count");
-  const totalPoints = finiteNumber(mix.totals?.pts) ?? sumBuckets(overallEntries, "pts");
-  const totalUnestimated = finiteNumber(mix.totals?.unestimated_count) ?? sumBuckets(overallEntries, "unestimated_count");
-  setText("workTypeTotalCount", formatNumber(totalCount, 0));
-  setText("workTypeTotalPoints", formatNumber(totalPoints));
+function appendDeliveryCell(row, delivered, assigned, sprintDeliveredPoints, showSprintShare = false) {
+  const cell = document.createElement("td"); cell.className = "sv-matrix-value";
+  if (!assigned || (!assigned.assignedCount && !assigned.assignedPoints)) { cell.textContent = "—"; row.appendChild(cell); return; }
+  const deliveredPoints = delivered?.deliveredPoints ?? 0; const deliveredCount = delivered?.deliveredCount ?? 0;
+  const rate = assigned.assignedPoints > 0 ? deliveredPoints / assigned.assignedPoints * 100 : (assigned.assignedCount ? deliveredCount / assigned.assignedCount * 100 : null);
+  const primary = document.createElement("span"); primary.className = "sv-matrix-primary"; primary.textContent = `${formatNumber(deliveredPoints)} / ${formatNumber(assigned.assignedPoints)} pts · ${formatNumber(deliveredCount, 0)} / ${formatNumber(assigned.assignedCount, 0)} issues`;
+  const secondary = document.createElement("span"); secondary.className = "sv-matrix-secondary";
+  const parts = [`${formatPercent(rate)} delivery`]; if (showSprintShare) parts.push(`${formatPercent(sprintDeliveredPoints > 0 ? deliveredPoints / sprintDeliveredPoints * 100 : null)} of sprint delivery`); secondary.textContent = parts.join(" · ");
+  const progress = document.createElement("span"); progress.className = "sv-progress"; progress.setAttribute("role", "progressbar"); progress.setAttribute("aria-valuenow", String(Math.round(rate || 0))); progress.setAttribute("aria-valuemin", "0"); progress.setAttribute("aria-valuemax", "100");
+  const fill = document.createElement("span"); fill.style.width = `${Math.min(Math.max(rate || 0, 0), 100)}%`; progress.appendChild(fill); cell.append(primary, secondary, progress); row.appendChild(cell);
+}
 
-  const pointBar = byId("workTypePointBar");
-  const pointLegend = byId("workTypePointLegend");
-  pointBar.replaceChildren();
-  pointLegend.replaceChildren();
-  const distributionLabels = [];
-  overallEntries.forEach(([type, bucket], index) => {
-    const points = finiteNumber(bucket?.pts);
-    const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
-    const value = points === null ? "—" : `${formatNumber(points)} pts · ${formatPercent(pct)}`;
-    distributionLabels.push(`${type}: ${value}`);
-    const legendItem = document.createElement("span");
-    legendItem.className = "sv-point-legend-item";
-    const marker = document.createElement("span");
-    marker.className = "sv-type-marker";
-    marker.style.setProperty("--sv-type-color", typeColor(type, index));
-    const label = document.createElement("strong");
-    label.textContent = type;
-    legendItem.append(marker, label, document.createTextNode(` · ${value}`));
-    pointLegend.appendChild(legendItem);
+export function renderWorkType(mix, groups = [], metrics = null) {
+  const box = byId("workTypeMixBox"); box.classList.remove("d-none");
+  const unavailable = byId("workTypeUnavailable"); const content = byId("workTypeContent"); const totals = byId("workTypeTotals");
+  const types = sortedWorkTypes(mix); const assignees = Array.isArray(mix?.by_assignee) ? mix.by_assignee : [];
+  if (!mix || !types.length || !assignees.length) {
+    unavailable.textContent = "Work-distribution metrics are unavailable. Sprint tickets can still be reviewed below."; unavailable.classList.remove("d-none"); content.classList.add("d-none"); totals.classList.add("d-none"); return;
+  }
+  unavailable.classList.add("d-none"); content.classList.remove("d-none"); totals.classList.remove("d-none");
+  const keys = completedKeys(metrics); const allIssues = groups.flatMap((group) => group.issues || []); const team = summarizeIssues(allIssues, keys);
+  const teamAssigned = { assignedPoints: finiteNumber(mix.totals?.pts) ?? team.assignedPoints, assignedCount: finiteNumber(mix.totals?.count) ?? team.assignedCount };
+  setText("workTypeDeliveredPoints", formatNumber(team.deliveredPoints)); setText("workTypeTotalPoints", formatNumber(teamAssigned.assignedPoints)); setText("workTypeDeliveredCount", formatNumber(team.deliveredCount, 0)); setText("workTypeTotalCount", formatNumber(teamAssigned.assignedCount, 0));
+  const cards = byId("workTypeCards"); cards.replaceChildren();
+  types.forEach((type, index) => {
+    const issues = allIssues.filter((issue) => (issue.issue_type || "Unknown") === type); const summary = summarizeIssues(issues, keys); const bucket = mix.overall?.[type] || {};
+    const assigned = { assignedPoints: finiteNumber(bucket.pts) ?? summary.assignedPoints, assignedCount: finiteNumber(bucket.count) ?? summary.assignedCount };
+    const rate = assigned.assignedPoints > 0 ? summary.deliveredPoints / assigned.assignedPoints * 100 : (assigned.assignedCount ? summary.deliveredCount / assigned.assignedCount * 100 : null);
+    const item = document.createElement("article"); item.className = "sv-work-type-item";
+    const title = document.createElement("div"); title.className = "sv-work-type-title"; const marker = document.createElement("span"); marker.className = "sv-type-marker"; marker.style.setProperty("--sv-type-color", typeColor(type, index)); title.append(marker, document.createTextNode(type));
+    const values = document.createElement("div"); values.className = "sv-work-type-values"; values.innerHTML = `<strong>${formatNumber(summary.deliveredPoints)} / ${formatNumber(assigned.assignedPoints)} pts</strong> · ${formatNumber(summary.deliveredCount, 0)} / ${formatNumber(assigned.assignedCount, 0)} issues · <strong>${formatPercent(rate)}</strong>`;
+    const progress = document.createElement("div"); progress.className = "sv-progress"; progress.setAttribute("role", "progressbar"); progress.setAttribute("aria-label", `${type} delivery rate`); progress.setAttribute("aria-valuenow", String(Math.round(rate || 0))); progress.setAttribute("aria-valuemin", "0"); progress.setAttribute("aria-valuemax", "100"); const fill = document.createElement("span"); fill.style.width = `${Math.min(Math.max(rate || 0, 0), 100)}%`; progress.appendChild(fill); item.append(title, values, progress); cards.appendChild(item);
   });
-  pointBar.setAttribute("aria-label", `Point distribution by Jira issue type. ${distributionLabels.join("; ")}`);
-  if (totalPoints !== null && totalPoints > 0) {
-    overallEntries.forEach(([type, bucket], index) => {
-      const points = finiteNumber(bucket?.pts);
-      if (points === null || points <= 0) return;
-      const pct = bucketPercent(bucket, "points_pct", points, totalPoints);
-      const segment = document.createElement("span");
-      segment.className = "sv-point-segment";
-      segment.style.width = `${Math.max(pct || 0, 0)}%`;
-      segment.style.setProperty("--sv-type-color", typeColor(type, index));
-      segment.title = `${type}: ${formatNumber(points)} pts (${formatPercent(pct)})`;
-      segment.setAttribute("aria-label", segment.title);
-      segment.textContent = pct >= 18 ? `${type} · ${formatNumber(points)} pts · ${formatPercent(pct)}` : "";
-      pointBar.appendChild(segment);
-    });
-  } else {
-    const empty = document.createElement("span");
-    empty.className = "sv-point-bar-empty";
-    empty.textContent = totalUnestimated > 0
-      ? "Point distribution unavailable — no mapped estimates were returned."
-      : "No points were recorded for this sprint.";
-    pointBar.appendChild(empty);
-  }
-
-  const overall = byId("workTypeOverall");
-  const overallTotal = byId("workTypeOverallTotal");
-  overall.replaceChildren();
-  overallTotal.replaceChildren();
-  overallEntries.forEach(([type, bucket], index) => {
-    const row = document.createElement("tr");
-    const nameCell = document.createElement("td");
-    appendTypeName(nameCell, type, typeColor(type, index), bucket?.unestimated_count);
-    row.appendChild(nameCell);
-    const points = finiteNumber(bucket?.pts);
-    const count = finiteNumber(bucket?.count);
-    textCell(row, formatNumber(points), "text-end");
-    textCell(row, formatPercent(bucketPercent(bucket, "points_pct", points, totalPoints)), "text-end");
-    textCell(row, formatNumber(count, 0), "text-end");
-    textCell(row, formatPercent(bucketPercent(bucket, "issue_pct", count, totalCount)), "text-end");
-    overall.appendChild(row);
-  });
-  const totalRow = document.createElement("tr");
-  const totalLabel = document.createElement("th");
-  totalLabel.scope = "row";
-  totalLabel.textContent = "Total";
-  totalRow.appendChild(totalLabel);
-  textCell(totalRow, formatNumber(totalPoints), "text-end");
-  textCell(totalRow, totalPoints !== null && totalPoints > 0 ? "100%" : "—", "text-end");
-  textCell(totalRow, formatNumber(totalCount, 0), "text-end");
-  textCell(totalRow, totalCount !== null && totalCount > 0 ? "100%" : "—", "text-end");
-  overallTotal.appendChild(totalRow);
-
-  const head = byId("workTypeByDeveloperHead");
-  head.replaceChildren();
-  const headRow = document.createElement("tr");
-  ["Developer", "Total", ...types].forEach((label, index) => {
-    const cell = document.createElement("th");
-    cell.scope = "col";
-    cell.textContent = label;
-    if (index > 0) cell.className = "text-end";
-    headRow.appendChild(cell);
-  });
-  head.appendChild(headRow);
-
-  const tbody = byId("workTypeByDeveloper");
-  tbody.replaceChildren();
-  const assignees = Array.isArray(mix.by_assignee) ? mix.by_assignee : [];
-  if (!assignees.length) {
-    const row = document.createElement("tr");
-    const cell = document.createElement("td");
-    cell.colSpan = types.length + 2;
-    cell.className = "text-muted py-3";
-    cell.textContent = "Developer breakdown is unavailable for this sprint.";
-    row.appendChild(cell);
-    tbody.appendChild(row);
-    return;
-  }
+  const head = byId("workTypeByDeveloperHead"); head.replaceChildren(); const headRow = document.createElement("tr"); ["Developer", "Total", ...types].forEach((label) => { const th = document.createElement("th"); th.scope = "col"; th.textContent = label; headRow.appendChild(th); }); head.appendChild(headRow);
+  const groupByKey = new Map(); groups.forEach((group) => { groupByKey.set(String(group.principal_id || group.assignee_eid || "UNASSIGNED"), group); if (group.assignee_eid) groupByKey.set(String(group.assignee_eid), group); }); const tbody = byId("workTypeByDeveloper"); tbody.replaceChildren();
   assignees.forEach((assignee) => {
-    const row = document.createElement("tr");
-    textCell(row, assignee.assignee_name || assignee.assignee_eid || "Unassigned", "sv-developer-name");
-    const assigneeEntries = Object.entries(assignee.types || {});
-    const assigneePoints = finiteNumber(assignee.total_pts) ?? sumBuckets(assigneeEntries, "pts");
-    const assigneeCount = finiteNumber(assignee.total_count) ?? sumBuckets(assigneeEntries, "count");
-    const assigneeUnestimated = finiteNumber(assignee.unestimated_count) ?? sumBuckets(assigneeEntries, "unestimated_count");
-    const sprintPointPct = assigneePoints !== null && totalPoints !== null && totalPoints > 0
-      ? (assigneePoints / totalPoints) * 100
-      : null;
-    appendMatrixCell(row, assigneePoints, assigneeCount, sprintPointPct, assigneeUnestimated, "of sprint points", true);
-    types.forEach((type) => {
-      const bucket = assignee.types?.[type];
-      if (!bucket) {
-        appendMatrixCell(row, null, null, null);
-      } else {
-        const points = finiteNumber(bucket.pts);
-        const count = finiteNumber(bucket.count);
-        appendMatrixCell(row, points, count, bucketPercent(bucket, "points_pct", points, assigneePoints), bucket.unestimated_count);
-      }
-    });
-    tbody.appendChild(row);
+    const issues = groupByKey.get(String(assignee.principal_id || assignee.assignee_eid || "UNASSIGNED"))?.issues || []; const row = document.createElement("tr"); textCell(row, assignee.assignee_name || assignee.assignee_eid || "Unassigned", "sv-developer-name"); appendDeliveryCell(row, summarizeIssues(issues, keys), { assignedPoints: finiteNumber(assignee.total_pts) ?? summarizeIssues(issues).assignedPoints, assignedCount: finiteNumber(assignee.total_count) ?? summarizeIssues(issues).assignedCount }, team.deliveredPoints, true);
+    types.forEach((type) => { const typed = issues.filter((issue) => (issue.issue_type || "Unknown") === type); const bucket = assignee.types?.[type] || {}; appendDeliveryCell(row, summarizeIssues(typed, keys), { assignedPoints: finiteNumber(bucket.pts) ?? summarizeIssues(typed).assignedPoints, assignedCount: finiteNumber(bucket.count) ?? summarizeIssues(typed).assignedCount }, team.deliveredPoints); }); tbody.appendChild(row);
   });
+  const foot = byId("workTypeByDeveloperTotal"); foot.replaceChildren(); const totalRow = document.createElement("tr"); const label = document.createElement("th"); label.scope = "row"; label.textContent = "Team total"; totalRow.appendChild(label); appendDeliveryCell(totalRow, team, teamAssigned, team.deliveredPoints, true);
+  types.forEach((type) => { const typed = allIssues.filter((issue) => (issue.issue_type || "Unknown") === type); const bucket = mix.overall?.[type] || {}; appendDeliveryCell(totalRow, summarizeIssues(typed, keys), { assignedPoints: finiteNumber(bucket.pts) ?? summarizeIssues(typed).assignedPoints, assignedCount: finiteNumber(bucket.count) ?? summarizeIssues(typed).assignedCount }, team.deliveredPoints); }); foot.appendChild(totalRow);
 }
 
 export function initMetricHelp(root = document) {
@@ -456,7 +422,7 @@ export function initMetricHelp(root = document) {
   });
 }
 
-export function renderMetrics(metrics) {
+export function renderMetrics(metrics, core = null) {
   const metricValues = metrics && typeof metrics === "object" ? metrics : {};
   byId("metricsBox").classList.remove("d-none");
   const hasMetrics = [
@@ -467,7 +433,7 @@ export function renderMetrics(metrics) {
   const pair = (count, points) => (
     finiteNumber(count) === null || finiteNumber(points) === null
       ? "—"
-      : `${formatNumber(count, 0)} issues (${formatNumber(points)} pts)`
+      : `${formatNumber(count, 0)} issues · ${formatNumber(points)} pts`
   );
   const rendered = {
     committedFmt: pair(metricValues.committed_count, metricValues.committed_sp),
@@ -482,6 +448,17 @@ export function renderMetrics(metrics) {
   };
   Object.entries(rendered).forEach(([id, value]) => { byId(id).textContent = value; });
   const basis = byId("metricTimeBasis"); if (basis) basis.textContent = metricValues.time_basis || "Jira points at collection time";
+  setText("healthAddedScope", `${formatNumber(metricValues.scope_added_count, 0)} issues`);
+  setText("healthPredictability", formatPercent(metricValues.predictability_pct));
+  setText("healthCarryover", `${formatNumber(metricValues.spillover_count, 0)} issues`);
+  const issues = (core?.groups || []).flatMap((group) => group.issues || []); const team = summarizeIssues(issues, completedKeys(metricValues));
+  const assignedPoints = finiteNumber(core?.work_type_mix?.totals?.pts) ?? team.assignedPoints; const assignedCount = finiteNumber(core?.work_type_mix?.totals?.count) ?? team.assignedCount;
+  const teamRate = assignedPoints > 0 ? team.deliveredPoints / assignedPoints * 100 : (assignedCount ? team.deliveredCount / assignedCount * 100 : null); setText("teamDeliveryRate", formatPercent(teamRate));
+  const completed = finiteNumber(metricValues.delivered_count) ?? 0; const unfinished = finiteNumber(metricValues.spillover_count) ?? 0; const removed = finiteNumber(metricValues.descope_count) ?? 0; const total = completed + unfinished + removed;
+  [["outcomeCompletedSegment", "outcomeCompletedLabel", completed], ["outcomeUnfinishedSegment", "outcomeUnfinishedLabel", unfinished], ["outcomeRemovedSegment", "outcomeRemovedLabel", removed]].forEach(([segmentId, labelId, count]) => {
+    const pct = total > 0 ? count / total * 100 : 0; const segment = byId(segmentId); segment.style.width = `${pct}%`; segment.textContent = pct >= 10 ? `${formatNumber(count, 0)} (${formatPercent(pct)})` : ""; setText(labelId, `${formatNumber(count, 0)} (${formatPercent(pct)})`);
+  });
+  byId("sprintOutcomeBar").setAttribute("aria-label", `Sprint outcome: ${formatNumber(completed, 0)} completed, ${formatNumber(unfinished, 0)} unfinished, ${formatNumber(removed, 0)} removed.`);
 }
 
 export function setMetricsPending() {

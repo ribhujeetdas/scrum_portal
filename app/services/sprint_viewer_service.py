@@ -602,6 +602,7 @@ class SprintViewerService:
             "issue_type": issuetype.get("name") or "",
             "is_subtask": is_subtask,
             "status": status.get("name") or "",
+            "status_category_key": (status.get("statusCategory") or {}).get("key") or "",
             "app_name": app_name,
             "feature_key": epic_key,
             "feature_name": epic_name,
