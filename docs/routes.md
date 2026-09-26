@@ -18,6 +18,7 @@
 ## Canonical API Routes
 
 - `/api/automation/rule-copier/fetch`
+- `/api/automation/rule-copier/rules`
 - `/api/automation/rule-copier/copy`
 - `/api/automation/sprint-viewer/sprints`
 - `/api/automation/sprint-viewer/issues`

@@ -12,6 +12,7 @@ from ..auth.routes import (
 from ..automation.routes import (
     copy_rule,
     fetch_rule,
+    list_rules,
     sprint_viewer_fetch_issues,
     sprint_viewer_fetch_metrics,
     sprint_viewer_get_sprints,
@@ -112,6 +113,12 @@ aliases_bp.add_url_rule("/reports/tci", "reports_tci", custom_views_page, method
 
 # Canonical API routes. They delegate to the existing view functions so behavior
 # and authorization checks remain identical during migration.
+aliases_bp.add_url_rule(
+    "/api/automation/rule-copier/rules",
+    "api_rule_copier_rules",
+    list_rules,
+    methods=["POST"],
+)
 aliases_bp.add_url_rule(
     "/api/automation/rule-copier/fetch",
     "api_rule_copier_fetch",

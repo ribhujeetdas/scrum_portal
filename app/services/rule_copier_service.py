@@ -123,7 +123,16 @@ class RuleCopierService:
 
         if isinstance(data, list):
             return data
-        return data.get("rules") or data.get("values") or []
+        if not isinstance(data, dict):
+            return []
+
+        rules = data.get("rules") or data.get("values") or []
+        if isinstance(rules, list):
+            return rules
+        if isinstance(rules, dict):
+            nested_rules = rules.get("rules") or rules.get("values") or []
+            return nested_rules if isinstance(nested_rules, list) else []
+        return []
 
     def get_rule_detail(self, project_identifier: str | int, rule_id: int, pat: str) -> dict:
         """

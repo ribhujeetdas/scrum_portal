@@ -14,6 +14,12 @@ def rule_copier_page():
     return rule_copier_feature.rule_copier_page()
 
 
+@automation_bp.route("/rule-copier/rules", methods=["POST"])
+@login_required
+def list_rules():
+    return rule_copier_feature.list_rules()
+
+
 @automation_bp.route("/rule-copier/fetch-rule", methods=["POST"])
 @login_required
 def fetch_rule():

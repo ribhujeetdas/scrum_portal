@@ -7,7 +7,10 @@
   const overlay = document.getElementById("loadingOverlay");
   const srcProject = document.getElementById("srcProject");
   const srcBoard = document.getElementById("srcBoard");
-  const ruleId = document.getElementById("ruleId");
+  const ruleSearch = document.getElementById("ruleSearch");
+  const sourceRule = document.getElementById("sourceRule");
+  const refreshRulesBtn = document.getElementById("refreshRulesBtn");
+  const ruleListStatus = document.getElementById("ruleListStatus");
   const fetchRuleBtn = document.getElementById("fetchRuleBtn");
   const confirmBtn = document.getElementById("confirmBtn");
   const confirmSection = document.getElementById("confirmSection");
@@ -22,6 +25,9 @@
   const copyRuleBtn = document.getElementById("copyRuleBtn");
   const copyMsg = document.getElementById("copyMsg");
 
+  let sourceRules = [];
+  let rulesLoading = false;
+  let rulesRequestVersion = 0;
   let fetchedRuleId = null;
   let fetchedRuleJson = null;
   let fetchCompleted = false;
@@ -60,12 +66,8 @@
   }
 
   function setFetchEnabled() {
-    if (fetchCompleted) {
-      setDisabled(fetchRuleBtn, true);
-      return;
-    }
-    const ok = Boolean(srcProject.value && srcBoard.value && /^[0-9]+$/.test((ruleId.value || "").trim()));
-    setDisabled(fetchRuleBtn, !ok);
+    const ready = Boolean(srcProject.value && srcBoard.value && sourceRule.value);
+    setDisabled(fetchRuleBtn, fetchCompleted || rulesLoading || !ready);
   }
 
   function setCopyEnabled() {
@@ -73,12 +75,16 @@
   }
 
   function applyUiState() {
+    const sourceChosen = Boolean(srcProject.value && srcBoard.value);
+    const hasRules = sourceRules.length > 0;
     setDisabled(srcBoard, !srcProject.value);
+    setDisabled(ruleSearch, rulesLoading || !hasRules);
+    setDisabled(sourceRule, rulesLoading || !hasRules);
+    setDisabled(refreshRulesBtn, rulesLoading || !sourceChosen);
     setDisabled(dstBoard, !dstProject.value);
     setFetchEnabled();
     confirmSection.classList.toggle("d-none", !fetchCompleted);
     setDisabled(confirmBtn, !(fetchCompleted && !confirmCompleted));
-    if (confirmCompleted) setDisabled(confirmBtn, true);
     setCopyEnabled();
   }
 
@@ -109,6 +115,14 @@
     container.replaceChildren(alert);
   }
 
+  function errorMessage(data, fallback) {
+    if (typeof data?.error === "string" && data.error) return data.error;
+    if (data?.error && typeof data.error.message === "string" && data.error.message) {
+      return data.error.message;
+    }
+    return fallback;
+  }
+
   async function postJson(url, payload) {
     const response = await apiFetch(url, {
       method: "POST",
@@ -117,41 +131,158 @@
     return response.json();
   }
 
-  ruleId.addEventListener("input", () => {
-    ruleId.value = (ruleId.value || "").replace(/[^0-9]/g, "");
-    setFetchEnabled();
-  });
+  function resetFetchedRule() {
+    fetchedRuleId = null;
+    fetchedRuleJson = null;
+    fetchCompleted = false;
+    confirmCompleted = false;
+    ruleDetailsCard.classList.add("d-none");
+    confirmSection.classList.add("d-none");
+    step2.classList.add("d-none");
+    setDisabled(copyRuleBtn, true);
+  }
+
+  function setRuleListStatus(text, kind) {
+    ruleListStatus.textContent = text;
+    ruleListStatus.classList.remove("text-danger", "text-success", "text-muted");
+    if (kind === "danger") ruleListStatus.classList.add("text-danger");
+    else if (kind === "success") ruleListStatus.classList.add("text-success");
+    else ruleListStatus.classList.add("text-muted");
+  }
+
+  function ruleLabel(rule) {
+    const state = rule.state ? ` (${rule.state})` : "";
+    return `${rule.id} — ${rule.name}${state}`;
+  }
+
+  function renderRuleOptions(preferredRuleId) {
+    const query = (ruleSearch.value || "").trim().toLocaleLowerCase();
+    const selectedId = String(preferredRuleId || sourceRule.value || "");
+    const matchingRules = sourceRules.filter((rule) => {
+      if (!query) return true;
+      return String(rule.id).toLocaleLowerCase().includes(query)
+        || String(rule.name || "").toLocaleLowerCase().includes(query);
+    });
+
+    sourceRule.replaceChildren();
+    if (!sourceRules.length) {
+      sourceRule.appendChild(makeOption("", "-- No automation rules found --"));
+      setRuleListStatus("No automation rules were found for this Jira project.", "muted");
+      applyUiState();
+      return;
+    }
+    if (!matchingRules.length) {
+      sourceRule.appendChild(makeOption("", "-- No matching rules --"));
+      setRuleListStatus(`No matches within ${sourceRules.length} loaded rules.`, "muted");
+      applyUiState();
+      return;
+    }
+
+    sourceRule.appendChild(makeOption("", "-- Select Automation Rule --"));
+    matchingRules.forEach((rule) => {
+      sourceRule.appendChild(makeOption(String(rule.id), ruleLabel(rule)));
+    });
+    if (matchingRules.some((rule) => String(rule.id) === selectedId)) {
+      sourceRule.value = selectedId;
+    }
+    const shown = matchingRules.length === sourceRules.length
+      ? `${sourceRules.length} automation rule${sourceRules.length === 1 ? "" : "s"} loaded from Jira Data Center.`
+      : `${matchingRules.length} of ${sourceRules.length} automation rules match your search.`;
+    setRuleListStatus(shown, "success");
+    applyUiState();
+  }
+
+  function clearRuleList(message) {
+    rulesRequestVersion += 1;
+    sourceRules = [];
+    rulesLoading = false;
+    ruleSearch.value = "";
+    sourceRule.replaceChildren(makeOption("", "-- Select source project and board --"));
+    setRuleListStatus(message || "Rules load automatically after a source board is selected.", "muted");
+    resetFetchedRule();
+    applyUiState();
+  }
+
+  async function loadRules() {
+    if (!srcProject.value || !srcBoard.value) {
+      clearRuleList();
+      return;
+    }
+
+    const requestVersion = ++rulesRequestVersion;
+    const previouslySelected = sourceRule.value;
+    rulesLoading = true;
+    sourceRules = [];
+    ruleSearch.value = "";
+    sourceRule.replaceChildren(makeOption("", "Loading automation rules…"));
+    setRuleListStatus("Loading automation rules from Jira Data Center…", "muted");
+    resetFetchedRule();
+    clear(fetchMsg);
+    clear(copyMsg);
+    applyUiState();
+
+    try {
+      const data = await postJson("/api/automation/rule-copier/rules", {
+        project_key: srcProject.value.trim().toUpperCase(),
+        board_id: Number(srcBoard.value)
+      });
+      if (requestVersion !== rulesRequestVersion) return;
+      if (!data.ok) {
+        sourceRule.replaceChildren(makeOption("", "-- Unable to load rules --"));
+        setRuleListStatus(errorMessage(data, "Unable to load Jira automation rules."), "danger");
+        return;
+      }
+
+      sourceRules = Array.isArray(data.rules) ? data.rules : [];
+      renderRuleOptions(previouslySelected);
+    } catch (_error) {
+      if (requestVersion !== rulesRequestVersion) return;
+      sourceRule.replaceChildren(makeOption("", "-- Unable to load rules --"));
+      setRuleListStatus("Network error while loading Jira automation rules. Select Refresh rules to retry.", "danger");
+    } finally {
+      if (requestVersion === rulesRequestVersion) {
+        rulesLoading = false;
+        applyUiState();
+      }
+    }
+  }
 
   srcProject.addEventListener("change", () => {
     const projectKey = (srcProject.value || "").trim().toUpperCase();
     srcProject.value = projectKey;
     populateBoards(srcBoard, projectKey);
-    setDisabled(srcBoard, false);
+    clearRuleList();
+  });
+
+  srcBoard.addEventListener("change", loadRules);
+  refreshRulesBtn.addEventListener("click", loadRules);
+  ruleSearch.addEventListener("input", () => {
+    const selectedBeforeFilter = sourceRule.value;
+    renderRuleOptions(selectedBeforeFilter);
+    if (sourceRule.value !== selectedBeforeFilter) resetFetchedRule();
     setFetchEnabled();
   });
-  srcBoard.addEventListener("change", setFetchEnabled);
+  sourceRule.addEventListener("change", () => {
+    resetFetchedRule();
+    clear(fetchMsg);
+    clear(copyMsg);
+    applyUiState();
+  });
 
   fetchRuleBtn.addEventListener("click", async () => {
     clear(fetchMsg);
     clear(copyMsg);
-    ruleDetailsCard.classList.add("d-none");
-    confirmSection.classList.add("d-none");
-    step2.classList.add("d-none");
-    fetchedRuleId = null;
-    fetchedRuleJson = null;
-    fetchCompleted = false;
-    confirmCompleted = false;
-    setDisabled(copyRuleBtn, true);
+    resetFetchedRule();
 
     lockUi();
     try {
       const data = await postJson("/api/automation/rule-copier/fetch", {
         project_key: srcProject.value.trim().toUpperCase(),
         board_id: Number(srcBoard.value),
-        rule_id: Number((ruleId.value || "").trim())
+        rule_id: sourceRule.value
       });
       if (!data.ok) {
-        showAlert(fetchMsg, "danger", data.error || "Failed to fetch rule.");
+        showAlert(fetchMsg, "danger", errorMessage(data, "Failed to fetch rule."));
         return;
       }
 
@@ -164,7 +295,7 @@
       showAlert(fetchMsg, "success", "Rule fetched successfully. Click Confirm Details to continue.");
       fetchCompleted = true;
       confirmCompleted = false;
-    } catch (error) {
+    } catch (_error) {
       showAlert(fetchMsg, "danger", "Network/Unexpected error while fetching rule.");
     } finally {
       unlockUi();
@@ -182,7 +313,6 @@
     const projectKey = (dstProject.value || "").trim().toUpperCase();
     dstProject.value = projectKey;
     populateBoards(dstBoard, projectKey);
-    setDisabled(dstBoard, false);
     setCopyEnabled();
   });
   dstBoard.addEventListener("change", setCopyEnabled);
@@ -198,11 +328,11 @@
         client_action_id: crypto.randomUUID()
       });
       if (!data.ok) {
-        showAlert(copyMsg, "danger", data.error || "Copy failed.");
+        showAlert(copyMsg, "danger", errorMessage(data, "Copy failed."));
         return;
       }
       showAlert(copyMsg, "success", data.message || "Rule copied.");
-    } catch (error) {
+    } catch (_error) {
       showAlert(copyMsg, "danger", "Network/Unexpected error while copying rule.");
     } finally {
       unlockUi();

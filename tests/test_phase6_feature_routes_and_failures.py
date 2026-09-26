@@ -131,6 +131,61 @@ def test_ui_pages_render_expected_feature_controls(tmp_path):
         assert response.status_code == 200, path
         assert expected in response.get_data(as_text=True), path
 
+    rule_page = client.get("/automation/rule-copier").get_data(as_text=True)
+    assert 'id="ruleSearch"' in rule_page
+    assert 'id="sourceRule"' in rule_page
+    assert 'id="refreshRulesBtn"' in rule_page
+
+
+def test_rule_copier_lists_safe_rule_metadata_for_selected_board(tmp_path, monkeypatch):
+    app = create_phase6_app(tmp_path)
+    with app.app_context():
+        set_user_tokens()
+        add_project()
+
+    class FakeRuleListService:
+        def list_rules_for_project(self, project_identifier, pat):
+            assert project_identifier == 12345
+            assert pat == "jira-pat"
+            return [
+                {
+                    "id": 20,
+                    "name": "Zulu rule",
+                    "state": "DISABLED",
+                    "components": [{"secret": "not returned"}],
+                },
+                {"ruleId": "10", "ruleName": "Alpha rule", "status": "ENABLED"},
+                {"id": 20, "name": "Zulu rule updated", "state": "ENABLED"},
+                {"id": "invalid", "name": "Ignored"},
+            ]
+
+    import app.features.automation.rule_copier.routes as rule_routes
+
+    monkeypatch.setattr(rule_routes, "_validate_pat_belongs_to_user", lambda pat: None)
+    monkeypatch.setattr(
+        rule_routes,
+        "_ensure_project_id_for_user_project",
+        lambda project_key, board_id, pat: 12345,
+    )
+    monkeypatch.setattr(rule_routes, "_rule_service", lambda: FakeRuleListService())
+
+    client = app.test_client()
+    login(client)
+    response = client.post(
+        "/api/automation/rule-copier/rules",
+        json={"project_key": "abc", "board_id": 101},
+    )
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["ok"] is True
+    assert data["count"] == 2
+    assert data["rules"] == [
+        {"id": 10, "name": "Alpha rule", "state": "ENABLED"},
+        {"id": 20, "name": "Zulu rule updated", "state": "ENABLED"},
+    ]
+    assert "components" not in data["rules"][0]
+
 
 def test_automation_pages_redirect_to_projects_when_no_projects_exist(tmp_path):
     app = create_phase6_app(tmp_path)

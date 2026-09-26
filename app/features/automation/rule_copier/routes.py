@@ -105,6 +105,104 @@ def rule_copier_page():
     )
 
 
+def list_rules():
+    try:
+        payload = require_json_object(request.get_json(silent=True))
+        board_id_int = positive_jira_id(payload.get("board_id"), "Board ID")
+    except InputValidationError as exc:
+        return json_error(str(exc), status_code=400, code="INVALID_INPUT")
+    project_key = str(payload.get("project_key") or "").strip().upper()
+
+    if not project_key:
+        return json_error("Project key is required.", status_code=400)
+
+    try:
+        pat = _get_user_pat()
+        _validate_pat_belongs_to_user(pat)
+    except JiraServiceError as exc:
+        log_handled_exception(
+            "Rule Copier PAT validation failed",
+            exc,
+            event="automation.rule_copier.pat_validation_failed",
+            feature="rule_copier",
+            operation="list_rules",
+        )
+        return json_error(safe_error_message("validate Jira access"), status_code=403)
+    except Exception as exc:
+        return json_error(str(exc), status_code=403)
+
+    try:
+        jira_project_id = _ensure_project_id_for_user_project(
+            project_key, board_id_int, pat
+        )
+    except RuleCopierServiceError as exc:
+        log_handled_exception(
+            "Rule Copier project resolution failed",
+            exc,
+            event="automation.rule_copier.project_resolution_failed",
+            feature="rule_copier",
+            operation="list_rules",
+            context={"project_key": project_key, "board_id": board_id_int},
+        )
+        return json_error(
+            safe_error_message("validate selected project and board"),
+            status_code=400,
+        )
+    except ValueError as exc:
+        return json_error(str(exc), status_code=400)
+
+    try:
+        raw_rules = _rule_service().list_rules_for_project(jira_project_id, pat)
+    except RuleCopierServiceError as exc:
+        log_handled_exception(
+            "Rule Copier failed to list rules",
+            exc,
+            event="automation.rule_copier.list_failed",
+            feature="rule_copier",
+            operation="list_rules",
+            context={
+                "project_key": project_key,
+                "project_id": jira_project_id,
+                "board_id": board_id_int,
+            },
+        )
+        return json_error(
+            safe_error_message("load Jira automation rules"), status_code=502
+        )
+    except Exception as exc:
+        current_app.logger.exception("Unexpected error in list_rules: %s", exc)
+        return json_error("Unexpected error occurred.", status_code=500)
+
+    rules_by_id: dict[int, dict] = {}
+    for rule in raw_rules:
+        if not isinstance(rule, dict):
+            continue
+        raw_id = rule.get("id", rule.get("ruleId"))
+        try:
+            rule_id = positive_jira_id(raw_id, "Rule ID")
+        except InputValidationError:
+            continue
+        name = str(rule.get("name") or rule.get("ruleName") or "").strip()
+        state = str(rule.get("state") or rule.get("status") or "").strip()
+        rules_by_id[rule_id] = {
+            "id": rule_id,
+            "name": (name or f"Rule {rule_id}")[:500],
+            "state": state[:50],
+        }
+
+    rules = sorted(
+        rules_by_id.values(),
+        key=lambda rule: (rule["name"].casefold(), rule["id"]),
+    )
+    return json_ok(
+        project_key=project_key,
+        project_id=jira_project_id,
+        board_id=board_id_int,
+        rules=rules,
+        count=len(rules),
+    )
+
+
 def fetch_rule():
     try:
         payload = require_json_object(request.get_json(silent=True))

@@ -121,6 +121,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         "/session/status": "/api/session/status",
         "/session/extend": "/api/session/extend",
         "/client-log": "/api/client-log",
+        "/automation/rule-copier/rules": "/api/automation/rule-copier/rules",
         "/automation/rule-copier/fetch-rule": "/api/automation/rule-copier/fetch",
         "/automation/rule-copier/copy-rule": "/api/automation/rule-copier/copy",
         "/automation/sprint-viewer/sprints": "/api/automation/sprint-viewer/sprints",

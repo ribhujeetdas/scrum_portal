@@ -30,11 +30,13 @@ def test_rule_copier_feature_exports_route_handlers():
     from app.features.automation.rule_copier.routes import (
         copy_rule,
         fetch_rule,
+        list_rules,
         rule_copier_page,
     )
 
     assert callable(rule_copier_page)
     assert callable(fetch_rule)
+    assert callable(list_rules)
     assert callable(copy_rule)
 
 

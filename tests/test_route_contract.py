@@ -45,6 +45,7 @@ def test_canonical_api_routes_are_registered(tmp_path):
     app = create_route_app(tmp_path)
 
     assert {
+        "/api/automation/rule-copier/rules",
         "/api/automation/rule-copier/fetch",
         "/api/automation/rule-copier/copy",
         "/api/automation/sprint-viewer/sprints",

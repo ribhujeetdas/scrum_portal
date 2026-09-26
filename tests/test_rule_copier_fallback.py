@@ -111,6 +111,32 @@ class FakeRuleService:
         return {"id": 987, "actor": payload["actorAccountId"]}
 
 
+class FakeRuleListHttpClient:
+    def __init__(self, response):
+        self.response = response
+
+    def get_json(self, path, **_kwargs):
+        assert path == "/rest/cb-automation/latest/project/123/rule"
+        return self.response
+
+
+def test_rule_list_supports_data_center_list_and_nested_response_shapes():
+    expected = [{"id": 10, "name": "Rule"}]
+    response_shapes = [
+        expected,
+        {"rules": expected},
+        {"values": expected},
+        {"rules": {"values": expected}},
+    ]
+
+    for response in response_shapes:
+        service = RuleCopierService(
+            "https://jira.example.test",
+            http_client=FakeRuleListHttpClient(response),
+        )
+        assert service.list_rules_for_project(123, "pat") == expected
+
+
 def test_copy_rule_falls_back_to_user_jira_actor_when_config_actor_fails(tmp_path, monkeypatch):
     app = create_rule_copy_app(tmp_path)
     fake_service = FakeRuleService()

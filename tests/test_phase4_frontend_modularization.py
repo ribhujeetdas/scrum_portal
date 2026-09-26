@@ -57,6 +57,7 @@ def test_phase4_feature_fetches_use_canonical_api_routes():
     combined = "\n".join(read(path) for path in FEATURE_JS_FILES)
 
     assert "/api/automation/rule-copier/fetch" in combined
+    assert "/api/automation/rule-copier/rules" in combined
     assert "/api/automation/rule-copier/copy" in combined
     assert "/api/automation/sprint-viewer/sprints" in combined
     assert "/api/automation/sprint-viewer/issues" in combined
