@@ -1,3 +1,5 @@
+from threading import Event, Lock
+
 from app.services.sprint_viewer_service import SprintViewerService
 
 
@@ -112,6 +114,62 @@ def test_scrum_metrics_use_completed_original_for_predictability():
     assert metrics["carryover_sp"] == 4.0
     assert metrics["scope_net_sp"] == 8.0
     assert metrics["scope_added_keys"] == ["ABC-9"]
+
+
+def test_sprint_metric_searches_run_concurrently_with_isolated_clients(monkeypatch):
+    class Client:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    primary_client = Client()
+    service = SprintViewerService(
+        "https://jira.example",
+        timeout_seconds=60,
+        http_client=primary_client,
+        metrics_max_workers=5,
+    )
+    worker_clients = []
+
+    def make_client():
+        client = Client()
+        worker_clients.append(client)
+        return client
+
+    lock = Lock()
+    concurrent_started = Event()
+    active = 0
+    max_active = 0
+
+    def aggregate(client, jql, pat, capture_keys=False):
+        nonlocal active, max_active
+        assert client in worker_clients
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            if active >= 2:
+                concurrent_started.set()
+        concurrent_started.wait(timeout=1)
+        with lock:
+            active -= 1
+        result = {"sp": 5.0, "count": 1, "memberships": []}
+        if capture_keys:
+            result["keys"] = ["ABC-1"]
+        return result
+
+    monkeypatch.setattr(service, "_new_client", make_client)
+    monkeypatch.setattr(service, "_aggregate_by_jql_with_client", aggregate)
+
+    metrics = service.compute_sprint_metrics_parallel(10, 20, "pat", 5.0, 1)
+
+    assert max_active >= 2
+    assert len(worker_clients) == 5
+    assert all(client.closed for client in worker_clients)
+    assert primary_client.closed is False
+    assert metrics["original_commitment_sp"] == 5.0
+    assert metrics["scope_added_keys"] == ["ABC-1"]
 
 
 def test_relevant_comments_count_assignee_or_sprint_team_before_sprint_end():

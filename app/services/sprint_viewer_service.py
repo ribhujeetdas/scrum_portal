@@ -1,6 +1,7 @@
 # app/services/sprint_viewer_service.py
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import math
 from copy import deepcopy
@@ -992,16 +993,39 @@ class SprintViewerService:
 
         results: Dict[str, dict] = {k: {"sp": 0.0, "count": 0} for k in jobs.keys()}
 
-        for name, spec in jobs.items():
-            agg = self._aggregate_by_jql_with_client(
-                client=self._client,
-                jql=spec["jql"],
-                pat=pat,
-                capture_keys=bool(spec.get("capture_keys", False)),
-            )
-            results[name] = agg
-            self._trace("Metrics partial %s sp=%.2f count=%s", name, float(
-                agg.get("sp", 0.0)), int(agg.get("count", 0)))
+        # Build the clients while the Flask application context is still available so
+        # each one inherits the configured proxy, CA bundle, and retry policy. A
+        # single HTTP session must not be shared by concurrent metric searches.
+        clients = {name: self._new_client() for name in jobs}
+        futures = {}
+        try:
+            with ThreadPoolExecutor(
+                max_workers=min(self.metrics_max_workers, len(jobs)),
+                thread_name_prefix="sprint-metric",
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        self._aggregate_by_jql_with_client,
+                        clients[name],
+                        spec["jql"],
+                        pat,
+                        bool(spec.get("capture_keys", False)),
+                    ): name
+                    for name, spec in jobs.items()
+                }
+                for future in as_completed(futures):
+                    name = futures[future]
+                    agg = future.result()
+                    results[name] = agg
+                    self._trace(
+                        "Metrics partial %s sp=%.2f count=%s",
+                        name,
+                        float(agg.get("sp", 0.0)),
+                        int(agg.get("count", 0)),
+                    )
+        finally:
+            for client in clients.values():
+                client.close()
         out = self.build_scrum_metrics(results)
 
         self._trace("Metrics done board_id=%s sprint_id=%s result=%s",
