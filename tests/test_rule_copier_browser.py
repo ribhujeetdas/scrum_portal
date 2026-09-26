@@ -65,17 +65,22 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{server.server_port}"
+    rule_requests = {"count": 0}
 
     def fulfill(route):
         url = route.request.url
         if url.endswith("/api/automation/rule-copier/rules"):
+            rule_requests["count"] += 1
+            rules = [
+                {"id": 101, "name": "Assign default reviewer", "state": "ENABLED"},
+                {"id": 202, "name": "Deploy readiness checks", "state": "DISABLED"},
+                {"id": 303, "name": "Notify feature owner", "state": "ENABLED"},
+            ]
+            if rule_requests["count"] > 1:
+                rules.append({"id": 404, "name": "Refreshed rule", "state": "ENABLED"})
             body = {
                 "ok": True,
-                "rules": [
-                    {"id": 101, "name": "Assign default reviewer", "state": "ENABLED"},
-                    {"id": 202, "name": "Deploy readiness checks", "state": "DISABLED"},
-                    {"id": 303, "name": "Notify feature owner", "state": "ENABLED"},
-                ],
+                "rules": rules,
             }
         elif url.endswith("/api/automation/rule-copier/fetch"):
             request = route.request.post_data_json
@@ -83,22 +88,32 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
             body = {
                 "ok": True,
                 "rule": {"id": 202, "name": "Deploy readiness checks", "state": "DISABLED"},
-                "rule_json": {
-                    "id": 202,
-                    "name": "Deploy readiness checks",
-                    "state": "DISABLED",
+                "sanitization": {
+                    "redacted_count": 2,
+                    "redacted_header_names": ["Authorization", "X-API-Key"],
+                    "redacted_field_names": [],
+                    "source_secret_names": ["jira_token"],
                 },
             }
         elif url.endswith("/api/automation/rule-copier/copy"):
             request = route.request.post_data_json
             assert request["target_project_key"] == "ABC"
             assert request["target_board_id"] == 101
-            assert request["rule_json"]["id"] == 202
-            body = {"ok": True, "message": "Rule copied successfully."}
+            assert request["source_project_key"] == "ABC"
+            assert request["source_board_id"] == 101
+            assert request["source_rule_id"] == 202
+            assert "rule_json" not in request
+            body = {
+                "ok": True,
+                "message": (
+                    "Rule copied successfully with placeholder values for 2 sensitive entries. "
+                    "Replace the placeholders in the destination rule before enabling it."
+                ),
+            }
         else:
             body = {"ok": False, "error": {"message": "Unexpected browser fixture request"}}
         route.fulfill(
-            status=200 if body.get("ok") else 500,
+            status=200 if body.get("ok") else 409,
             headers={"Content-Type": "application/json"},
             body=json.dumps(body),
         )
@@ -138,9 +153,18 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
         ]
         assert page.locator("#ruleSearch").count() == 0
         control_tops = page.locator(
-            "#srcProject, #srcBoard, #sourceRule, #fetchRuleBtn"
+            "#srcProject, #srcBoard, #sourceRule, #refreshRulesBtn, #fetchRuleBtn"
         ).evaluate_all("elements => elements.map(element => element.getBoundingClientRect().top)")
         assert max(control_tops) - min(control_tops) <= 1
+        assert page.locator("#refreshRulesBtn").is_enabled()
+
+        page.locator("#refreshRulesBtn").click()
+        page.wait_for_function(
+            "document.querySelectorAll('#sourceRule option').length === 5"
+        )
+        assert page.locator("#sourceRule option").all_inner_texts()[-1] == (
+            "404 — Refreshed rule (ENABLED)"
+        )
 
         page.select_option("#sourceRule", "202")
         assert page.locator("#fetchRuleBtn").is_enabled()
@@ -150,6 +174,12 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
         assert page.locator("#outRuleId").inner_text() == "202"
         assert page.locator("#outRuleName").inner_text() == "Deploy readiness checks"
         assert page.locator("#outRuleState").inner_text() == "DISABLED"
+        assert page.locator("#ruleSecurityNotice").inner_text() == (
+            "2 sensitive entries (Authorization, X-API-Key) will be copied with placeholder "
+            "values. Replace the placeholders with destination-specific credentials before "
+            "enabling the rule."
+        )
+        assert "literal-secret" not in page.locator("body").inner_text()
         assert page.locator("#confirmBtn").is_enabled()
 
         page.locator("#confirmBtn").click()
@@ -160,7 +190,9 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
         page.select_option("#dstBoard", "101")
         assert page.locator("#copyRuleBtn").is_enabled()
         page.locator("#copyRuleBtn").click()
-        page.get_by_text("Rule copied successfully.").wait_for(state="visible")
+        page.get_by_text(
+            "Rule copied successfully with placeholder values for 2 sensitive entries. Replace the placeholders in the destination rule before enabling it."
+        ).wait_for(state="visible")
 
         assert not page_errors
         assert not console_errors
@@ -168,9 +200,25 @@ def test_rule_copier_loads_and_copies_data_center_rule_end_to_end(page, tmp_path
         page.screenshot(path=tmp_path / "rule-copier-desktop.png", full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
         page.screenshot(path=tmp_path / "rule-copier-mobile.png", full_page=True)
+        overflowing = page.evaluate(
+            """() => Array.from(document.querySelectorAll('*'))
+              .map(element => {
+                const rect = element.getBoundingClientRect();
+                return {
+                  tag: element.tagName,
+                  id: element.id,
+                  left: rect.left,
+                  right: rect.right,
+                  width: rect.width,
+                  scrollWidth: element.scrollWidth,
+                  clientWidth: element.clientWidth
+                };
+              })
+              .filter(item => item.right > document.documentElement.clientWidth + 0.5 || item.left < -0.5)"""
+        )
         assert page.evaluate(
             "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
-        )
+        ), overflowing
     finally:
         page.goto("about:blank")
         server.shutdown()

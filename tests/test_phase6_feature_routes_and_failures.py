@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from cryptography.fernet import Fernet
 
 from app import create_app
@@ -134,7 +136,7 @@ def test_ui_pages_render_expected_feature_controls(tmp_path):
     rule_page = client.get("/automation/rule-copier").get_data(as_text=True)
     assert 'id="sourceRule"' in rule_page
     assert 'id="ruleSearch"' not in rule_page
-    assert 'id="refreshRulesBtn"' not in rule_page
+    assert 'id="refreshRulesBtn"' in rule_page
 
 
 def test_rule_copier_lists_safe_rule_metadata_for_selected_board(tmp_path, monkeypatch):
@@ -185,6 +187,60 @@ def test_rule_copier_lists_safe_rule_metadata_for_selected_board(tmp_path, monke
         {"id": 20, "name": "Zulu rule updated", "state": "ENABLED"},
     ]
     assert "components" not in data["rules"][0]
+
+
+def test_rule_copier_fetch_does_not_expose_raw_rule_secrets(tmp_path, monkeypatch):
+    app = create_phase6_app(tmp_path)
+    with app.app_context():
+        set_user_tokens()
+        add_project()
+
+    class FakeSensitiveRuleService:
+        def get_rule_detail(self, project_identifier, rule_id, pat):
+            return {
+                "id": rule_id,
+                "name": "Sensitive outbound rule",
+                "state": "ENABLED",
+                "components": [
+                    {
+                        "headers": [
+                            {
+                                "name": "Authorization",
+                                "value": "Bearer must-never-reach-browser",
+                            }
+                        ]
+                    }
+                ],
+            }
+
+    import app.features.automation.rule_copier.routes as rule_routes
+
+    monkeypatch.setattr(rule_routes, "_validate_pat_belongs_to_user", lambda pat: None)
+    monkeypatch.setattr(
+        rule_routes,
+        "_ensure_project_id_for_user_project",
+        lambda project_key, board_id, pat: 12345,
+    )
+    monkeypatch.setattr(rule_routes, "_rule_service", lambda: FakeSensitiveRuleService())
+
+    client = app.test_client()
+    login(client)
+    response = client.post(
+        "/api/automation/rule-copier/fetch",
+        json={"project_key": "ABC", "board_id": 101, "rule_id": 555},
+    )
+    data = response.get_json()
+    serialized = json.dumps(data)
+
+    assert response.status_code == 200
+    assert "rule_json" not in data
+    assert "must-never-reach-browser" not in serialized
+    assert data["sanitization"] == {
+        "redacted_count": 1,
+        "redacted_header_names": ["Authorization"],
+        "redacted_field_names": [],
+        "source_secret_names": [],
+    }
 
 
 def test_automation_pages_redirect_to_projects_when_no_projects_exist(tmp_path):

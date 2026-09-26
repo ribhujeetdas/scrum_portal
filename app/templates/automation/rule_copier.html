@@ -33,18 +33,23 @@
         </select>
       </div>
 
-      <div class="col-md-4">
+      <div class="col-md-3">
         <label class="form-label" for="srcBoard">Board (Source)</label>
         <select id="srcBoard" class="form-select" disabled>
           <option value="">-- Select Board --</option>
         </select>
       </div>
 
-      <div class="col-md-3">
+      <div class="col-md-4">
         <label class="form-label" for="sourceRule">Automation Rule (ID — Name)</label>
-        <select id="sourceRule" class="form-select" disabled>
-          <option value="">-- Select source project and board --</option>
-        </select>
+        <div class="input-group">
+          <select id="sourceRule" class="form-select" disabled>
+            <option value="">-- Select source project and board --</option>
+          </select>
+          <button id="refreshRulesBtn" class="btn btn-outline-secondary" type="button" disabled>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div class="col-md-2">
@@ -63,6 +68,7 @@
         <div><span class="fw-semibold">Rule ID:</span> <span id="outRuleId"></span></div>
         <div><span class="fw-semibold">Rule Name:</span> <span id="outRuleName"></span></div>
         <div><span class="fw-semibold">State:</span> <span id="outRuleState"></span></div>
+        <div id="ruleSecurityNotice" class="alert alert-warning mt-3 mb-0 d-none" role="status"></div>
       </div>
     </div>
 

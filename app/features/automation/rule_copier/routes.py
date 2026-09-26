@@ -14,7 +14,12 @@ from ....core.jira_pat_validation import validate_jira_pat_for_current_user
 from ....extensions import db
 from ....models import ExternalOperation, UserBoard, UserProject
 from ....services.jira_service import JiraServiceError
-from ....services.rule_copier_service import RuleCopierService, RuleCopierServiceError
+from ....services.rule_copier_service import (
+    RuleCopierDestinationSecretError,
+    RuleCopierService,
+    RuleCopierServiceError,
+    sanitize_sensitive_rule_data,
+)
 from ..sprint_viewer.schemas import InputValidationError, positive_jira_id, require_json_object
 
 
@@ -272,13 +277,14 @@ def fetch_rule():
         "name": rule_json.get("name", ""),
         "state": rule_json.get("state", ""),
     }
+    _sanitized_rule, sanitization = sanitize_sensitive_rule_data(rule_json)
 
     return json_ok(
         project_key=project_key,
         project_id=jira_project_id,
         board_id=board_id_int,
         rule=rule_out,
-        rule_json=rule_json,
+        sanitization=sanitization,
     )
 
 
@@ -286,16 +292,38 @@ def copy_rule():
     try:
         payload = require_json_object(request.get_json(silent=True))
         target_board_id_int = positive_jira_id(payload.get("target_board_id"), "Target board ID")
+        source_fields_present = any(
+            payload.get(field) not in (None, "")
+            for field in ("source_project_key", "source_board_id", "source_rule_id")
+        )
+        if source_fields_present:
+            source_board_id_int = positive_jira_id(
+                payload.get("source_board_id"), "Source board ID"
+            )
+            source_rule_id_int = positive_jira_id(
+                payload.get("source_rule_id"), "Source rule ID"
+            )
+        else:
+            source_board_id_int = None
+            source_rule_id_int = None
     except InputValidationError as exc:
         return json_error(str(exc), status_code=400, code="INVALID_INPUT")
     target_project_key = str(payload.get(
         "target_project_key") or "").strip().upper()
-    rule_json = payload.get("rule_json")
+    source_project_key = str(payload.get(
+        "source_project_key") or "").strip().upper()
+    legacy_rule_json = payload.get("rule_json")
 
     if not target_project_key:
         return json_error("Target project key is required.", status_code=400)
-    if not isinstance(rule_json, dict):
-        return json_error("rule_json is missing or invalid.", status_code=400)
+    if source_fields_present and not source_project_key:
+        return json_error("Source project key is required.", status_code=400)
+    if not source_fields_present and not isinstance(legacy_rule_json, dict):
+        return json_error(
+            "Source project, board, and rule are required.",
+            status_code=400,
+            code="INVALID_INPUT",
+        )
 
     try:
         pat = _get_user_pat()
@@ -311,6 +339,40 @@ def copy_rule():
         return json_error(safe_error_message("validate Jira access"), status_code=403)
     except Exception as exc:
         return json_error(str(exc), status_code=403)
+
+    service = _rule_service()
+    if source_fields_present:
+        try:
+            source_jira_project_id = _ensure_project_id_for_user_project(
+                source_project_key, source_board_id_int, pat
+            )
+            rule_json = service.get_rule_detail(
+                source_jira_project_id, source_rule_id_int, pat
+            )
+        except RuleCopierServiceError as exc:
+            log_handled_exception(
+                "Rule Copier failed to re-fetch source rule",
+                exc,
+                event="automation.rule_copier.source_refetch_failed",
+                feature="rule_copier",
+                operation="copy_rule",
+                context={
+                    "source_project_key": source_project_key,
+                    "source_board_id": source_board_id_int,
+                    "source_rule_id": source_rule_id_int,
+                },
+            )
+            return json_error(
+                safe_error_message("re-fetch the source automation rule"),
+                status_code=400,
+                code="SOURCE_RULE_FETCH_FAILED",
+            )
+        except ValueError as exc:
+            return json_error(str(exc), status_code=400)
+    else:
+        rule_json = legacy_rule_json
+
+    sanitized_rule_json, sanitization = sanitize_sensitive_rule_data(rule_json)
 
     try:
         target_jira_project_id = _ensure_project_id_for_user_project(
@@ -346,9 +408,8 @@ def copy_rule():
         )
 
     try:
-        service = _rule_service()
         create_payload = service.transform_rule_for_create(
-            rule_json=rule_json,
+            rule_json=sanitized_rule_json,
             target_project_id=target_jira_project_id,
             author_account_id=author_account_id,
             actor_account_id=configured_actor_account_id,
@@ -447,7 +508,7 @@ def copy_rule():
                 },
             )
             user_actor_payload = service.transform_rule_for_create(
-                rule_json=rule_json,
+                rule_json=sanitized_rule_json,
                 target_project_id=target_jira_project_id,
                 author_account_id=author_account_id,
                 actor_account_id=author_account_id,
@@ -466,14 +527,24 @@ def copy_rule():
         operation.external_result_id = str((created or {}).get("id") or (created or {}).get("ruleId") or "") or None
         db.session.commit()
 
+        redacted_count = sanitization["redacted_count"]
+        message = "Rule copied successfully."
+        if redacted_count:
+            entry_label = "entry" if redacted_count == 1 else "entries"
+            message = (
+                f"Rule copied successfully with placeholder values for {redacted_count} "
+                f"sensitive {entry_label}. Replace the placeholders in the destination rule "
+                "before enabling it."
+            )
         return json_ok(
-            message="Rule copied successfully.",
+            message=message,
             target_project_key=target_project_key,
             target_project_id=target_jira_project_id,
             target_board_id=target_board_id_int,
             actor_used=actor_used,
             created=created,
             operation_id=operation.id,
+            sanitization=sanitization,
         )
     except RuleCopierServiceError as exc:
         log_handled_exception(
@@ -487,9 +558,24 @@ def copy_rule():
                 "target_board_id": target_board_id_int,
             },
         )
+        if isinstance(exc, RuleCopierDestinationSecretError):
+            return json_error(
+                (
+                    f'Jira cannot copy this rule because automation secret "{exc.secret_key}" '
+                    f'is not available to destination project {target_project_key}. Ask a Jira '
+                    "administrator to allow the secret for this project scope, then retry."
+                ),
+                status_code=409,
+                code="DESTINATION_SECRET_UNAVAILABLE",
+                retryable=False,
+            )
         status = 409 if getattr(exc, "outcome", None) == "unknown" else 400
         code = "EXTERNAL_OUTCOME_UNKNOWN" if status == 409 else "RULE_CREATE_REJECTED"
-        return json_error(safe_error_message("copy the automation rule"), status_code=status, code=code)
+        return json_error(
+            safe_error_message("copy the automation rule"),
+            status_code=status,
+            code=code,
+        )
     except Exception as exc:
         current_app.logger.exception("Unexpected error in copy_rule: %s", exc)
         return json_error("Unexpected error occurred.", status_code=500)

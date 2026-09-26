@@ -8,6 +8,7 @@
   const srcProject = document.getElementById("srcProject");
   const srcBoard = document.getElementById("srcBoard");
   const sourceRule = document.getElementById("sourceRule");
+  const refreshRulesBtn = document.getElementById("refreshRulesBtn");
   const fetchRuleBtn = document.getElementById("fetchRuleBtn");
   const confirmBtn = document.getElementById("confirmBtn");
   const confirmSection = document.getElementById("confirmSection");
@@ -16,6 +17,7 @@
   const outRuleId = document.getElementById("outRuleId");
   const outRuleName = document.getElementById("outRuleName");
   const outRuleState = document.getElementById("outRuleState");
+  const ruleSecurityNotice = document.getElementById("ruleSecurityNotice");
   const step2 = document.getElementById("step2");
   const dstProject = document.getElementById("dstProject");
   const dstBoard = document.getElementById("dstBoard");
@@ -26,7 +28,6 @@
   let rulesLoading = false;
   let rulesRequestVersion = 0;
   let fetchedRuleId = null;
-  let fetchedRuleJson = null;
   let fetchCompleted = false;
   let confirmCompleted = false;
 
@@ -72,9 +73,11 @@
   }
 
   function applyUiState() {
+    const sourceChosen = Boolean(srcProject.value && srcBoard.value);
     const hasRules = sourceRules.length > 0;
     setDisabled(srcBoard, !srcProject.value);
     setDisabled(sourceRule, rulesLoading || !hasRules);
+    setDisabled(refreshRulesBtn, rulesLoading || !sourceChosen);
     setDisabled(dstBoard, !dstProject.value);
     setFetchEnabled();
     confirmSection.classList.toggle("d-none", !fetchCompleted);
@@ -127,13 +130,34 @@
 
   function resetFetchedRule() {
     fetchedRuleId = null;
-    fetchedRuleJson = null;
     fetchCompleted = false;
     confirmCompleted = false;
     ruleDetailsCard.classList.add("d-none");
     confirmSection.classList.add("d-none");
     step2.classList.add("d-none");
+    ruleSecurityNotice.classList.add("d-none");
+    ruleSecurityNotice.textContent = "";
     setDisabled(copyRuleBtn, true);
+  }
+
+  function renderSecurityNotice(sanitization) {
+    const report = sanitization && typeof sanitization === "object" ? sanitization : {};
+    const count = Number(report.redacted_count || 0);
+    if (!count) return;
+
+    const headerNames = Array.isArray(report.redacted_header_names)
+      ? report.redacted_header_names.filter(Boolean)
+      : [];
+    const fieldNames = Array.isArray(report.redacted_field_names)
+      ? report.redacted_field_names.filter(Boolean)
+      : [];
+    const affectedNames = [...new Set([...headerNames, ...fieldNames])];
+    const affectedSummary = affectedNames.length
+      ? ` (${affectedNames.join(", ")})`
+      : "";
+    const entryLabel = count === 1 ? "entry" : "entries";
+    ruleSecurityNotice.textContent = `${count} sensitive ${entryLabel}${affectedSummary} will be copied with placeholder values. Replace the placeholders with destination-specific credentials before enabling the rule.`;
+    ruleSecurityNotice.classList.remove("d-none");
   }
 
   function ruleLabel(rule) {
@@ -220,6 +244,7 @@
   });
 
   srcBoard.addEventListener("change", loadRules);
+  refreshRulesBtn.addEventListener("click", loadRules);
   sourceRule.addEventListener("change", () => {
     resetFetchedRule();
     clear(fetchMsg);
@@ -248,7 +273,7 @@
       outRuleName.textContent = data.rule.name;
       outRuleState.textContent = data.rule.state;
       fetchedRuleId = data.rule.id;
-      fetchedRuleJson = data.rule_json;
+      renderSecurityNotice(data.sanitization);
       ruleDetailsCard.classList.remove("d-none");
       showAlert(fetchMsg, "success", "Rule fetched successfully. Click Confirm Details to continue.");
       fetchCompleted = true;
@@ -282,7 +307,9 @@
       const data = await postJson("/api/automation/rule-copier/copy", {
         target_project_key: dstProject.value.trim().toUpperCase(),
         target_board_id: Number(dstBoard.value),
-        rule_json: fetchedRuleJson,
+        source_project_key: srcProject.value.trim().toUpperCase(),
+        source_board_id: Number(srcBoard.value),
+        source_rule_id: fetchedRuleId,
         client_action_id: crypto.randomUUID()
       });
       if (!data.ok) {
